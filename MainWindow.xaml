@@ -1,0 +1,403 @@
+﻿<Window x:Class="Chassis_Master_Test_Suite.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:scottPlot="clr-namespace:ScottPlot.WPF;assembly=ScottPlot.WPF"
+        Title="Chassis Master Test Suite"
+        Height="900"
+        Width="1400"
+        MinHeight="600"
+        MinWidth="1000">
+
+    <Grid Margin="12">
+
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ==================== 顶部控制区 ==================== -->
+
+        <Border Grid.Row="0"
+                BorderBrush="#D0D0D0"
+                BorderThickness="1"
+                CornerRadius="4"
+                Padding="10"
+                Margin="0,0,0,10">
+
+            <Grid>
+
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="180"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="20"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="X Axis"
+                           VerticalAlignment="Center"
+                           Margin="0,0,8,0"/>
+
+                <ComboBox x:Name="XAxisSelector"
+                          Grid.Column="1"
+                          Height="30"
+                          VerticalContentAlignment="Center"
+                          SelectionChanged="AxisSelector_SelectionChanged"/>
+
+                <TextBlock Grid.Column="3"
+                           Text="X Auto Scale"
+                           VerticalAlignment="Center"/>
+
+                <CheckBox x:Name="XAxisAutoScaleCheckBox"
+                          Grid.Column="4"
+                          VerticalAlignment="Center"
+                          Margin="5,0,0,0"
+                          IsChecked="True"
+                          Checked="XAxisAutoScaleCheckBox_Changed"
+                          Unchecked="XAxisAutoScaleCheckBox_Changed"/>
+
+                <Button x:Name="AddPlotButton"
+                        Grid.Column="5"
+                        Content="+ Add Plot"
+                        Height="30"
+                        Padding="15,0"
+                        Margin="20,0,8,0"
+                        Click="AddPlotButton_Click"/>
+
+                <Button x:Name="ResetViewButton"
+                        Grid.Column="6"
+                        Content="Reset View"
+                        Height="30"
+                        Padding="15,0"
+                        Margin="0,0,8,0"
+                        Click="ResetViewButton_Click"/>
+
+                <!-- ==================== Simulator ==================== -->
+
+                <Button x:Name="SimulatorButton"
+                        Grid.Column="7"
+                        Content="Simulator"
+                        Height="30"
+                        Padding="15,0"
+                        Margin="0,0,8,0"
+                        Click="SimulatorButton_Click"/>
+
+                <TextBlock Grid.Column="10"
+                           Text="CMTS"
+                           FontSize="18"
+                           FontWeight="Bold"
+                           VerticalAlignment="Center"
+                           Margin="20,0,5,0"/>
+
+            </Grid>
+
+        </Border>
+
+        <!-- ==================== 主区域 ==================== -->
+
+        <Grid Grid.Row="1">
+
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ==================== Plot 区域 ==================== -->
+
+            <Border Grid.Column="0"
+                    BorderBrush="#D0D0D0"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="4"
+                    Margin="0,0,10,0">
+
+                <ScrollViewer x:Name="PlotScrollViewer"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+
+                    <StackPanel x:Name="PlotContainer"/>
+
+                </ScrollViewer>
+
+            </Border>
+
+            <!-- ==================== 右侧实时数据 ==================== -->
+
+            <Border Grid.Column="1"
+                    BorderBrush="#D0D0D0"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="12">
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+
+                    <Grid>
+
+                        <Grid.RowDefinitions>
+
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+
+                            <RowDefinition Height="20"/>
+
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+
+                        </Grid.RowDefinitions>
+
+                        <!-- REAL-TIME DATA -->
+
+                        <TextBlock Grid.Row="0"
+                                   Text="REAL-TIME DATA"
+                                   FontSize="16"
+                                   FontWeight="Bold"
+                                   Margin="0,0,0,15"/>
+
+                        <!-- Speed -->
+
+                        <Grid Grid.Row="1"
+                              Margin="0,0,0,10">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Speed"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="SpeedValueText"
+                                       Grid.Column="1"
+                                       Text="0.00"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Right"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="km/h"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"/>
+
+                        </Grid>
+
+                        <!-- Longitudinal Accel -->
+
+                        <Grid Grid.Row="2"
+                              Margin="0,0,0,10">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Longitudinal Accel"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="LongitudinalAccelerationValueText"
+                                       Grid.Column="1"
+                                       Text="0.00"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Right"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="m/s²"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"/>
+
+                        </Grid>
+
+                        <!-- Lateral Accel -->
+
+                        <Grid Grid.Row="3"
+                              Margin="0,0,0,10">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Lateral Accel"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="LateralAccelerationValueText"
+                                       Grid.Column="1"
+                                       Text="0.00"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Right"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="m/s²"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"/>
+
+                        </Grid>
+
+                        <!-- Vertical Accel -->
+
+                        <Grid Grid.Row="4"
+                              Margin="0,0,0,10">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Vertical Accel"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="VerticalAccelerationValueText"
+                                       Grid.Column="1"
+                                       Text="0.00"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Right"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="m/s²"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"/>
+
+                        </Grid>
+
+                        <!-- Yaw Rate -->
+
+                        <Grid Grid.Row="5"
+                              Margin="0,0,0,10">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="100"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Yaw Rate"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="YawRateValueText"
+                                       Grid.Column="1"
+                                       Text="0.00"
+                                       FontSize="18"
+                                       FontWeight="SemiBold"
+                                       TextAlignment="Right"/>
+
+                            <TextBlock Grid.Column="2"
+                                       Text="deg/s"
+                                       Margin="6,0,0,0"
+                                       VerticalAlignment="Center"/>
+
+                        </Grid>
+
+                        <!-- NETWORK -->
+
+                        <TextBlock Grid.Row="7"
+                                   Text="NETWORK"
+                                   FontSize="16"
+                                   FontWeight="Bold"
+                                   Margin="0,5,0,15"/>
+
+                        <!-- Received -->
+
+                        <Grid Grid.Row="8"
+                              Margin="0,0,0,8">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Received"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="ReceivedPacketsText"
+                                       Grid.Column="1"
+                                       Text="0"/>
+
+                        </Grid>
+
+                        <!-- Valid -->
+
+                        <Grid Grid.Row="9"
+                              Margin="0,0,0,8">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Valid"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="ValidPacketsText"
+                                       Grid.Column="1"
+                                       Text="0"/>
+
+                        </Grid>
+
+                        <!-- Lost -->
+
+                        <Grid Grid.Row="10"
+                              Margin="0,0,0,8">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Lost"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="LostPacketsText"
+                                       Grid.Column="1"
+                                       Text="0"/>
+
+                        </Grid>
+
+                        <!-- Out of Order -->
+
+                        <Grid Grid.Row="11">
+
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Text="Out of Order"
+                                       VerticalAlignment="Center"/>
+
+                            <TextBlock x:Name="OutOfOrderPacketsText"
+                                       Grid.Column="1"
+                                       Text="0"/>
+
+                        </Grid>
+
+                    </Grid>
+
+                </ScrollViewer>
+
+            </Border>
+
+        </Grid>
+
+    </Grid>
+
+</Window>

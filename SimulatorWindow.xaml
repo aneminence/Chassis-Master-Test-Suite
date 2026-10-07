@@ -1,0 +1,331 @@
+<Window x:Class="Chassis_Master_Test_Suite.Simulator.SimulatorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="CMTS Vehicle Simulator"
+        Width="1280"
+        Height="760"
+        MinWidth="900"
+        MinHeight="600"
+        Background="#11151A"
+        WindowStartupLocation="CenterScreen"
+        Focusable="True"
+        PreviewKeyDown="Window_KeyDown"
+        PreviewKeyUp="Window_KeyUp"
+        Closing="Window_Closing">
+
+    <Grid>
+
+        <!-- ========================= -->
+        <!-- 3D 场景 -->
+        <!-- ========================= -->
+
+        <Viewport3D x:Name="VehicleViewport"
+                    ClipToBounds="True"
+                    Focusable="True">
+
+            <Viewport3D.Camera>
+                <PerspectiveCamera x:Name="FollowCamera"
+                                   Position="0,5,-9"
+                                   LookDirection="0,-1,9"
+                                   UpDirection="0,1,0"
+                                   FieldOfView="60"
+                                   NearPlaneDistance="0.1"
+                                   FarPlaneDistance="10000"/>
+            </Viewport3D.Camera>
+
+        </Viewport3D>
+
+
+        <!-- ========================= -->
+        <!-- 顶部标题 -->
+        <!-- ========================= -->
+
+        <Border HorizontalAlignment="Left"
+                VerticalAlignment="Top"
+                Margin="20"
+                Padding="16,10"
+                Background="#CC111820"
+                CornerRadius="8">
+
+            <StackPanel>
+
+                <TextBlock Text="CMTS VEHICLE SIMULATOR"
+                           Foreground="White"
+                           FontSize="20"
+                           FontWeight="SemiBold"/>
+
+                <TextBlock Text="Manual Driving / 100 Hz"
+                           Foreground="#9AA7B5"
+                           FontSize="12"
+                           Margin="0,3,0,0"/>
+
+            </StackPanel>
+
+        </Border>
+
+
+        <!-- ========================= -->
+        <!-- 实时车辆数据 -->
+        <!-- ========================= -->
+
+        <Border HorizontalAlignment="Right"
+                VerticalAlignment="Top"
+                Margin="20"
+                Padding="16"
+                Width="250"
+                Background="#CC111820"
+                CornerRadius="8">
+
+            <Grid>
+
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0"
+                           Text="VEHICLE DATA"
+                           Foreground="White"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Margin="0,0,0,10"/>
+
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Speed"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="SpeedText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               FontWeight="SemiBold"
+                               Text="0.0 km/h"/>
+                </Grid>
+
+                <Grid Grid.Row="2"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Long Accel"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="LongAccelText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               Text="0.00 m/s²"/>
+                </Grid>
+
+                <Grid Grid.Row="3"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Lat Accel"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="LatAccelText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               Text="0.00 m/s²"/>
+                </Grid>
+
+                <Grid Grid.Row="4"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Yaw Rate"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="YawRateText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               Text="0.00 deg/s"/>
+                </Grid>
+
+                <Grid Grid.Row="5"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Heading"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="HeadingText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               Text="0.0°"/>
+                </Grid>
+
+                <Grid Grid.Row="6"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Steering"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="SteeringText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               Text="0.0°"/>
+                </Grid>
+
+                <Grid Grid.Row="7"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="Distance"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock x:Name="DistanceText"
+                               Grid.Column="1"
+                               Foreground="White"
+                               FontWeight="SemiBold"
+                               Text="0.0 m"/>
+                </Grid>
+
+                <Grid Grid.Row="8"
+                      Margin="0,7,0,0">
+
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Text="UDP"
+                               Foreground="#9AA7B5"/>
+
+                    <TextBlock Grid.Column="1"
+                               Foreground="#72D572"
+                               Text="100 Hz"/>
+                </Grid>
+
+            </Grid>
+
+        </Border>
+
+
+        <!-- ========================= -->
+        <!-- 底部控制提示 -->
+        <!-- ========================= -->
+
+        <Border HorizontalAlignment="Center"
+                VerticalAlignment="Bottom"
+                Margin="0,0,0,20"
+                Padding="20,12"
+                Background="#CC111820"
+                CornerRadius="8">
+
+            <StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center">
+
+                    <Border Width="42"
+                            Height="42"
+                            Margin="4"
+                            Background="#28313A"
+                            CornerRadius="5">
+
+                        <TextBlock Text="W"
+                                   Foreground="White"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+
+                </StackPanel>
+
+                <StackPanel Orientation="Horizontal"
+                            HorizontalAlignment="Center">
+
+                    <Border Width="42"
+                            Height="42"
+                            Margin="4"
+                            Background="#28313A"
+                            CornerRadius="5">
+
+                        <TextBlock Text="A"
+                                   Foreground="White"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+
+                    <Border Width="42"
+                            Height="42"
+                            Margin="4"
+                            Background="#28313A"
+                            CornerRadius="5">
+
+                        <TextBlock Text="S"
+                                   Foreground="White"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+
+                    <Border Width="42"
+                            Height="42"
+                            Margin="4"
+                            Background="#28313A"
+                            CornerRadius="5">
+
+                        <TextBlock Text="D"
+                                   Foreground="White"
+                                   FontSize="18"
+                                   FontWeight="Bold"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+
+                </StackPanel>
+
+                <TextBlock Text="W/S  Accel / Brake     A/D  Steering     SPACE  Emergency Brake     R  Reset"
+                           Foreground="#AEB8C2"
+                           FontSize="12"
+                           HorizontalAlignment="Center"
+                           Margin="0,8,0,0"/>
+
+            </StackPanel>
+
+        </Border>
+
+    </Grid>
+
+</Window>
