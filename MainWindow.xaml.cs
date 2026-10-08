@@ -17,7 +17,36 @@ public partial class MainWindow : Window
 
     private UdpReceiver? _udpReceiver;
     private UdpSender? _udpSender;
-    private CsvRecorder? _recorder;
+
+    // ============================================================
+    // 录制（VBO）
+    //
+    // Recorder 在窗口加载时创建，
+    // 但只有在 _recordingState == Recording 时才写入数据。
+    // ============================================================
+
+    private VboRecorder? _recorder;
+
+    private RecordingState _recordingState = RecordingState.Stopped;
+
+    /// <summary>
+    /// 本次测试第一条数据的时间戳（毫秒），用于显示经过时间。
+    /// </summary>
+    private long? _recordingStartTimestamp;
+
+    private DispatcherTimer? _elapsedTimer;
+
+    /// <summary>
+    /// 录制状态机。
+    ///
+    /// Stopped -> Recording <-> Paused -> Stopped
+    /// </summary>
+    private enum RecordingState
+    {
+        Stopped,
+        Recording,
+        Paused
+    }
 
     private CancellationTokenSource? _cancellationTokenSource;
 
@@ -63,9 +92,347 @@ public partial class MainWindow : Window
 
         _uiTimer.Tick += UiTimer_Tick;
 
+        StartClock();
+
         Loaded += MainWindow_Loaded;
 
         Closed += MainWindow_Closed;
+    }
+
+    // ============================================================
+    // 顶部栏时钟（1 秒刷新）
+    // ============================================================
+
+    private DispatcherTimer? _clockTimer;
+
+    private void StartClock()
+    {
+        UpdateClock();
+
+        _clockTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromSeconds(1)
+        };
+
+        _clockTimer.Tick += (_, _) => UpdateClock();
+
+        _clockTimer.Start();
+    }
+
+    private void UpdateClock()
+    {
+        if (ClockText is null)
+            return;
+
+        ClockText.Text = DateTime.Now.ToString(
+            "yyyy-MM-dd HH:mm:ss");
+    }
+
+
+    // ============================================================
+    // 录制状态机
+    //
+    // Stopped -> Recording <-> Paused -> Stopped
+    //
+    // 暂停时只是不写文件，
+    // 实时曲线、数值显示和数据消费都照常运行。
+    // ============================================================
+
+    private void StartRecorder()
+    {
+        _recorder = new VboRecorder(
+            Path.Combine(
+                AppContext.BaseDirectory,
+                "Recordings",
+                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"));
+    }
+
+    private void RecordButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        switch (_recordingState)
+        {
+            case RecordingState.Stopped:
+                ApplyRecordingState(
+                    RecordingState.Recording);
+                break;
+
+            case RecordingState.Recording:
+                ApplyRecordingState(
+                    RecordingState.Paused);
+                break;
+
+            case RecordingState.Paused:
+                ApplyRecordingState(
+                    RecordingState.Recording);
+                break;
+        }
+    }
+
+    private void StopRecordButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ApplyRecordingState(
+            RecordingState.Stopped);
+    }
+
+    /// <summary>
+    /// 切换录制状态，并同步按钮外观和 Elapsed 计时器。
+    /// </summary>
+    private void ApplyRecordingState(
+        RecordingState state)
+    {
+        switch (state)
+        {
+            case RecordingState.Stopped:
+                // 关闭并落盘当前文件。
+                _recorder?.Dispose();
+                _recorder = null;
+
+                _recordingStartTimestamp = null;
+
+                _elapsedTimer?.Stop();
+
+                RecordGlyphText.Text = "●";
+                RecordLabelText.Text = "Start";
+                RecordGlyphText.Foreground = new SolidColorBrush(
+                    Color.FromRgb(0xE0, 0x8A, 0x8A));
+
+                StopRecordButton.IsEnabled = false;
+
+                ElapsedTimeText.Text = "--";
+                break;
+
+            case RecordingState.Recording:
+                // 从停止状态开始时才新建文件；
+                // 从暂停恢复时继续写同一个文件。
+                if (_recorder is null)
+                {
+                    // 让第一条样本重新定义经过时间的零点。
+                    _recordingStartTimestamp = null;
+
+                    StartRecorder();
+                }
+
+                RecordGlyphText.Text = "❚❚";
+                RecordLabelText.Text = "Pause";
+                RecordGlyphText.Foreground = new SolidColorBrush(
+                    Color.FromRgb(0xC8, 0xA3, 0x4A));
+
+                StopRecordButton.IsEnabled = true;
+
+                StartElapsedTimer();
+                break;
+
+            case RecordingState.Paused:
+                RecordGlyphText.Text = "▶";
+                RecordLabelText.Text = "Resume";
+
+                StopRecordButton.IsEnabled = true;
+                break;
+        }
+
+        _recordingState = state;
+    }
+
+    private void StartElapsedTimer()
+    {
+        if (_elapsedTimer is null)
+        {
+            _elapsedTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(500)
+            };
+
+            _elapsedTimer.Tick += (_, _) => UpdateElapsedText();
+        }
+
+        _elapsedTimer.Start();
+    }
+
+    private void UpdateElapsedText()
+    {
+        if (ElapsedTimeText is null)
+            return;
+
+        if (_recordingStartTimestamp is null ||
+            _latestSample is null)
+        {
+            ElapsedTimeText.Text = "00:00:00.0";
+            return;
+        }
+
+        var elapsed =
+            TimeSpan.FromMilliseconds(
+                _latestSample.Timestamp -
+                _recordingStartTimestamp.Value);
+
+        if (elapsed < TimeSpan.Zero)
+        {
+            elapsed = TimeSpan.Zero;
+        }
+
+        ElapsedTimeText.Text =
+            $"{(int)elapsed.TotalHours:00}:" +
+            $"{elapsed.Minutes:00}:" +
+            $"{elapsed.Seconds:00}." +
+            $"{elapsed.Milliseconds / 100}";
+    }
+
+
+    // ============================================================
+    // 离线回放：打开 VBO 文件
+    // ============================================================
+
+    /// <summary>
+    /// 读取一个 VBO 文件并载入到历史缓冲区，
+    /// 载入后曲线和数值显示都会立即刷新。
+    ///
+    /// 返回读到的样本数，失败时返回 0。
+    /// </summary>
+    public int LoadVboFile(string filePath)
+    {
+        try
+        {
+            var reader = new VboReader(filePath);
+
+            var samples = reader.ReadAll();
+
+            if (samples.Count == 0)
+            {
+                return 0;
+            }
+
+            // 离线数据替换掉当前历史，
+            // 避免和实时采集的数据混在一起。
+            _sampleHistory.Clear();
+
+            foreach (var sample in samples)
+            {
+                _sampleHistory.Add(sample);
+            }
+
+            // 控制内存占用：保留最近的样本。
+            while (_sampleHistory.Count > MaxHistorySamples)
+            {
+                _sampleHistory.RemoveAt(0);
+            }
+
+            _latestSample = samples[^1];
+
+            Interlocked.Add(
+                ref _sampleCount,
+                samples.Count);
+
+            RefreshAllPlots();
+
+            UpdateNumericDisplay();
+
+            return samples.Count;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"无法读取 VBO 文件：\n{filePath}\n\n{ex.Message}",
+                "VBO",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+            return 0;
+        }
+    }
+
+
+    // ============================================================
+    // 导航栏页面切换
+    // ============================================================
+
+    private void DashboardNavButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ShowPage(dashboard: true);
+    }
+
+
+    private void ReplayNavButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        ShowPage(dashboard: false);
+    }
+
+
+    private void ShowPage(bool dashboard)
+    {
+        DashboardPage.Visibility =
+            dashboard
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+        ReplayPage.Visibility =
+            dashboard
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+
+        DashboardNavButton.Style =
+            (Style)FindResource(
+                dashboard
+                    ? "NavButtonActiveStyle"
+                    : "NavButtonStyle");
+
+        ReplayNavButton.Style =
+            (Style)FindResource(
+                dashboard
+                    ? "NavButtonStyle"
+                    : "NavButtonActiveStyle");
+    }
+
+
+    // ============================================================
+    // Replay：打开 VBO 文件
+    // ============================================================
+
+    private void OpenVboButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var dialog =
+            new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Open VBO file",
+                Filter =
+                    "VBO files (*.vbo)|*.vbo|All files (*.*)|*.*",
+                InitialDirectory =
+                    Path.Combine(
+                        AppContext.BaseDirectory,
+                        "Recordings")
+            };
+
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+
+        var count = LoadVboFile(dialog.FileName);
+
+        if (count <= 0)
+        {
+            return;
+        }
+
+        // 让用户马上看到曲线，
+        // 否则数据载入了但还停在 Replay 页面上。
+        ShowPage(dashboard: true);
+
+        ReplayFileText.Text =
+            Path.GetFileName(dialog.FileName);
+
+        ReplayInfoText.Text =
+            $"{count} samples loaded";
     }
 
 
@@ -171,6 +538,55 @@ public partial class MainWindow : Window
     // 重建 Plot UI
     // ============================================================
 
+    // ============================================================
+    // ScottPlot 深色主题
+    //
+    // 注意：ScottPlot 5.1.59 里 Plot.Style / PlotStyler 已标记过时，
+    // 官方推荐用 Plot.SetStyle(PlotStyle)。这里用非过时的写法。
+    // ============================================================
+
+    private void ApplyDarkPlotStyle(
+        ScottPlot.WPF.WpfPlot wpfPlot)
+    {
+        var scottPlot =
+            wpfPlot.Plot;
+
+        scottPlot.SetStyle(
+            new ScottPlot.PlotStyle
+            {
+                // 最外层背景（与曲线区卡片一致）
+                FigureBackgroundColor =
+                    ScottPlot.Color.FromHex("#12171E"),
+
+                // 绘图区背景
+                DataBackgroundColor =
+                    ScottPlot.Color.FromHex("#0E131A"),
+
+                // 坐标轴 / 刻度文字
+                AxisColor =
+                    ScottPlot.Color.FromHex("#8A94A6"),
+
+                // 网格线
+                GridMajorLineColor =
+                    ScottPlot.Color.FromHex("#232C38"),
+
+                // 图例
+                LegendBackgroundColor =
+                    ScottPlot.Color.FromHex("#12171E"),
+
+                LegendFontColor =
+                    ScottPlot.Color.FromHex("#C3CBD8"),
+
+                LegendOutlineColor =
+                    ScottPlot.Color.FromHex("#1E2530"),
+
+                // 曲线配色
+                Palette =
+                    new ScottPlot.Palettes.Dark()
+            });
+    }
+
+
     private void RefreshPlotContainer()
     {
         PlotContainer.Children.Clear();
@@ -195,12 +611,19 @@ public partial class MainWindow : Window
     {
         var outerBorder = new Border
         {
+            Background =
+                new SolidColorBrush(
+                    Color.FromRgb(
+                        0x0E,
+                        0x13,
+                        0x1A)),
+
             BorderBrush =
                 new SolidColorBrush(
                     Color.FromRgb(
-                        208,
-                        208,
-                        208)),
+                        0x1E,
+                        0x25,
+                        0x30)),
 
             BorderThickness =
                 new Thickness(1),
@@ -311,6 +734,15 @@ public partial class MainWindow : Window
         {
             Text = "Plot Name",
 
+            Foreground =
+                new SolidColorBrush(
+                    Color.FromRgb(
+                        0x8A,
+                        0x94,
+                        0xA6)),
+
+            FontSize = 11,
+
             FontWeight =
                 FontWeights.Bold,
 
@@ -338,6 +770,12 @@ public partial class MainWindow : Window
             VerticalContentAlignment =
                 VerticalAlignment.Center
         };
+
+
+        // 深色样式（App.xaml 提供）
+        nameTextBox.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "DarkTextBoxStyle");
 
 
         nameTextBox.TextChanged +=
@@ -409,14 +847,17 @@ public partial class MainWindow : Window
         {
             Content = "+ Channel",
 
-            Height = 28,
-
-            Padding =
-                new Thickness(12, 0, 12, 0),
+            Height = 26,
 
             Margin =
                 new Thickness(0, 0, 8, 0)
         };
+
+
+        // 深色样式（App.xaml 提供）
+        addChannelButton.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "ToolButtonStyle");
 
 
         addChannelButton.Click +=
@@ -442,11 +883,14 @@ public partial class MainWindow : Window
         {
             Content = "Remove Plot",
 
-            Height = 28,
-
-            Padding =
-                new Thickness(12, 0, 12, 0)
+            Height = 26
         };
+
+
+        // 深色样式 + 危险操作配色（App.xaml 提供）
+        removePlotButton.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "DangerButtonStyle");
 
 
         removePlotButton.Click +=
@@ -525,6 +969,8 @@ public partial class MainWindow : Window
 
         wpfPlot.Height = 350;
 
+        ApplyDarkPlotStyle(wpfPlot);
+
         plot.WpfPlot = wpfPlot;
 
 
@@ -597,6 +1043,15 @@ public partial class MainWindow : Window
         {
             Text = "Channel",
 
+            Foreground =
+                new SolidColorBrush(
+                    Color.FromRgb(
+                        0x8A,
+                        0x94,
+                        0xA6)),
+
+            FontSize = 11,
+
             VerticalAlignment =
                 VerticalAlignment.Center
         };
@@ -657,6 +1112,15 @@ public partial class MainWindow : Window
                 GetSignalUnit(
                     channel.Signal),
 
+            Foreground =
+                new SolidColorBrush(
+                    Color.FromRgb(
+                        0x8A,
+                        0x94,
+                        0xA6)),
+
+            FontSize = 11,
+
             VerticalAlignment =
                 VerticalAlignment.Center,
 
@@ -695,9 +1159,17 @@ public partial class MainWindow : Window
 
             Height = 26,
 
+            FontSize = 13,
+
             Padding =
                 new Thickness(0)
         };
+
+
+        // 深色样式 + 危险操作配色（App.xaml 提供）
+        removeButton.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "DangerButtonStyle");
 
 
         removeButton.Click +=
@@ -1039,6 +1511,12 @@ public partial class MainWindow : Window
         }
 
 
+        // ScottPlot 5 的 Clear() 会把样式复位，
+        // 所以每次重建曲线后都重新套一遍深色主题。
+        ApplyDarkPlotStyle(
+            plot.WpfPlot);
+
+
         plot.WpfPlot.Refresh();
     }
 
@@ -1319,25 +1797,20 @@ public partial class MainWindow : Window
         if (sample is null)
             return;
 
+        // ------------------------------------------------------------
+        // 数值显示已迁移到 Controls\DashboardPanel。
+        //
+        // 注意：VehicleSample 目前没有 SteeringAngleDeg 字段，
+        // 也没有对应的 UDP 数据字段，所以方向盘角度暂时显示 0。
+        // 等协议扩展后，把 sample.SteeringAngleDeg 传进来即可。
+        // ------------------------------------------------------------
 
-        SpeedValueText.Text =
-            sample.SpeedKph.ToString("F2");
-
-
-        LongitudinalAccelerationValueText.Text =
-            sample.LongitudinalAcceleration.ToString("F2");
-
-
-        LateralAccelerationValueText.Text =
-            sample.LateralAcceleration.ToString("F2");
-
-
-        VerticalAccelerationValueText.Text =
-            sample.VerticalAcceleration.ToString("F2");
-
-
-        YawRateValueText.Text =
-            sample.YawRate.ToString("F2");
+        DashboardPanelControl.SetValues(
+            speedKph: sample.SpeedKph,
+            longitudinalAcceleration: sample.LongitudinalAcceleration,
+            lateralAcceleration: sample.LateralAcceleration,
+            yawRate: sample.YawRate,
+            steeringAngleDeg: 0.0);
     }
 
 
@@ -1423,8 +1896,20 @@ public partial class MainWindow : Window
                     ref _sampleCount);
 
 
-                _recorder?.TryWrite(
-                    sample);
+                // 只有正在录制时才写入文件。
+                //
+                // 暂停时刻意让"经过时间"按真实时间继续走：
+                // VboRecorder 内部以第一条数据为原点，
+                // 恢复后第一行的 Elapsed_time 会自然跳过暂停时长。
+                if (_recordingState ==
+                    RecordingState.Recording)
+                {
+                    _recordingStartTimestamp ??=
+                        sample.Timestamp;
+
+                    _recorder?.TryWrite(
+                        sample);
+                }
             }
         }
     }
@@ -1466,14 +1951,13 @@ public partial class MainWindow : Window
 
         // ========================================================
         // Recorder
+        //
+        // 不在启动时创建文件。
+        // 顶部栏的 ● Start 按钮会创建文件并开始记录，
+        // ■ Stop 会关闭文件。
+        //
+        // 关闭窗口时由 MainWindow_Closed 统一 Dispose。
         // ========================================================
-
-        _recorder =
-            new CsvRecorder(
-                Path.Combine(
-                    AppContext.BaseDirectory,
-                    "Recordings",
-                    $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.csv"));
 
 
         // ========================================================
