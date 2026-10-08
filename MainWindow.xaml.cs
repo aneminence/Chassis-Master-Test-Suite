@@ -1249,6 +1249,10 @@ public partial class MainWindow : Window
             {
                 RefreshPlot(plot);
             }
+
+            // 轨迹图。SetTrack 内部按 250 ms 限流，
+            // 所以这里跟着 10 Hz 的 UI 定时器调也不会重画太频繁。
+            TrackMapPanelControl.SetTrack(_sampleHistory);
         }
         finally
         {

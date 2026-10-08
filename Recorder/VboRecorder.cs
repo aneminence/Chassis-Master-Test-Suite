@@ -49,6 +49,29 @@ public sealed class VboRecorder : IDisposable
     private const string NewLine = "\r\n";
 
     /// <summary>
+    /// [column names] 段的列短名，顺序与数据行完全一致。
+    ///
+    /// 这些短名同时是 VboReader 解析时查找的键
+    /// （time / velocity / Longacc / Latacc / Yaw_Rate / heading
+    ///   / lat / long / height / Z_Accel），
+    /// 改这里必须同步改 VboReader，否则读回来全是 0。
+    /// </summary>
+    private static readonly string[] ColumnNames =
+    {
+        "time",
+        "Elapsed_time",
+        "velocity",
+        "Longacc",
+        "Latacc",
+        "Yaw_Rate",
+        "heading",
+        "lat",
+        "long",
+        "height",
+        "Z_Accel"
+    };
+
+    /// <summary>
     /// 与 CsvRecorder 一致：按真实时间 Flush，
     /// 不依赖采样频率（旧代码用 Sequence % 200 隐含假设了 200 Hz）。
     /// </summary>
@@ -143,18 +166,22 @@ public sealed class VboRecorder : IDisposable
         _writer.WriteLine();
 
         // 段 1：[header] 通道全名
+        //
+        // 命名对齐 Racelogic 原厂 VBO 的写法
+        // （例如 "velocity kmh" 而不是 "Velocity"），
+        // 这样 VBOX Test Suite 的通道映射才认得出来。
         _writer.WriteLine("[header]");
         _writer.WriteLine("time");
         _writer.WriteLine("Elapsed time");
-        _writer.WriteLine("Velocity");
-        _writer.WriteLine("Longitudinal acceleration");
-        _writer.WriteLine("Lateral acceleration");
+        _writer.WriteLine("velocity kmh");
+        _writer.WriteLine("Long accel g");
+        _writer.WriteLine("Lat accel g");
         _writer.WriteLine("Yaw rate");
-        _writer.WriteLine("Heading");
-        _writer.WriteLine("Latitude");
-        _writer.WriteLine("Longitude");
-        _writer.WriteLine("Height");
-        _writer.WriteLine("Vertical acceleration");
+        _writer.WriteLine("heading");
+        _writer.WriteLine("latitude");
+        _writer.WriteLine("longitude");
+        _writer.WriteLine("height");
+        _writer.WriteLine("Z accel g");
         _writer.WriteLine();
 
         // 段 2：[channel units] 单位，与列一一对应
@@ -195,18 +222,16 @@ public sealed class VboRecorder : IDisposable
         _writer.WriteLine();
 
         // 段 5：[column names] 列短名，解析时以此为准
+        //
+        // 【关键】全部通道名必须写在“同一行”，用空格分隔 ——
+        // 这是 Racelogic VBO 的格式。
+        // 曾经写成"一行一个通道名"，结果 VBOX Test Suite 只把
+        // 第一行当成一个通道，整个文件的通道表都是坏的，
+        // 打开时直接报 "primary channel(s) missing. Speed"。
+        //
+        // 结尾留一个空格，与原厂文件一致。
         _writer.WriteLine("[column names]");
-        _writer.WriteLine("time");
-        _writer.WriteLine("Elapsed_time");
-        _writer.WriteLine("velocity");
-        _writer.WriteLine("Longacc");
-        _writer.WriteLine("Latacc");
-        _writer.WriteLine("Yaw_Rate");
-        _writer.WriteLine("heading");
-        _writer.WriteLine("lat");
-        _writer.WriteLine("long");
-        _writer.WriteLine("height");
-        _writer.WriteLine("Z_Accel");
+        _writer.WriteLine(string.Join(" ", ColumnNames) + " ");
         _writer.WriteLine();
 
         // 段 6：[data] 数据起始标记
@@ -297,7 +322,11 @@ public sealed class VboRecorder : IDisposable
             (sample.Latitude * 60.0).ToString(
                 "F8",
                 CultureInfo.InvariantCulture),
-            (sample.Longitude * 60.0).ToString(
+
+            // 取负号：VBO 的经度符号与常规约定相反（详见 VboReader 里的说明）。
+            // VehicleSample.Longitude 是"正 = 东经"，
+            // VBO 要写成"负 = 东经"，所以这里反过来。
+            (-sample.Longitude * 60.0).ToString(
                 "F8",
                 CultureInfo.InvariantCulture),
             sample.Altitude.ToString(
@@ -333,10 +362,24 @@ public sealed class VboRecorder : IDisposable
     }
 
     /// <summary>
+    /// 是否已经释放过。
+    /// Dispose() 必须可以重复调用（C# 的 using / 上层重复关闭
+    /// 都会触发），否则第二次会抛 ObjectDisposedException。
+    /// </summary>
+    private bool _disposed;
+
+    /// <summary>
     /// 停止后台写入，等待队列中数据全部落盘。
     /// </summary>
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         // 不再接受新数据，通知后台循环排空后退出。
         _channel.Writer.TryComplete();
 

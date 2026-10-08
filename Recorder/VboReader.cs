@@ -256,7 +256,14 @@ public sealed class VboReader
             Heading = Get("heading"),
 
             Latitude = Get("lat") / 60.0,
-            Longitude = Get("long") / 60.0,
+
+            // Racelogic 的 VBO 里经度符号与常规约定相反：
+            // 负值是东经、正值是西经（本文件 -7238.68 角分实际是 120.6446°E，
+            // 33.25°N 120.64°E 也正好落在 [SessionData] 声明的 China Standard Time）。
+            // 所以这里取负号，把 VehicleSample.Longitude 规范成
+            // "正 = 东经、负 = 西经"，跟 Simulator 和以后的地图瓦片保持一致。
+            // VboRecorder 写文件时要做同样的反变换。
+            Longitude = -Get("long") / 60.0,
 
             Altitude = Get("height")
         };

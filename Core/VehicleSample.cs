@@ -1,4 +1,4 @@
-﻿namespace Chassis_Master_Test_Suite.Core;
+namespace Chassis_Master_Test_Suite.Core;
 
 /// <summary>
 /// CMTS 中统一的车辆动态数据样本。
@@ -44,12 +44,16 @@ public sealed class VehicleSample
     public double YawRate { get; init; }
 
     /// <summary>
-    /// 纬度，单位：deg。
+    /// 纬度，单位：deg。正 = 北纬，负 = 南纬。
     /// </summary>
     public double Latitude { get; init; }
 
     /// <summary>
-    /// 经度，单位：deg。
+    /// 经度，单位：deg。正 = 东经，负 = 西经。
+    ///
+    /// 注意：这个约定和 Racelogic VBO 文件里的符号是相反的
+    /// （VBO 里负值是东经）。换算在 VboReader / VboRecorder 里做，
+    /// 不许直接拷贝，否则轨迹会左右镜像。
     /// </summary>
     public double Longitude { get; init; }
 

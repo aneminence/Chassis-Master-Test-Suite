@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:Chassis_Master_Test_Suite.Controls"
         Title="Chassis Master Test Suite"
+        Icon="pack://application:,,,/Assets/icon.ico"
         Height="900"
         Width="1400"
         MinHeight="760"
@@ -247,7 +248,8 @@
                           Style="{StaticResource SplitterStyle}"/>
 
             <!-- ③ Track Map -->
-            <controls:TrackMapPanel Grid.Column="4"
+            <controls:TrackMapPanel x:Name="TrackMapPanelControl"
+                                    Grid.Column="4"
                                     Margin="4,0,0,0"/>
 
             </Grid>

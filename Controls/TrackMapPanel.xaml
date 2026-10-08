@@ -57,10 +57,9 @@
                         FontSize="13"
                         Padding="4,0"
                         IsEnabled="False"/>
-
             </Grid>
 
-            <!-- 地图区（未开发） -->
+            <!-- 地图区 -->
             <Border Grid.Row="1"
                     Background="#0A0F15"
                     BorderBrush="#1E2530"
@@ -68,40 +67,43 @@
                     CornerRadius="4"
                     ClipToBounds="True">
 
-                <Grid>
+                <Grid x:Name="MapHost">
 
-                    <!-- 占位网格背景 -->
-                    <Canvas ClipToBounds="True">
+                    <!-- 第 1 层：轨迹（ScottPlot 自己画，坐标轴刻度全部隐藏） -->
+                    <Grid x:Name="PlotHost"/>
 
-                        <!-- 纵向参考线 -->
-                        <Line X1="120" Y1="0" X2="120" Y2="1200"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="240" Y1="0" X2="240" Y2="1200"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="360" Y1="0" X2="360" Y2="1200"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="480" Y1="0" X2="480" Y2="1200"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="600" Y1="0" X2="600" Y2="1200"
-                              Stroke="#151C24" StrokeThickness="1"/>
+                    <!-- 第 2 层：比例尺网格
+                         刻意做成"屏幕层"覆盖物：
+                         拖动时完全不动，只有缩放时间距跟着变。
+                         它是用户拿来核对尺寸的参考底图，
+                         不参与任何经纬度换算。 -->
+                    <Canvas x:Name="GridOverlay"
+                            IsHitTestVisible="False"
+                            ClipToBounds="True"/>
 
-                        <!-- 横向参考线 -->
-                        <Line X1="0" Y1="100" X2="1200" Y2="100"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="0" Y1="200" X2="1200" Y2="200"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="0" Y1="300" X2="1200" Y2="300"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="0" Y1="400" X2="1200" Y2="400"
-                              Stroke="#151C24" StrokeThickness="1"/>
-                        <Line X1="0" Y1="500" X2="1200" Y2="500"
-                              Stroke="#151C24" StrokeThickness="1"/>
+                    <!-- 第 3 层：悬停速度提示 -->
+                    <Border x:Name="HoverTip"
+                            Visibility="Collapsed"
+                            IsHitTestVisible="False"
+                            Background="#CC161D26"
+                            BorderBrush="#C8A34A"
+                            BorderThickness="1"
+                            CornerRadius="3"
+                            Padding="7,3"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top">
 
-                    </Canvas>
+                        <TextBlock x:Name="HoverTipText"
+                                   Foreground="#E6EAF0"
+                                   FontSize="11"
+                                   FontFamily="Consolas"/>
+                    </Border>
 
-                    <!-- 占位提示 -->
-                    <StackPanel HorizontalAlignment="Center"
-                                VerticalAlignment="Center">
+                    <!-- 无数据提示 -->
+                    <StackPanel x:Name="EmptyHint"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                IsHitTestVisible="False">
 
                         <TextBlock Text="Track Map"
                                    Foreground="#4A5568"
@@ -109,24 +111,19 @@
                                    FontWeight="SemiBold"
                                    HorizontalAlignment="Center"/>
 
-                        <TextBlock Text="Vehicle test trajectory"
+                        <TextBlock Text="Waiting for GPS data"
                                    Foreground="#39424F"
                                    FontSize="11"
                                    Margin="0,8,0,0"
                                    HorizontalAlignment="Center"/>
 
-                        <TextBlock Text="Not implemented yet"
-                                   Foreground="#C8A34A"
-                                   FontSize="11"
-                                   Margin="0,14,0,0"
-                                   HorizontalAlignment="Center"/>
-
                     </StackPanel>
 
-                    <!-- 右下角：比例尺 + 坐标（占位） -->
+                    <!-- 右下角：当前坐标 -->
                     <StackPanel HorizontalAlignment="Right"
                                 VerticalAlignment="Bottom"
-                                Margin="0,0,14,14">
+                                Margin="0,0,14,14"
+                                IsHitTestVisible="False">
 
                         <StackPanel Orientation="Horizontal"
                                     HorizontalAlignment="Right">
@@ -136,7 +133,8 @@
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
-                            <TextBlock Text="--"
+                            <TextBlock x:Name="LatText"
+                                       Text="--"
                                        Foreground="#8A94A6"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
@@ -152,7 +150,8 @@
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
-                            <TextBlock Text="--"
+                            <TextBlock x:Name="LonText"
+                                       Text="--"
                                        Foreground="#8A94A6"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
@@ -168,7 +167,8 @@
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
-                            <TextBlock Text="--"
+                            <TextBlock x:Name="AltText"
+                                       Text="--"
                                        Foreground="#8A94A6"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
