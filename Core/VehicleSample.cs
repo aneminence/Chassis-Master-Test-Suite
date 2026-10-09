@@ -6,6 +6,9 @@ namespace Chassis_Master_Test_Suite.Core;
 /// </summary>
 public sealed class VehicleSample
 {
+    private static readonly IReadOnlyDictionary<string, double> EmptyChannels =
+        new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// 数据采集时间戳。
     /// 优先使用设备提供的时间。
@@ -66,4 +69,58 @@ public sealed class VehicleSample
     /// 航向角，单位：deg。
     /// </summary>
     public double Heading { get; init; }
+
+    /// <summary>
+    /// 全部通道数值，键为 VBO 列短名（或 live 核心 Id）。
+    /// UI / 曲线统一通过 <see cref="GetChannel"/> 读取。
+    /// </summary>
+    public IReadOnlyDictionary<string, double> Channels { get; init; } =
+        EmptyChannels;
+
+    /// <summary>
+    /// 按通道 Id 取值。优先 Channels；核心字段有 typed 回退。
+    /// </summary>
+    public double GetChannel(string channelId)
+    {
+        if (Channels.TryGetValue(channelId, out var value))
+            return value;
+
+        return channelId switch
+        {
+            ChannelIds.Velocity => SpeedKph,
+            ChannelIds.Longacc => LongitudinalAcceleration,
+            ChannelIds.Latacc => LateralAcceleration,
+            ChannelIds.ZAccel => VerticalAcceleration,
+            ChannelIds.YawRate => YawRate,
+            ChannelIds.Heading => Heading,
+            ChannelIds.Latitude => Latitude,
+            ChannelIds.Longitude => Longitude,
+            ChannelIds.Height => Altitude,
+            _ => 0.0
+        };
+    }
+
+    /// <summary>
+    /// 用当前 typed 核心字段生成 Channels 字典（供 live 源构造样本）。
+    /// </summary>
+    public static Dictionary<string, double> BuildCoreChannels(
+        double speedKph,
+        double longitudinalAcceleration,
+        double lateralAcceleration,
+        double verticalAcceleration,
+        double yawRate,
+        double heading,
+        double latitude,
+        double longitude,
+        double altitude) =>
+        ChannelRegistry.BuildCoreChannelMap(
+            speedKph,
+            longitudinalAcceleration,
+            lateralAcceleration,
+            verticalAcceleration,
+            yawRate,
+            heading,
+            latitude,
+            longitude,
+            altitude);
 }

@@ -215,7 +215,7 @@ public sealed class VboReader
             return null;
         }
 
-        double Get(string name)
+        double Raw(string name)
         {
             if (!_columnIndex.TryGetValue(name, out var index))
             {
@@ -236,37 +236,80 @@ public sealed class VboReader
                 : 0.0;
         }
 
+        // 先把所有列读入字典（原始 VBO 数值）。
+        var channels = new Dictionary<string, double>(
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < Columns.Count; i++)
+        {
+            if (i >= tokens.Length)
+            {
+                break;
+            }
+
+            if (double.TryParse(
+                    tokens[i],
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out var value))
+            {
+                channels[Columns[i]] = value;
+            }
+        }
+
+        var speed = Raw("velocity");
+        var longAcc = Raw("Longacc") * StandardGravity;
+        var latAcc = Raw("Latacc") * StandardGravity;
+        var vertAcc = Raw("Z_Accel") * StandardGravity;
+        var yawRate = Raw("Yaw_Rate");
+        var heading = Raw("heading");
+        var latitude = Raw("lat") / 60.0;
+
+        // Racelogic 的 VBO 里经度符号与常规约定相反：
+        // 负值是东经、正值是西经。取负号规范成“正 = 东经”。
+        var longitude = -Raw("long") / 60.0;
+        var altitude = Raw("height");
+
+        // 核心通道写入 CMTS 内部单位，覆盖原始 g / arcmin。
+        channels[ChannelIds.Velocity] = speed;
+        channels[ChannelIds.Longacc] = longAcc;
+        channels[ChannelIds.Latacc] = latAcc;
+        channels[ChannelIds.ZAccel] = vertAcc;
+        channels[ChannelIds.YawRate] = yawRate;
+        channels[ChannelIds.Heading] = heading;
+        channels[ChannelIds.Latitude] = latitude;
+        channels[ChannelIds.Longitude] = longitude;
+        channels[ChannelIds.Height] = altitude;
+
+        // IMU 加速度列同样按 g → m/s²（与 Longacc/Latacc/Z_Accel 一致）。
+        ConvertGIfPresent(channels, "X_Accel");
+        ConvertGIfPresent(channels, "Y_Accel");
+
         return new VehicleSample
         {
-            Timestamp = ParseTimeColumn(Get("time")),
+            Timestamp = ParseTimeColumn(Raw("time")),
             Sequence = sequence,
-
-            SpeedKph = Get("velocity"),
-
-            LongitudinalAcceleration =
-                Get("Longacc") * StandardGravity,
-
-            LateralAcceleration =
-                Get("Latacc") * StandardGravity,
-
-            VerticalAcceleration =
-                Get("Z_Accel") * StandardGravity,
-
-            YawRate = Get("Yaw_Rate"),
-            Heading = Get("heading"),
-
-            Latitude = Get("lat") / 60.0,
-
-            // Racelogic 的 VBO 里经度符号与常规约定相反：
-            // 负值是东经、正值是西经（本文件 -7238.68 角分实际是 120.6446°E，
-            // 33.25°N 120.64°E 也正好落在 [SessionData] 声明的 China Standard Time）。
-            // 所以这里取负号，把 VehicleSample.Longitude 规范成
-            // "正 = 东经、负 = 西经"，跟 Simulator 和以后的地图瓦片保持一致。
-            // VboRecorder 写文件时要做同样的反变换。
-            Longitude = -Get("long") / 60.0,
-
-            Altitude = Get("height")
+            SpeedKph = speed,
+            LongitudinalAcceleration = longAcc,
+            LateralAcceleration = latAcc,
+            VerticalAcceleration = vertAcc,
+            YawRate = yawRate,
+            Heading = heading,
+            Latitude = latitude,
+            Longitude = longitude,
+            Altitude = altitude,
+            Channels = channels
         };
+    }
+
+    private static void ConvertGIfPresent(
+        Dictionary<string, double> channels,
+        string name)
+    {
+        if (channels.TryGetValue(name, out var raw))
+        {
+            channels[name] = raw * StandardGravity;
+        }
     }
 
     /// <summary>
