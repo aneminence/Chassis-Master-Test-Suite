@@ -8,11 +8,16 @@ namespace Chassis_Master_Test_Suite.Core;
 /// </summary>
 public sealed class ChannelRegistry
 {
-    public static ChannelRegistry Instance { get; } = new();
-
     /// <summary>合成时间轴，始终可选作 X。</summary>
+    /// <remarks>
+    /// 必须声明在 <see cref="Instance"/> 之前：C# 静态字段按文本顺序初始化，
+    /// 若 Instance 先 new()，构造里 SetLiveCore 读到的 AxisTime 仍是 null，
+    /// 会把空槽塞进 Available，启动时 DefaultPlotChannelId/IsAvailable 直接 NRE。
+    /// </remarks>
     public static ChannelInfo AxisTime { get; } =
         new(ChannelIds.AxisTime, "Time", "Beijing", isSyntheticTime: true);
+
+    public static ChannelRegistry Instance { get; } = new();
 
     private readonly Dictionary<string, ChannelInfo> _catalog =
         new(StringComparer.OrdinalIgnoreCase);
@@ -33,7 +38,7 @@ public sealed class ChannelRegistry
 
     /// <summary>可用于曲线 Y 轴的通道（排除合成 Time）。</summary>
     public IReadOnlyList<ChannelInfo> AvailablePlotChannels =>
-        _available.Where(c => !c.IsSyntheticTime).ToList();
+        _available.Where(c => c is { IsSyntheticTime: false }).ToList();
 
     /// <summary>默认 Y 通道（优先 velocity）。</summary>
     public string DefaultPlotChannelId
@@ -51,12 +56,15 @@ public sealed class ChannelRegistry
     public event EventHandler? AvailableChanged;
 
     public bool IsAvailable(string channelId) =>
+        channelId is not null &&
         _available.Any(c =>
+            c is not null &&
             string.Equals(c.Id, channelId, StringComparison.OrdinalIgnoreCase));
 
     public bool TryGet(string channelId, out ChannelInfo info)
     {
         var match = _available.FirstOrDefault(c =>
+            c is not null &&
             string.Equals(c.Id, channelId, StringComparison.OrdinalIgnoreCase));
 
         if (match is not null)
@@ -113,7 +121,9 @@ public sealed class ChannelRegistry
 
     private void SetAvailable(IEnumerable<string> channelIds)
     {
-        var list = new List<ChannelInfo> { AxisTime };
+        var list = new List<ChannelInfo>();
+        if (AxisTime is not null)
+            list.Add(AxisTime);
 
         foreach (var id in channelIds)
         {
