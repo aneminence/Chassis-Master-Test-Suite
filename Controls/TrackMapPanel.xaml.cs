@@ -39,7 +39,7 @@ public partial class TrackMapPanel : UserControl
     /// 网格线大致每隔这么多像素一条。
     /// 实际间距会被 NiceDistanceStep 收敛成 1/2/5/10... 的整齐米数。
     /// </summary>
-    private const double GridTargetPixels = 80.0;
+    private const double GridTargetPixels = 20.0;
 
     /// <summary>
     /// 实时刷新限流。MainWindow 的 UI 定时器是 10 Hz，
@@ -72,7 +72,25 @@ public partial class TrackMapPanel : UserControl
 
     private ScottPlot.Plottables.Scatter? _track;
 
+    /// <summary>曲线光标对应的车辆位置标记。</summary>
+    private ScottPlot.Plottables.Marker? _cursorMarker;
+
+    /// <summary>当前光标样本；null 表示跟最新点。</summary>
+    private VehicleSample? _cursorSample;
+
     private bool _hasData;
+
+    /// <summary>
+    /// 用户是否已手动平移/缩放。为 true 后重建轨迹不再 AutoFit，
+    /// 并在 Plot.Clear() 后恢复原先视野（否则 ScottPlot 会对 unset 轴自动缩放到数据）。
+    /// 换数据源或 Clear 时复位。
+    /// </summary>
+    private bool _userHasAdjustedView;
+
+    /// <summary>
+    /// 本次左键按下是点选轨迹（不是拖动画布）。为 true 时忽略左键拖动锁定。
+    /// </summary>
+    private bool _leftDownWasTrackPick;
 
     // 网格重绘缓存：间距和尺寸都没变就不用重画。
     private double _drawnSpacing;
@@ -96,6 +114,11 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public int SampleCount => _samples.Count;
 
+    /// <summary>
+    /// 用户在轨迹上点选样本时触发（供曲线光标 / Dashboard 同步）。
+    /// </summary>
+    public event Action<VehicleSample>? SampleSelected;
+
     // ============================================================
     // 初始化
     // ============================================================
@@ -117,18 +140,32 @@ public partial class TrackMapPanel : UserControl
 
         ApplyDarkStyle();
 
+        // 背景透明，让下方 GridOverlay 网格透出来（网格在轨迹之下）。
+        _wpfPlot.Background = Brushes.Transparent;
+
+        // Clear() 后轴会变成 unset，下一帧 AutoscaleUnsetAxesToData 会把视野弹回；
+        // 关掉持续自动缩放，视野只由我们显式 SetLimits / AutoFit 控制。
+        plot.Axes.ContinuouslyAutoscale = false;
+
         // 保留 ScottPlot 默认交互（左键拖动平移、滚轮缩放、右键拖动缩放）。
         _wpfPlot.UserInputProcessor.Reset();
 
-        // 显式确保左键拖动 = 平移。
+        // 显式确保左键拖动 = 平移（点在轨迹上时由我们接管，见 PreviewMouseLeftButtonDown）。
         _wpfPlot.UserInputProcessor.LeftClickDragPan(
             enable: true,
             horizontal: true,
             vertical: true);
 
+        // 关掉中键单击自动缩放（默认会把图缩回全图，和用户手动视野冲突）。
+        _wpfPlot.UserInputProcessor.RemoveAll<
+            ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
+
         plot.RenderManager.RenderFinished += (_, _) => UpdateGridOverlay();
 
         _wpfPlot.PreviewMouseMove += WpfPlot_PreviewMouseMove;
+        _wpfPlot.PreviewMouseLeftButtonDown += WpfPlot_PreviewMouseLeftButtonDown;
+        _wpfPlot.PreviewMouseDown += WpfPlot_PreviewMouseDown;
+        _wpfPlot.PreviewMouseWheel += WpfPlot_PreviewMouseWheel;
         _wpfPlot.MouseLeave += WpfPlot_MouseLeave;
     }
 
@@ -138,11 +175,13 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     private void ApplyDarkStyle()
     {
+        // Alpha=0：网格 Canvas 在 Plot 下方可见，轨迹画在网格之上
+        var transparent = ScottPlot.Colors.Transparent;
         _wpfPlot.Plot.SetStyle(
             new ScottPlot.PlotStyle
             {
-                FigureBackgroundColor = ScottPlot.Color.FromHex("#0A0F15"),
-                DataBackgroundColor = ScottPlot.Color.FromHex("#0A0F15"),
+                FigureBackgroundColor = transparent,
+                DataBackgroundColor = transparent,
                 Palette = new ScottPlot.Palettes.Dark()
             });
     }
@@ -194,7 +233,10 @@ public partial class TrackMapPanel : UserControl
         _projection = null;
         _projectionAnchor = null;
         _track = null;
+        _cursorMarker = null;
+        _cursorSample = null;
         _hasData = false;
+        _userHasAdjustedView = false;
 
         _wpfPlot.Plot.Clear();
 
@@ -223,6 +265,9 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
+        // 显式复位视野时重新允许后续自动取景
+        _userHasAdjustedView = false;
+
         var (minX, maxX, minY, maxY) = GetBounds(_samples, _projection);
 
         var padX = Math.Max((maxX - minX) * 0.08, 5.0);
@@ -235,6 +280,21 @@ public partial class TrackMapPanel : UserControl
             maxY + padY);
 
         _wpfPlot.Refresh();
+    }
+
+    /// <summary>
+    /// 用曲线光标对应的样本更新车辆位置标记。
+    /// sample 为 null 时清除标记，坐标读数回到轨迹最新点。
+    /// </summary>
+    public void SetCursorSample(VehicleSample? sample)
+    {
+        // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
+        if (ReferenceEquals(_cursorSample, sample))
+            return;
+
+        _cursorSample = sample;
+        UpdateCursorMarker(refresh: true);
+        UpdateCoordinateReadout();
     }
 
     // ============================================================
@@ -251,6 +311,13 @@ public partial class TrackMapPanel : UserControl
             || Math.Abs(_projectionAnchor.Value.Latitude - first.Latitude) > 1e-9
             || Math.Abs(_projectionAnchor.Value.Longitude - first.Longitude) > 1e-9;
 
+        // Clear() 会让轴变 unset，下一帧可能自动缩放到数据；
+        // 用户已手动取景时必须先记下视野，重建后再写回去。
+        var hadData = _hasData;
+        var savedLimits = hadData
+            ? _wpfPlot.Plot.Axes.GetLimits()
+            : default;
+
         _samples.Clear();
         _samples.AddRange(samples);
 
@@ -261,6 +328,8 @@ public partial class TrackMapPanel : UserControl
         {
             _projection = TrackProjection.FitToTrack(_samples);
             _projectionAnchor = (first.Latitude, first.Longitude);
+            // 新数据源：重新允许自动取景
+            _userHasAdjustedView = false;
         }
 
         var projection = _projection!;
@@ -293,6 +362,7 @@ public partial class TrackMapPanel : UserControl
 
         // Clear() 会复位样式，必须重新套。
         ApplyDarkStyle();
+        _wpfPlot.Plot.Axes.ContinuouslyAutoscale = false;
 
         _track = _wpfPlot.Plot.Add.ScatterLine(
             xs,
@@ -308,34 +378,49 @@ public partial class TrackMapPanel : UserControl
 
         UpdateCoordinateReadout();
 
-        // 换数据源时重新取景；实时采集时只在轨迹跑出视图后才重新取景。
-        if (needNewProjection || IsLatestPointOutsideView(projection))
+        // Clear() 清掉了光标标记，重建后再画上
+        _cursorMarker = null;
+        UpdateCursorMarker(refresh: false);
+
+        // 首包 / 换数据源 / 用户尚未手动操作 → 自动取景；
+        // 用户已平移缩放 → 恢复 Clear 前的视野，绝不弹回全图。
+        if (!_userHasAdjustedView)
         {
             AutoFit();
         }
         else
         {
+            _wpfPlot.Plot.Axes.SetLimits(savedLimits);
             _wpfPlot.Refresh();
         }
     }
 
-    private bool IsLatestPointOutsideView(TrackProjection projection)
+    /// <summary>
+    /// 标记用户已手动改过视野，后续实时刷新不再 AutoFit。
+    /// </summary>
+    private void MarkUserAdjustedView()
     {
-        if (_samples.Count == 0)
+        if (!_hasData)
         {
-            return false;
+            return;
         }
 
-        var (x, y) = projection.ToMeters(
-            _samples[^1].Latitude,
-            _samples[^1].Longitude);
+        _userHasAdjustedView = true;
+    }
 
-        var limits = _wpfPlot.Plot.Axes.GetLimits();
+    private void WpfPlot_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        // 左键可能是点选轨迹（见 PreviewMouseLeftButtonDown），不在这里锁定；
+        // 中键平移、右键缩放才算手动改视野。
+        if (e.ChangedButton is MouseButton.Middle or MouseButton.Right)
+        {
+            MarkUserAdjustedView();
+        }
+    }
 
-        return x < limits.Left
-            || x > limits.Right
-            || y < limits.Bottom
-            || y > limits.Top;
+    private void WpfPlot_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        MarkUserAdjustedView();
     }
 
     private static (double MinX, double MaxX, double MinY, double MaxY) GetBounds(
@@ -364,16 +449,63 @@ public partial class TrackMapPanel : UserControl
 
     private void UpdateCoordinateReadout()
     {
-        if (_samples.Count == 0)
+        var sample = _cursorSample;
+
+        if (sample is null)
         {
+            if (_samples.Count == 0)
+            {
+                LatText.Text = "--";
+                LonText.Text = "--";
+                AltText.Text = "--";
+                return;
+            }
+
+            sample = _samples[^1];
+        }
+
+        LatText.Text = FormatLatitude(sample.Latitude);
+        LonText.Text = FormatLongitude(sample.Longitude);
+        AltText.Text = $"{sample.Altitude:0.0} m";
+    }
+
+
+    /// <summary>
+    /// 在轨迹上画金色车辆标记；Rebuild 之后也要再调用（Clear 会抹掉）。
+    /// </summary>
+    private void UpdateCursorMarker(bool refresh)
+    {
+        if (_cursorMarker is not null)
+        {
+            _wpfPlot.Plot.Remove(_cursorMarker);
+            _cursorMarker = null;
+        }
+
+        if (_cursorSample is null ||
+            _projection is null ||
+            !_hasData)
+        {
+            if (refresh)
+                _wpfPlot.Refresh();
             return;
         }
 
-        var latest = _samples[^1];
+        var (x, y) = _projection.ToMeters(
+            _cursorSample.Latitude,
+            _cursorSample.Longitude);
 
-        LatText.Text = FormatLatitude(latest.Latitude);
-        LonText.Text = FormatLongitude(latest.Longitude);
-        AltText.Text = $"{latest.Altitude:0.0} m";
+        _cursorMarker = _wpfPlot.Plot.Add.Marker(x, y);
+        _cursorMarker.Size = 16;
+        _cursorMarker.Shape =
+            ScottPlot.MarkerShape.FilledCircle;
+        _cursorMarker.Color =
+            ScottPlot.Color.FromHex("#C8A34A");
+        _cursorMarker.MarkerLineColor =
+            ScottPlot.Color.FromHex("#F5E6B8");
+        _cursorMarker.MarkerLineWidth = 1.5f;
+
+        if (refresh)
+            _wpfPlot.Refresh();
     }
 
     private static string FormatLatitude(double value)
@@ -561,6 +693,12 @@ public partial class TrackMapPanel : UserControl
         object sender,
         MouseEventArgs e)
     {
+        // 左键拖动画布平移：按住左键移动且不是点选轨迹时，退出自动取景
+        if (e.LeftButton == MouseButtonState.Pressed && !_leftDownWasTrackPick)
+        {
+            MarkUserAdjustedView();
+        }
+
         if (!_hasData || _projection is null || _samples.Count == 0)
         {
             HoverTip.Visibility = Visibility.Collapsed;
@@ -626,6 +764,47 @@ public partial class TrackMapPanel : UserControl
             Math.Max(0.0, top),
             0.0,
             0.0);
+    }
+
+    private void WpfPlot_PreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        _leftDownWasTrackPick = false;
+
+        if (!_hasData || _projection is null || _samples.Count == 0)
+            return;
+
+        var pixel = _wpfPlot.GetPlotPixelPosition(e);
+        var coordinates = _wpfPlot.Plot.GetCoordinates(
+            pixel.X,
+            pixel.Y,
+            _wpfPlot.Plot.Axes.Bottom,
+            _wpfPlot.Plot.Axes.Left);
+
+        var width = GridOverlay.ActualWidth;
+        if (width < 1.0)
+            return;
+
+        var limits = _wpfPlot.Plot.Axes.GetLimits();
+        var metersPerPixelX = (limits.Right - limits.Left) / width;
+
+        var index = FindNearestSample(
+            coordinates.X,
+            coordinates.Y,
+            metersPerPixelX * HoverPickPixels);
+
+        if (index < 0)
+            return;
+
+        _leftDownWasTrackPick = true;
+
+        var sample = _samples[index];
+        SetCursorSample(sample);
+        SampleSelected?.Invoke(sample);
+
+        // 点在轨迹上：选点并同步，不启动平移
+        e.Handled = true;
     }
 
     private void WpfPlot_MouseLeave(object sender, MouseEventArgs e)

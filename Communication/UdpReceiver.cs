@@ -27,6 +27,9 @@ public sealed class UdpReceiver : IDataSource
     private int _started; // 0 = not started, 1 = started
     private int _disposed;
 
+    /// <summary>最近一次启动/运行失败原因（绑定失败等）。</summary>
+    public string? LastError { get; private set; }
+
     public UdpReceiver(
         DataBus dataBus,
         int port = 50000)
@@ -82,16 +85,27 @@ public sealed class UdpReceiver : IDataSource
         }
 
         SetState(DataSourceState.Connecting);
+        LastError = null;
 
         try
         {
             _udpClient = new UdpClient(_port);
         }
-        catch (Exception)
+        catch (SocketException ex)
         {
             Interlocked.Exchange(ref _started, 0);
+            LastError =
+                $"无法绑定 UDP 端口 {_port}：{ex.Message}" +
+                "（常见原因：上一次 CMTS 未退出，端口仍被占用）。";
             SetState(DataSourceState.Faulted);
-            throw;
+            throw new InvalidOperationException(LastError, ex);
+        }
+        catch (Exception ex)
+        {
+            Interlocked.Exchange(ref _started, 0);
+            LastError = $"UDP 启动失败：{ex.Message}";
+            SetState(DataSourceState.Faulted);
+            throw new InvalidOperationException(LastError, ex);
         }
 
         SetState(DataSourceState.Connected);

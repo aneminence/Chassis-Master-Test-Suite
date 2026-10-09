@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -82,6 +83,44 @@ public partial class MainWindow : Window
 
     private bool _isRefreshingPlots;
 
+    /// <summary>
+    /// 当前驱动 Dashboard 冻结读数的曲线（有光标时）。
+    /// Escape 清除光标后恢复实时。
+    /// </summary>
+    private PlotDefinition? _cursorSourcePlot;
+
+    /// <summary>
+    /// 中键平移 / 右键缩放进行中：跳过 RefreshPlot，避免 10 Hz Clear 把手势锁死。
+    /// </summary>
+    private int _activeManualAxisGestures;
+
+    /// <summary>
+    /// SuspendAutoScale 时程序化改勾选，不要顺带触发 RefreshAllPlots。
+    /// </summary>
+    private bool _suppressAutoScaleCheckboxRefresh;
+
+    /// <summary>北京时间（Asia/Shanghai / China Standard Time）。</summary>
+    private static readonly TimeZoneInfo BeijingTimeZone = ResolveBeijingTimeZone();
+
+    private static TimeZoneInfo ResolveBeijingTimeZone()
+    {
+        try
+        {
+            return TimeZoneInfo.FindSystemTimeZoneById(
+                OperatingSystem.IsWindows()
+                    ? "China Standard Time"
+                    : "Asia/Shanghai");
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return TimeZoneInfo.CreateCustomTimeZone(
+                "Beijing",
+                TimeSpan.FromHours(8),
+                "Beijing",
+                "Beijing");
+        }
+    }
+
 
     public MainWindow()
     {
@@ -90,6 +129,8 @@ public partial class MainWindow : Window
         InitializeAxisSelector();
 
         InitializePlotSystem();
+
+        TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
 
         _uiTimer = new DispatcherTimer
         {
@@ -471,8 +512,12 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
-        if (!IsInitialized)
+        if (!IsInitialized || _suppressAutoScaleCheckboxRefresh)
             return;
+
+        // 手动取消 Auto X：立刻锁定当前范围
+        if (XAxisAutoScaleCheckBox.IsChecked != true)
+            CaptureLockedLimitsFromPlots();
 
         RefreshAllPlots();
     }
@@ -534,6 +579,12 @@ public partial class MainWindow : Window
 
         _plots.Remove(plot);
 
+        if (ReferenceEquals(_cursorSourcePlot, plot))
+        {
+            _cursorSourcePlot = null;
+            UpdateNumericDisplay();
+        }
+
         RefreshPlotContainer();
 
         RefreshAllPlots();
@@ -568,9 +619,9 @@ public partial class MainWindow : Window
                 DataBackgroundColor =
                     ScottPlot.Color.FromHex("#0E131A"),
 
-                // 坐标轴 / 刻度文字
+                // 坐标轴 / 刻度文字（DateTimeTicksBottom 会冲掉，见 ApplyAxisLabelColors）
                 AxisColor =
-                    ScottPlot.Color.FromHex("#8A94A6"),
+                    ScottPlot.Color.FromHex("#C3CBD8"),
 
                 // 网格线
                 GridMajorLineColor =
@@ -590,6 +641,28 @@ public partial class MainWindow : Window
                 Palette =
                     new ScottPlot.Palettes.Dark()
             });
+
+        ApplyAxisLabelColors(scottPlot);
+    }
+
+
+    /// <summary>
+    /// DateTimeTicksBottom() 会把 TickLabelStyle.ForeColor 重置为黑色，
+    /// 所以每次套深色主题 / 切时间轴后都要显式刷一遍浅色刻度。
+    /// </summary>
+    private static void ApplyAxisLabelColors(ScottPlot.Plot scottPlot)
+    {
+        var tickColor =
+            ScottPlot.Color.FromHex("#C3CBD8");
+
+        var axisLabelColor =
+            ScottPlot.Color.FromHex("#8A94A6");
+
+        foreach (var axis in scottPlot.Axes.GetAxes())
+        {
+            axis.TickLabelStyle.ForeColor = tickColor;
+            axis.Label.ForeColor = axisLabelColor;
+        }
     }
 
 
@@ -820,13 +893,16 @@ public partial class MainWindow : Window
                 new Thickness(15, 0, 15, 0)
         };
 
+        plot.AutoScaleYCheckBox = autoScaleCheckBox;
+
 
         autoScaleCheckBox.Checked +=
             (_, _) =>
             {
                 plot.AutoScaleY = true;
 
-                RefreshPlot(plot);
+                if (!_suppressAutoScaleCheckboxRefresh)
+                    RefreshPlot(plot);
             };
 
 
@@ -834,6 +910,8 @@ public partial class MainWindow : Window
             (_, _) =>
             {
                 plot.AutoScaleY = false;
+                if (plot.WpfPlot is not null)
+                    plot.LockedLimits = plot.WpfPlot.Plot.Axes.GetLimits();
             };
 
 
@@ -978,6 +1056,9 @@ public partial class MainWindow : Window
         ApplyDarkPlotStyle(wpfPlot);
 
         plot.WpfPlot = wpfPlot;
+        wpfPlot.Focusable = true;
+
+        AttachPlotInteraction(plot, wpfPlot);
 
 
         Grid.SetRow(
@@ -1251,9 +1332,13 @@ public partial class MainWindow : Window
 
         try
         {
-            foreach (var plot in _plots)
+            // 手动平移/缩放时不要 Clear+重建，否则像「缩放被锁定」
+            if (_activeManualAxisGestures == 0)
             {
-                RefreshPlot(plot);
+                foreach (var plot in _plots)
+                {
+                    RefreshPlot(plot);
+                }
             }
 
             // 轨迹图。SetTrack 内部按 250 ms 限流，
@@ -1297,7 +1382,19 @@ public partial class MainWindow : Window
             plot.WpfPlot.Plot;
 
 
+        // 记住用户拖动/缩放后的轴范围（非 Auto 时）。
+        // 优先用 LockedLimits：避免上一帧 DateTimeTicksBottom 把 GetLimits 冲成数据范围。
+        var previousLimits =
+            plot.LockedLimits ?? scottPlot.Axes.GetLimits();
+
+
         scottPlot.Clear();
+
+
+        plot.LastXs = null;
+        plot.LastSamples = null;
+        plot.LastChannelSeries.Clear();
+        plot.IsTimeAxis = selectedXSignal == PlotSignal.Time;
 
 
         // ========================================================
@@ -1306,10 +1403,10 @@ public partial class MainWindow : Window
 
         if (history.Count < 2)
         {
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            ApplyPlotOverlays(plot);
             RefreshPlotTitle(plot);
-
             plot.WpfPlot.Refresh();
-
             return;
         }
 
@@ -1324,14 +1421,15 @@ public partial class MainWindow : Window
                 $"{plot.Name} - No Channel");
 
             scottPlot.XLabel(
-                GetSignalDisplayName(
-                    selectedXSignal));
+                GetAxisLabel(selectedXSignal));
 
             scottPlot.YLabel(
                 "Value");
 
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            ApplyDateTimeAxisIfNeeded(plot, selectedXSignal);
+            ApplyPlotOverlays(plot);
             plot.WpfPlot.Refresh();
-
             return;
         }
 
@@ -1349,7 +1447,7 @@ public partial class MainWindow : Window
              i++)
         {
             xs[i] =
-                GetSignalValue(
+                GetAxisValue(
                     history[i],
                     selectedXSignal);
         }
@@ -1405,7 +1503,15 @@ public partial class MainWindow : Window
 
 
             scatter.LineWidth = 1;
+            scatter.MarkerSize = 0;
+
+            plot.LastChannelSeries.Add(
+                (channel.Signal, ys));
         }
+
+
+        plot.LastXs = xs;
+        plot.LastSamples = history.ToArray();
 
 
         // ========================================================
@@ -1417,8 +1523,7 @@ public partial class MainWindow : Window
 
 
         scottPlot.XLabel(
-            $"{GetSignalDisplayName(selectedXSignal)} " +
-            $"({GetSignalUnit(selectedXSignal)})");
+            GetAxisLabel(selectedXSignal));
 
 
         scottPlot.YLabel(
@@ -1428,103 +1533,27 @@ public partial class MainWindow : Window
         scottPlot.Legend.IsVisible = true;
 
 
-        // ========================================================
-        // X Auto Scale
-        // ========================================================
-
-        if (XAxisAutoScaleCheckBox.IsChecked == true)
-        {
-            var minX =
-                xs.Min();
-
-            var maxX =
-                xs.Max();
-
-
-            if (maxX <= minX)
-                maxX = minX + 1;
-
-
-            var xPadding =
-                (maxX - minX) * 0.02;
-
-
-            if (xPadding <= 0)
-                xPadding = 1;
-
-
-            // ====================================================
-            // Y Auto Scale
-            // ====================================================
-
-            if (plot.AutoScaleY)
-            {
-                if (maxY <= minY)
-                    maxY = minY + 1;
-
-
-                var yPadding =
-                    (maxY - minY) * 0.05;
-
-
-                if (yPadding <= 0)
-                    yPadding = 1;
-
-
-                scottPlot.Axes.SetLimits(
-                    minX - xPadding,
-                    maxX + xPadding,
-                    minY - yPadding,
-                    maxY + yPadding);
-            }
-            else
-            {
-                var currentLimits =
-                    scottPlot.Axes.GetLimits();
-
-
-                scottPlot.Axes.SetLimits(
-                    minX - xPadding,
-                    maxX + xPadding,
-                    currentLimits.Bottom,
-                    currentLimits.Top);
-            }
-        }
-        else
-        {
-            // X 不自动缩放时，只处理 Y
-
-            if (plot.AutoScaleY)
-            {
-                if (maxY <= minY)
-                    maxY = minY + 1;
-
-
-                var yPadding =
-                    (maxY - minY) * 0.05;
-
-
-                if (yPadding <= 0)
-                    yPadding = 1;
-
-
-                var currentLimits =
-                    scottPlot.Axes.GetLimits();
-
-
-                scottPlot.Axes.SetLimits(
-                    currentLimits.Left,
-                    currentLimits.Right,
-                    minY - yPadding,
-                    maxY + yPadding);
-            }
-        }
-
-
         // ScottPlot 5 的 Clear() 会把样式复位，
         // 所以每次重建曲线后都重新套一遍深色主题。
+        //
+        // 重要：DateTimeTicksBottom() 会替换 Bottom 轴并按数据 AutoScale，
+        // 必须先装时间轴，再 SetLimits；否则 10Hz 刷新会把手动平移/缩放冲掉。
         ApplyDarkPlotStyle(
             plot.WpfPlot);
+
+        ApplyDateTimeAxisIfNeeded(
+            plot,
+            selectedXSignal);
+
+        ApplyAxisLimitsAfterRebuild(
+            plot,
+            scottPlot,
+            xs,
+            minY,
+            maxY,
+            previousLimits);
+
+        ApplyPlotOverlays(plot);
 
 
         plot.WpfPlot.Refresh();
@@ -1545,6 +1574,753 @@ public partial class MainWindow : Window
             plot.Name);
 
         plot.WpfPlot.Refresh();
+    }
+
+
+    // ============================================================
+    // 曲线交互：北京时间轴 / 光标 / 横向选区 / 左上角读数
+    // ============================================================
+
+    private void AttachPlotInteraction(
+        PlotDefinition plot,
+        ScottPlot.WPF.WpfPlot wpfPlot)
+    {
+        ConfigurePlotMouseBindings(wpfPlot);
+
+        wpfPlot.PreviewMouseWheel += (_, _) =>
+        {
+            // 滚轮缩放也算手动操作：立刻退出自动缩放
+            SuspendAutoScaleForUserInteraction(plot);
+
+            // ScottPlot 在 Input 阶段改轴；下一拍再锁定，避免锁到缩放前的范围
+            Dispatcher.BeginInvoke(
+                () =>
+                {
+                    if (plot.WpfPlot is null)
+                        return;
+
+                    var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+                    if (double.IsInfinity(limits.Left) ||
+                        double.IsInfinity(limits.Right) ||
+                        double.IsNaN(limits.Left) ||
+                        double.IsNaN(limits.Right) ||
+                        limits.Right <= limits.Left)
+                    {
+                        return;
+                    }
+
+                    plot.LockedLimits = limits;
+                },
+                DispatcherPriority.Input);
+        };
+
+        wpfPlot.MouseDown += (_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.Middle ||
+                e.ChangedButton == MouseButton.Right)
+            {
+                // 立刻取消 Auto，并在手势期间跳过 RefreshPlot
+                SuspendAutoScaleForUserInteraction(plot);
+                BeginManualAxisGesture();
+                return;
+            }
+
+            if (e.ChangedButton != MouseButton.Left)
+                return;
+
+            Keyboard.Focus(wpfPlot);
+
+            var x = GetPlotMouseX(wpfPlot, e);
+            if (x is null)
+                return;
+
+            if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
+            {
+                plot.IsSelectingRange = true;
+                plot.IsDraggingCursor = false;
+                plot.SelectionX1 = x;
+                plot.SelectionX2 = x;
+                wpfPlot.UserInputProcessor.Disable();
+                e.Handled = true;
+            }
+            else
+            {
+                plot.IsDraggingCursor = true;
+                plot.CursorX = x;
+                _cursorSourcePlot = plot;
+                // 左键专用于光标，避免与其它左键交互抢事件
+                e.Handled = true;
+            }
+
+            ApplyPlotOverlays(plot);
+            wpfPlot.Refresh();
+            UpdateNumericDisplay();
+        };
+
+        wpfPlot.MouseMove += (_, e) =>
+        {
+            if (plot.IsDraggingCursor &&
+                e.LeftButton == MouseButtonState.Pressed)
+            {
+                var cx = GetPlotMouseX(wpfPlot, e);
+                if (cx is null)
+                    return;
+
+                plot.CursorX = cx;
+                _cursorSourcePlot = plot;
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
+                UpdateNumericDisplay();
+                e.Handled = true;
+                return;
+            }
+
+            if (!plot.IsSelectingRange ||
+                e.LeftButton != MouseButtonState.Pressed)
+                return;
+
+            var x = GetPlotMouseX(wpfPlot, e);
+            if (x is null)
+                return;
+
+            plot.SelectionX2 = x;
+            ApplyPlotOverlays(plot);
+            wpfPlot.Refresh();
+            e.Handled = true;
+        };
+
+        wpfPlot.MouseUp += (_, e) =>
+        {
+            if (e.ChangedButton == MouseButton.Middle ||
+                e.ChangedButton == MouseButton.Right)
+            {
+                EndManualAxisGesture();
+                return;
+            }
+
+            if (e.ChangedButton != MouseButton.Left)
+                return;
+
+            if (plot.IsDraggingCursor)
+            {
+                plot.IsDraggingCursor = false;
+                var cx = GetPlotMouseX(wpfPlot, e);
+                if (cx is not null)
+                {
+                    plot.CursorX = cx;
+                    _cursorSourcePlot = plot;
+                }
+
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
+                UpdateNumericDisplay();
+                e.Handled = true;
+                return;
+            }
+
+            if (!plot.IsSelectingRange)
+                return;
+
+            var x = GetPlotMouseX(wpfPlot, e);
+            if (x is not null)
+                plot.SelectionX2 = x;
+
+            plot.IsSelectingRange = false;
+            wpfPlot.UserInputProcessor.Enable();
+
+            // 选区过窄则视为点击，清除高亮
+            if (plot.SelectionX1 is double a &&
+                plot.SelectionX2 is double b &&
+                Math.Abs(b - a) < 1e-12)
+            {
+                plot.SelectionX1 = null;
+                plot.SelectionX2 = null;
+            }
+
+            // 松手后把光标放到选区终点（或点击位置）
+            if (plot.SelectionX2 is double endX)
+            {
+                plot.CursorX = endX;
+                _cursorSourcePlot = plot;
+            }
+
+            ApplyPlotOverlays(plot);
+            wpfPlot.Refresh();
+            UpdateNumericDisplay();
+        };
+
+        wpfPlot.MouseLeave += (_, _) =>
+        {
+            // 拖出控件时也结束手势，避免计数卡死导致曲线永不刷新
+            if (_activeManualAxisGestures > 0)
+                EndManualAxisGesture();
+
+            if (plot.IsDraggingCursor)
+            {
+                plot.IsDraggingCursor = false;
+            }
+
+            if (!plot.IsSelectingRange)
+                return;
+
+            plot.IsSelectingRange = false;
+            wpfPlot.UserInputProcessor.Enable();
+        };
+
+        wpfPlot.KeyDown += (_, e) =>
+        {
+            if (e.Key != Key.Escape)
+                return;
+
+            plot.CursorX = null;
+            plot.SelectionX1 = null;
+            plot.SelectionX2 = null;
+            plot.IsSelectingRange = false;
+            plot.IsDraggingCursor = false;
+            if (ReferenceEquals(_cursorSourcePlot, plot))
+                _cursorSourcePlot = null;
+            wpfPlot.UserInputProcessor.Enable();
+            ApplyPlotOverlays(plot);
+            wpfPlot.Refresh();
+            UpdateNumericDisplay();
+        };
+    }
+
+
+    /// <summary>
+    /// 左键 = 竖线光标；中键 = 平移；右键 = 缩放（保持 ScottPlot 默认右键拖拽缩放）。
+    /// 关掉默认「中键单击自动缩放 / 中键拖拽缩放矩形」，否则拖动像被锁死。
+    /// </summary>
+    private static void ConfigurePlotMouseBindings(
+        ScottPlot.WPF.WpfPlot wpfPlot)
+    {
+        var processor = wpfPlot.UserInputProcessor;
+
+        // 先清掉左键平移（会 RemoveAll MouseDragPan）
+        processor.LeftClickDragPan(enable: false);
+
+        // 中键默认：单击 Autoscale、拖拽 ZoomRectangle —— 正是「缩放被锁定」的来源
+        processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.MouseDragZoomRectangle>();
+        processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
+        processor.DoubleLeftClickBenchmark(false);
+
+        // 中键拖拽 = 平移
+        processor.UserActionResponses.Add(
+            new ScottPlot.Interactivity.UserActionResponses.MouseDragPan(
+                ScottPlot.Interactivity.StandardMouseButtons.Middle));
+
+        // 右键拖拽 = 缩放（与原先默认一致）
+        processor.RightClickDragZoom(enable: true);
+    }
+
+
+    private void BeginManualAxisGesture()
+    {
+        _activeManualAxisGestures++;
+    }
+
+
+    private void EndManualAxisGesture()
+    {
+        if (_activeManualAxisGestures > 0)
+            _activeManualAxisGestures--;
+
+        // 手势结束立刻锁定当前轴范围，避免下一帧 Refresh 读到被冲掉的 GetLimits
+        if (_activeManualAxisGestures == 0)
+            CaptureLockedLimitsFromPlots();
+    }
+
+
+    private void CaptureLockedLimitsFromPlots()
+    {
+        foreach (var plot in _plots)
+        {
+            if (plot.WpfPlot is null)
+                continue;
+
+            var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+            if (double.IsInfinity(limits.Left) ||
+                double.IsInfinity(limits.Right) ||
+                double.IsNaN(limits.Left) ||
+                double.IsNaN(limits.Right) ||
+                limits.Right <= limits.Left)
+            {
+                continue;
+            }
+
+            plot.LockedLimits = limits;
+        }
+    }
+
+
+    /// <summary>
+    /// 用户手动平移/缩放时关掉 Auto X / Auto Y；
+    /// 只有再次勾选才会恢复自动缩放。
+    /// </summary>
+    private void SuspendAutoScaleForUserInteraction(
+        PlotDefinition plot)
+    {
+        _suppressAutoScaleCheckboxRefresh = true;
+        try
+        {
+            if (XAxisAutoScaleCheckBox.IsChecked == true)
+                XAxisAutoScaleCheckBox.IsChecked = false;
+
+            if (plot.AutoScaleY)
+            {
+                plot.AutoScaleY = false;
+                if (plot.AutoScaleYCheckBox is not null)
+                    plot.AutoScaleYCheckBox.IsChecked = false;
+            }
+        }
+        finally
+        {
+            _suppressAutoScaleCheckboxRefresh = false;
+        }
+
+        // 取消 Auto 的瞬间锁定当前视图，防止下一帧按数据重算
+        if (plot.WpfPlot is not null)
+        {
+            var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+            if (!(double.IsInfinity(limits.Left) ||
+                  double.IsInfinity(limits.Right) ||
+                  double.IsNaN(limits.Left) ||
+                  double.IsNaN(limits.Right) ||
+                  limits.Right <= limits.Left))
+            {
+                plot.LockedLimits = limits;
+            }
+        }
+    }
+
+
+    /// <summary>
+    /// Track Map 点选轨迹点 → 同步曲线光标、Dashboard、车辆标记。
+    /// </summary>
+    private void ApplyCursorFromTrackSample(VehicleSample sample)
+    {
+        var selectedXSignal =
+            XAxisSelector.SelectedItem is PlotSignal xSignal
+                ? xSignal
+                : PlotSignal.Time;
+
+        var cursorX = GetAxisValue(sample, selectedXSignal);
+
+        PlotDefinition? source = null;
+        foreach (var plot in _plots)
+        {
+            plot.CursorX = cursorX;
+            source ??= plot;
+
+            if (plot.WpfPlot is null)
+                continue;
+
+            ApplyPlotOverlays(plot);
+            plot.WpfPlot.Refresh();
+        }
+
+        _cursorSourcePlot = source;
+
+        // 立刻刷新 Dashboard + 地图标记（不等下一帧 UI 定时器）
+        DashboardPanelControl.SetValues(
+            speedKph: sample.SpeedKph,
+            longitudinalAcceleration: sample.LongitudinalAcceleration,
+            lateralAcceleration: sample.LateralAcceleration,
+            yawRate: sample.YawRate,
+            steeringAngleDeg: 0.0,
+            cursorFrozen: true);
+
+        TrackMapPanelControl.SetCursorSample(sample);
+    }
+
+
+    private static double? GetPlotMouseX(
+        ScottPlot.WPF.WpfPlot wpfPlot,
+        MouseEventArgs e)
+    {
+        try
+        {
+            var pos = e.GetPosition(wpfPlot);
+            var pixel = new ScottPlot.Pixel(
+                (float)(pos.X * wpfPlot.DisplayScale),
+                (float)(pos.Y * wpfPlot.DisplayScale));
+            return wpfPlot.Plot.GetCoordinates(pixel).X;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+
+    /// <summary>
+    /// 在 Clear + DateTimeTicksBottom 之后应用轴范围。
+    /// Auto 勾选：按数据；未勾选：绝不从数据重算，沿用 Locked / previous。
+    /// </summary>
+    private void ApplyAxisLimitsAfterRebuild(
+        PlotDefinition plot,
+        ScottPlot.Plot scottPlot,
+        double[] xs,
+        double minY,
+        double maxY,
+        ScottPlot.AxisLimits previousLimits)
+    {
+        var autoX =
+            XAxisAutoScaleCheckBox.IsChecked == true;
+        var autoY =
+            plot.AutoScaleY;
+
+        double left;
+        double right;
+        double bottom;
+        double top;
+
+        if (autoX)
+        {
+            var minX = xs.Min();
+            var maxX = xs.Max();
+            if (maxX <= minX)
+                maxX = minX + 1;
+
+            var xPadding = (maxX - minX) * 0.02;
+            if (xPadding <= 0)
+                xPadding = 1;
+
+            left = minX - xPadding;
+            right = maxX + xPadding;
+        }
+        else
+        {
+            // Auto X 关闭：不从数据重算
+            left = previousLimits.Left;
+            right = previousLimits.Right;
+
+            // 防御：无效范围时退回数据（仅首次/损坏状态）
+            if (double.IsInfinity(left) ||
+                double.IsInfinity(right) ||
+                double.IsNaN(left) ||
+                double.IsNaN(right) ||
+                right <= left)
+            {
+                var minX = xs.Min();
+                var maxX = xs.Max();
+                if (maxX <= minX)
+                    maxX = minX + 1;
+                var xPadding = (maxX - minX) * 0.02;
+                if (xPadding <= 0)
+                    xPadding = 1;
+                left = minX - xPadding;
+                right = maxX + xPadding;
+            }
+        }
+
+        if (autoY)
+        {
+            if (maxY <= minY)
+                maxY = minY + 1;
+
+            var yPadding = (maxY - minY) * 0.05;
+            if (yPadding <= 0)
+                yPadding = 1;
+
+            bottom = minY - yPadding;
+            top = maxY + yPadding;
+        }
+        else
+        {
+            // Auto Y 关闭：不从数据重算
+            bottom = previousLimits.Bottom;
+            top = previousLimits.Top;
+
+            if (double.IsInfinity(bottom) ||
+                double.IsInfinity(top) ||
+                double.IsNaN(bottom) ||
+                double.IsNaN(top) ||
+                top <= bottom)
+            {
+                if (maxY <= minY)
+                    maxY = minY + 1;
+                var yPadding = (maxY - minY) * 0.05;
+                if (yPadding <= 0)
+                    yPadding = 1;
+                bottom = minY - yPadding;
+                top = maxY + yPadding;
+            }
+        }
+
+        scottPlot.Axes.SetLimits(left, right, bottom, top);
+
+        // Auto 全关时锁定当前范围，供下一帧 10Hz Refresh 使用
+        if (!autoX && !autoY)
+        {
+            plot.LockedLimits =
+                scottPlot.Axes.GetLimits();
+        }
+        else if (autoX && autoY)
+        {
+            plot.LockedLimits = null;
+        }
+        else
+        {
+            // 单轴 Auto：仍保存当前完整范围，关闭那一轴时用
+            plot.LockedLimits =
+                scottPlot.Axes.GetLimits();
+        }
+    }
+
+
+    private void ApplyDateTimeAxisIfNeeded(
+        PlotDefinition plot,
+        PlotSignal selectedXSignal)
+    {
+        if (plot.WpfPlot is null)
+            return;
+
+        if (selectedXSignal != PlotSignal.Time)
+            return;
+
+        var axis =
+            plot.WpfPlot.Plot.Axes.DateTimeTicksBottom();
+
+        if (axis.TickGenerator is
+            ScottPlot.TickGenerators.DateTimeAutomatic tickGen)
+        {
+            tickGen.LabelFormatter = FormatBeijingTickLabel;
+        }
+
+        // DateTimeTicksBottom 会把刻度字重置成黑色，必须再刷浅色
+        ApplyAxisLabelColors(plot.WpfPlot.Plot);
+    }
+
+
+    private static string FormatBeijingTickLabel(DateTime dt)
+    {
+        // OADate 按 UTC 存；刻度显示为北京时间
+        var utc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+
+        // 旧秒表时间戳会落在 1970；显示为经过时间，避免误导
+        if (utc.Year < 2000)
+        {
+            var elapsedMs = (long)Math.Round(
+                (utc - DateTime.UnixEpoch).TotalMilliseconds);
+            if (elapsedMs < 0)
+                elapsedMs = 0;
+            var ts = TimeSpan.FromMilliseconds(elapsedMs);
+            return ts.TotalHours >= 1
+                ? $"{(int)ts.TotalHours}h{ts.Minutes:D2}m"
+                : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+        }
+
+        var beijing =
+            TimeZoneInfo.ConvertTimeFromUtc(utc, BeijingTimeZone);
+
+        if (beijing.Hour == 0 &&
+            beijing.Minute == 0 &&
+            beijing.Second == 0)
+        {
+            return beijing.ToString("MM-dd");
+        }
+
+        if (beijing.Second == 0)
+            return beijing.ToString("HH:mm");
+
+        return beijing.ToString("HH:mm:ss");
+    }
+
+
+    private void ApplyPlotOverlays(PlotDefinition plot)
+    {
+        if (plot.WpfPlot is null)
+            return;
+
+        var scottPlot = plot.WpfPlot.Plot;
+
+        // 清掉旧的交互层（曲线本身在 RefreshPlot 里重建；
+        // 这里在 Clear 之后调用时图上还没有 overlay）
+        // 若被 Mouse 事件单独调用，需先移除旧 overlay。
+        RemovePlotOverlays(scottPlot);
+
+        // 横向选区高亮（X 方向）
+        if (plot.SelectionX1 is double sx1 &&
+            plot.SelectionX2 is double sx2 &&
+            Math.Abs(sx2 - sx1) > 1e-12)
+        {
+            var left = Math.Min(sx1, sx2);
+            var right = Math.Max(sx1, sx2);
+            var span = scottPlot.Add.HorizontalSpan(left, right);
+            span.FillColor =
+                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.16);
+            span.LineColor =
+                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.55);
+            span.LineWidth = 1;
+        }
+
+        // 竖向光标
+        if (plot.CursorX is double cursorX)
+        {
+            var vLine = scottPlot.Add.VerticalLine(cursorX);
+            vLine.LineColor =
+                ScottPlot.Color.FromHex("#C8A34A");
+            vLine.LineWidth = 1.5f;
+            vLine.LinePattern = ScottPlot.LinePattern.Solid;
+
+            var readout = BuildCursorReadout(plot, cursorX);
+            if (!string.IsNullOrEmpty(readout))
+            {
+                var anno = scottPlot.Add.Annotation(
+                    readout,
+                    ScottPlot.Alignment.UpperLeft);
+                anno.LabelFontSize = 18;
+                anno.LabelFontColor =
+                    ScottPlot.Color.FromHex("#C8A34A");
+                anno.LabelBackgroundColor =
+                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.72);
+                anno.LabelBorderColor =
+                    ScottPlot.Color.FromHex("#1E2530");
+                anno.LabelBorderWidth = 1;
+                anno.LabelShadowColor =
+                    ScottPlot.Colors.Transparent;
+                anno.OffsetX = 10;
+                anno.OffsetY = 10;
+            }
+        }
+    }
+
+
+    private static void RemovePlotOverlays(ScottPlot.Plot scottPlot)
+    {
+        // RefreshPlot 每次 Clear() 后没有旧 overlay；
+        // 鼠标拖动时需要去掉上一帧自己加的 span/line/annotation。
+        var toRemove = scottPlot.GetPlottables()
+            .Where(p =>
+                p is ScottPlot.Plottables.VerticalLine
+                    or ScottPlot.Plottables.HorizontalSpan
+                    or ScottPlot.Plottables.Annotation)
+            .ToList();
+
+        foreach (var p in toRemove)
+            scottPlot.Remove(p);
+    }
+
+
+    private string BuildCursorReadout(
+        PlotDefinition plot,
+        double cursorX)
+    {
+        if (plot.LastXs is null ||
+            plot.LastXs.Length == 0 ||
+            plot.LastChannelSeries.Count == 0)
+        {
+            return FormatAxisValue(cursorX, plot.IsTimeAxis);
+        }
+
+        var index = FindNearestIndex(plot.LastXs, cursorX);
+        var xAt = plot.LastXs[index];
+
+        var lines = new List<string>
+        {
+            FormatAxisValue(xAt, plot.IsTimeAxis)
+        };
+
+        foreach (var (signal, ys) in plot.LastChannelSeries)
+        {
+            if (index < 0 || index >= ys.Length)
+                continue;
+
+            var name = GetSignalDisplayName(signal);
+            var unit = GetSignalUnit(signal);
+            lines.Add($"{name}  {ys[index]:0.###} {unit}");
+        }
+
+        return string.Join("\n", lines);
+    }
+
+
+    private static string FormatAxisValue(
+        double x,
+        bool isTimeAxis)
+    {
+        if (!isTimeAxis)
+            return $"X = {x:0.###}";
+
+        try
+        {
+            var utc = DateTime.SpecifyKind(
+                DateTime.FromOADate(x),
+                DateTimeKind.Utc);
+
+            // 旧 Simulator 用秒表毫秒当 Timestamp，会落在 1970 附近。
+            // 墙钟修好后不应再出现；这里仍给出可读回退，避免再显示 1970。
+            if (utc.Year < 2000)
+            {
+                var elapsedMs = (long)Math.Round(
+                    (utc - DateTime.UnixEpoch).TotalMilliseconds);
+                if (elapsedMs < 0)
+                    elapsedMs = 0;
+                var ts = TimeSpan.FromMilliseconds(elapsedMs);
+                return ts.TotalHours >= 1
+                    ? $"{(int)ts.TotalHours}h{ts.Minutes:D2}m{ts.Seconds:D2}s"
+                    : $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+            }
+
+            var beijing =
+                TimeZoneInfo.ConvertTimeFromUtc(utc, BeijingTimeZone);
+            return beijing.ToString("yyyy-MM-dd HH:mm:ss.fff");
+        }
+        catch
+        {
+            return $"X = {x:0.###}";
+        }
+    }
+
+
+    private static int FindNearestIndex(
+        double[] xs,
+        double x)
+    {
+        if (xs.Length == 1)
+            return 0;
+
+        var i = Array.BinarySearch(xs, x);
+        if (i >= 0)
+            return i;
+
+        i = ~i;
+        if (i <= 0)
+            return 0;
+        if (i >= xs.Length)
+            return xs.Length - 1;
+
+        return (x - xs[i - 1]) <= (xs[i] - x)
+            ? i - 1
+            : i;
+    }
+
+
+    private static double GetAxisValue(
+        VehicleSample sample,
+        PlotSignal signal)
+    {
+        if (signal == PlotSignal.Time)
+        {
+            // UTC 瞬间 → OADate，供 DateTime 轴使用
+            var utc =
+                DateTimeOffset
+                    .FromUnixTimeMilliseconds(sample.Timestamp)
+                    .UtcDateTime;
+            return utc.ToOADate();
+        }
+
+        return GetSignalValue(sample, signal);
+    }
+
+
+    private static string GetAxisLabel(PlotSignal signal)
+    {
+        if (signal == PlotSignal.Time)
+            return "Time (Beijing)";
+
+        return $"{GetSignalDisplayName(signal)} ({GetSignalUnit(signal)})";
     }
 
 
@@ -1657,7 +2433,7 @@ public partial class MainWindow : Window
         return signal switch
         {
             PlotSignal.Time =>
-                "s",
+                "Beijing",
 
             PlotSignal.Speed =>
                 "km/h",
@@ -1706,6 +2482,10 @@ public partial class MainWindow : Window
         foreach (var plot in _plots)
         {
             plot.AutoScaleY = true;
+            plot.CursorX = null;
+            plot.SelectionX1 = null;
+            plot.SelectionX2 = null;
+            plot.IsSelectingRange = false;
         }
 
 
@@ -1845,14 +2625,45 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_dataSource is UdpReceiver)
+            // 已是 UDP 且正在监听：提示即可。
+            // Faulted（例如端口占用）时允许原地重试 StartAsync。
+            if (_dataSource is UdpReceiver existingUdp)
             {
-                MessageBox.Show(
-                    this,
-                    "当前已是 UDP 数据源。",
-                    "UDP",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                if (existingUdp.State == DataSourceState.Connected)
+                {
+                    MessageBox.Show(
+                        this,
+                        "当前已是 UDP 数据源。",
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                try
+                {
+                    await existingUdp.StartAsync();
+                    GSpotButton.Content = "GSpot…";
+                    MessageBox.Show(
+                        this,
+                        "UDP 已重新监听。",
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                catch (Exception retryEx)
+                {
+                    var detail = !string.IsNullOrWhiteSpace(existingUdp.LastError)
+                        ? existingUdp.LastError
+                        : retryEx.Message;
+                    MessageBox.Show(
+                        this,
+                        "UDP 重试失败:\n" + detail,
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+
                 return;
             }
 
@@ -2160,18 +2971,21 @@ public partial class MainWindow : Window
 
     private void UpdateNumericDisplay()
     {
+        var cursorSample =
+            TryGetCursorSample();
+
         var sample =
-            _latestSample;
+            cursorSample ?? _latestSample;
 
         if (sample is null)
             return;
 
         // ------------------------------------------------------------
-        // 数值显示已迁移到 Controls\DashboardPanel。
+        // 有曲线光标时 Dashboard 冻结为选中点（对齐 VBTS）；
+        // Escape 清除光标后恢复实时。
         //
         // 注意：VehicleSample 目前没有 SteeringAngleDeg 字段，
         // 也没有对应的 UDP 数据字段，所以方向盘角度暂时显示 0。
-        // 等协议扩展后，把 sample.SteeringAngleDeg 传进来即可。
         // ------------------------------------------------------------
 
         DashboardPanelControl.SetValues(
@@ -2179,7 +2993,35 @@ public partial class MainWindow : Window
             longitudinalAcceleration: sample.LongitudinalAcceleration,
             lateralAcceleration: sample.LateralAcceleration,
             yawRate: sample.YawRate,
-            steeringAngleDeg: 0.0);
+            steeringAngleDeg: 0.0,
+            cursorFrozen: cursorSample is not null);
+
+        // 光标移动时 Track Map 车辆位置跟着走；清除光标后回到实时最新点
+        TrackMapPanelControl.SetCursorSample(cursorSample);
+    }
+
+
+    /// <summary>
+    /// 取当前光标最近邻样本；无光标或无缓存时返回 null。
+    /// </summary>
+    private VehicleSample? TryGetCursorSample()
+    {
+        var plot = _cursorSourcePlot;
+        if (plot is null ||
+            plot.CursorX is not double cursorX ||
+            plot.LastXs is null ||
+            plot.LastXs.Length == 0 ||
+            plot.LastSamples is null ||
+            plot.LastSamples.Length == 0)
+        {
+            return null;
+        }
+
+        var index = FindNearestIndex(plot.LastXs, cursorX);
+        if (index < 0 || index >= plot.LastSamples.Length)
+            return null;
+
+        return plot.LastSamples[index];
     }
 
 
@@ -2378,7 +3220,28 @@ public partial class MainWindow : Window
             new UdpReceiver(
                 _dataBus);
 
-        await _dataSource.StartAsync();
+        try
+        {
+            await _dataSource.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            // 端口占用等绑定失败：弹窗提示，窗口继续可用（可切 GSpot 或稍后点 UDP 重试）。
+            var detail = _dataSource is UdpReceiver udp &&
+                         !string.IsNullOrWhiteSpace(udp.LastError)
+                ? udp.LastError
+                : ex.Message;
+
+            MessageBox.Show(
+                this,
+                "UDP 监听未能启动，程序仍会打开。\n\n" +
+                detail +
+                "\n\n请先关掉仍在运行的旧 CMTS / 占用 50000 端口的进程，" +
+                "再点工具栏「UDP」重试；或改用「GSpot…」。",
+                "UDP",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
 
 
         // ========================================================
@@ -2490,6 +3353,38 @@ public partial class MainWindow : Window
             = new();
 
         public ScottPlot.WPF.WpfPlot? WpfPlot { get; set; }
+
+        /// <summary>光标 X（与当前轴同一单位；Time 轴为 OADate）。</summary>
+        public double? CursorX { get; set; }
+
+        /// <summary>横向选区起止（可空表示无选区）。</summary>
+        public double? SelectionX1 { get; set; }
+
+        public double? SelectionX2 { get; set; }
+
+        public bool IsSelectingRange { get; set; }
+
+        /// <summary>左键按住拖动竖线光标中。</summary>
+        public bool IsDraggingCursor { get; set; }
+
+        /// <summary>曲线标题栏 Auto Y 复选框，便于手动缩放时同步关闭。</summary>
+        public CheckBox? AutoScaleYCheckBox { get; set; }
+
+        /// <summary>
+        /// Auto 关闭时锁定的轴范围；10Hz Refresh 不得从数据重算覆盖。
+        /// </summary>
+        public ScottPlot.AxisLimits? LockedLimits { get; set; }
+
+        /// <summary>最近一次绘制的 X / 各通道 Y，供光标插值。</summary>
+        public double[]? LastXs { get; set; }
+
+        /// <summary>与 LastXs 对齐的样本缓存，供 Dashboard 冻结读数。</summary>
+        public VehicleSample[]? LastSamples { get; set; }
+
+        public List<(PlotSignal Signal, double[] Ys)> LastChannelSeries { get; }
+            = new();
+
+        public bool IsTimeAxis { get; set; }
     }
 
 

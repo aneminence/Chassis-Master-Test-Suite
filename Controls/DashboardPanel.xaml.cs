@@ -20,17 +20,21 @@ public partial class DashboardPanel : UserControl
     }
 
     /// <summary>
-    /// 更新实时数值显示。
+    /// 更新数值显示（实时或光标冻结点）。
     ///
-    /// 由 MainWindow 的 UI 定时器调用，
+    /// 由 MainWindow 的 UI 定时器 / 光标交互调用，
     /// 保持在 UI 线程上。
     /// </summary>
+    /// <param name="cursorFrozen">
+    /// true = 显示曲线光标选中点；false = 实时最新样本。
+    /// </param>
     public void SetValues(
         double speedKph,
         double longitudinalAcceleration,
         double lateralAcceleration,
         double yawRate,
-        double steeringAngleDeg)
+        double steeringAngleDeg,
+        bool cursorFrozen = false)
     {
         SpeedValueText.Text =
             speedKph.ToString("F2", CultureInfo.InvariantCulture);
@@ -46,6 +50,8 @@ public partial class DashboardPanel : UserControl
 
         SteeringAngleValueText.Text =
             steeringAngleDeg.ToString("F1", CultureInfo.InvariantCulture);
+
+        CursorModeText.Text = cursorFrozen ? "· Cursor" : "";
     }
 
     /// <summary>
@@ -62,5 +68,7 @@ public partial class DashboardPanel : UserControl
         YawRateValueText.Text = "--";
 
         SteeringAngleValueText.Text = "--";
+
+        CursorModeText.Text = "";
     }
 }

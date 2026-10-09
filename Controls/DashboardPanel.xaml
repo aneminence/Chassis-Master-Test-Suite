@@ -66,6 +66,13 @@
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
 
+                    <TextBlock x:Name="CursorModeText"
+                               Text=""
+                               Foreground="#C8A34A"
+                               FontSize="12"
+                               Margin="10,0,0,0"
+                               VerticalAlignment="Center"/>
+
                 </StackPanel>
 
                 <Button Grid.Column="1"
