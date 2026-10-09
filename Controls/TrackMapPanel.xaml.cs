@@ -39,7 +39,7 @@ public partial class TrackMapPanel : UserControl
     /// 网格线大致每隔这么多像素一条。
     /// 实际间距会被 NiceDistanceStep 收敛成 1/2/5/10... 的整齐米数。
     /// </summary>
-    private const double GridTargetPixels = 40.0;
+    private const double GridTargetPixels = 20.0;
 
     /// <summary>
     /// 实时刷新限流。MainWindow 的 UI 定时器是 10 Hz，

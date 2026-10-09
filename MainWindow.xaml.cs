@@ -515,6 +515,10 @@ public partial class MainWindow : Window
         if (!IsInitialized || _suppressAutoScaleCheckboxRefresh)
             return;
 
+        // 手动取消 Auto X：立刻锁定当前范围
+        if (XAxisAutoScaleCheckBox.IsChecked != true)
+            CaptureLockedLimitsFromPlots();
+
         RefreshAllPlots();
     }
 
@@ -906,6 +910,8 @@ public partial class MainWindow : Window
             (_, _) =>
             {
                 plot.AutoScaleY = false;
+                if (plot.WpfPlot is not null)
+                    plot.LockedLimits = plot.WpfPlot.Plot.Axes.GetLimits();
             };
 
 
@@ -1376,9 +1382,10 @@ public partial class MainWindow : Window
             plot.WpfPlot.Plot;
 
 
-        // 记住用户拖动/缩放后的轴范围（非 Auto 时）
+        // 记住用户拖动/缩放后的轴范围（非 Auto 时）。
+        // 优先用 LockedLimits：避免上一帧 DateTimeTicksBottom 把 GetLimits 冲成数据范围。
         var previousLimits =
-            scottPlot.Axes.GetLimits();
+            plot.LockedLimits ?? scottPlot.Axes.GetLimits();
 
 
         scottPlot.Clear();
@@ -1526,107 +1533,25 @@ public partial class MainWindow : Window
         scottPlot.Legend.IsVisible = true;
 
 
-        // ========================================================
-        // X Auto Scale
-        // ========================================================
-
-        if (XAxisAutoScaleCheckBox.IsChecked == true)
-        {
-            var minX =
-                xs.Min();
-
-            var maxX =
-                xs.Max();
-
-
-            if (maxX <= minX)
-                maxX = minX + 1;
-
-
-            var xPadding =
-                (maxX - minX) * 0.02;
-
-
-            if (xPadding <= 0)
-                xPadding = 1;
-
-
-            // ====================================================
-            // Y Auto Scale
-            // ====================================================
-
-            if (plot.AutoScaleY)
-            {
-                if (maxY <= minY)
-                    maxY = minY + 1;
-
-
-                var yPadding =
-                    (maxY - minY) * 0.05;
-
-
-                if (yPadding <= 0)
-                    yPadding = 1;
-
-
-                scottPlot.Axes.SetLimits(
-                    minX - xPadding,
-                    maxX + xPadding,
-                    minY - yPadding,
-                    maxY + yPadding);
-            }
-            else
-            {
-                scottPlot.Axes.SetLimits(
-                    minX - xPadding,
-                    maxX + xPadding,
-                    previousLimits.Bottom,
-                    previousLimits.Top);
-            }
-        }
-        else
-        {
-            // X 不自动缩放时，只处理 Y
-
-            if (plot.AutoScaleY)
-            {
-                if (maxY <= minY)
-                    maxY = minY + 1;
-
-
-                var yPadding =
-                    (maxY - minY) * 0.05;
-
-
-                if (yPadding <= 0)
-                    yPadding = 1;
-
-
-                scottPlot.Axes.SetLimits(
-                    previousLimits.Left,
-                    previousLimits.Right,
-                    minY - yPadding,
-                    maxY + yPadding);
-            }
-            else
-            {
-                scottPlot.Axes.SetLimits(
-                    previousLimits.Left,
-                    previousLimits.Right,
-                    previousLimits.Bottom,
-                    previousLimits.Top);
-            }
-        }
-
-
         // ScottPlot 5 的 Clear() 会把样式复位，
         // 所以每次重建曲线后都重新套一遍深色主题。
+        //
+        // 重要：DateTimeTicksBottom() 会替换 Bottom 轴并按数据 AutoScale，
+        // 必须先装时间轴，再 SetLimits；否则 10Hz 刷新会把手动平移/缩放冲掉。
         ApplyDarkPlotStyle(
             plot.WpfPlot);
 
         ApplyDateTimeAxisIfNeeded(
             plot,
             selectedXSignal);
+
+        ApplyAxisLimitsAfterRebuild(
+            plot,
+            scottPlot,
+            xs,
+            minY,
+            maxY,
+            previousLimits);
 
         ApplyPlotOverlays(plot);
 
@@ -1666,6 +1591,27 @@ public partial class MainWindow : Window
         {
             // 滚轮缩放也算手动操作：立刻退出自动缩放
             SuspendAutoScaleForUserInteraction(plot);
+
+            // ScottPlot 在 Input 阶段改轴；下一拍再锁定，避免锁到缩放前的范围
+            Dispatcher.BeginInvoke(
+                () =>
+                {
+                    if (plot.WpfPlot is null)
+                        return;
+
+                    var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+                    if (double.IsInfinity(limits.Left) ||
+                        double.IsInfinity(limits.Right) ||
+                        double.IsNaN(limits.Left) ||
+                        double.IsNaN(limits.Right) ||
+                        limits.Right <= limits.Left)
+                    {
+                        return;
+                    }
+
+                    plot.LockedLimits = limits;
+                },
+                DispatcherPriority.Input);
         };
 
         wpfPlot.MouseDown += (_, e) =>
@@ -1878,6 +1824,32 @@ public partial class MainWindow : Window
     {
         if (_activeManualAxisGestures > 0)
             _activeManualAxisGestures--;
+
+        // 手势结束立刻锁定当前轴范围，避免下一帧 Refresh 读到被冲掉的 GetLimits
+        if (_activeManualAxisGestures == 0)
+            CaptureLockedLimitsFromPlots();
+    }
+
+
+    private void CaptureLockedLimitsFromPlots()
+    {
+        foreach (var plot in _plots)
+        {
+            if (plot.WpfPlot is null)
+                continue;
+
+            var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+            if (double.IsInfinity(limits.Left) ||
+                double.IsInfinity(limits.Right) ||
+                double.IsNaN(limits.Left) ||
+                double.IsNaN(limits.Right) ||
+                limits.Right <= limits.Left)
+            {
+                continue;
+            }
+
+            plot.LockedLimits = limits;
+        }
     }
 
 
@@ -1904,6 +1876,20 @@ public partial class MainWindow : Window
         finally
         {
             _suppressAutoScaleCheckboxRefresh = false;
+        }
+
+        // 取消 Auto 的瞬间锁定当前视图，防止下一帧按数据重算
+        if (plot.WpfPlot is not null)
+        {
+            var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+            if (!(double.IsInfinity(limits.Left) ||
+                  double.IsInfinity(limits.Right) ||
+                  double.IsNaN(limits.Left) ||
+                  double.IsNaN(limits.Right) ||
+                  limits.Right <= limits.Left))
+            {
+                plot.LockedLimits = limits;
+            }
         }
     }
 
@@ -1963,6 +1949,122 @@ public partial class MainWindow : Window
         catch
         {
             return null;
+        }
+    }
+
+
+    /// <summary>
+    /// 在 Clear + DateTimeTicksBottom 之后应用轴范围。
+    /// Auto 勾选：按数据；未勾选：绝不从数据重算，沿用 Locked / previous。
+    /// </summary>
+    private void ApplyAxisLimitsAfterRebuild(
+        PlotDefinition plot,
+        ScottPlot.Plot scottPlot,
+        double[] xs,
+        double minY,
+        double maxY,
+        ScottPlot.AxisLimits previousLimits)
+    {
+        var autoX =
+            XAxisAutoScaleCheckBox.IsChecked == true;
+        var autoY =
+            plot.AutoScaleY;
+
+        double left;
+        double right;
+        double bottom;
+        double top;
+
+        if (autoX)
+        {
+            var minX = xs.Min();
+            var maxX = xs.Max();
+            if (maxX <= minX)
+                maxX = minX + 1;
+
+            var xPadding = (maxX - minX) * 0.02;
+            if (xPadding <= 0)
+                xPadding = 1;
+
+            left = minX - xPadding;
+            right = maxX + xPadding;
+        }
+        else
+        {
+            // Auto X 关闭：不从数据重算
+            left = previousLimits.Left;
+            right = previousLimits.Right;
+
+            // 防御：无效范围时退回数据（仅首次/损坏状态）
+            if (double.IsInfinity(left) ||
+                double.IsInfinity(right) ||
+                double.IsNaN(left) ||
+                double.IsNaN(right) ||
+                right <= left)
+            {
+                var minX = xs.Min();
+                var maxX = xs.Max();
+                if (maxX <= minX)
+                    maxX = minX + 1;
+                var xPadding = (maxX - minX) * 0.02;
+                if (xPadding <= 0)
+                    xPadding = 1;
+                left = minX - xPadding;
+                right = maxX + xPadding;
+            }
+        }
+
+        if (autoY)
+        {
+            if (maxY <= minY)
+                maxY = minY + 1;
+
+            var yPadding = (maxY - minY) * 0.05;
+            if (yPadding <= 0)
+                yPadding = 1;
+
+            bottom = minY - yPadding;
+            top = maxY + yPadding;
+        }
+        else
+        {
+            // Auto Y 关闭：不从数据重算
+            bottom = previousLimits.Bottom;
+            top = previousLimits.Top;
+
+            if (double.IsInfinity(bottom) ||
+                double.IsInfinity(top) ||
+                double.IsNaN(bottom) ||
+                double.IsNaN(top) ||
+                top <= bottom)
+            {
+                if (maxY <= minY)
+                    maxY = minY + 1;
+                var yPadding = (maxY - minY) * 0.05;
+                if (yPadding <= 0)
+                    yPadding = 1;
+                bottom = minY - yPadding;
+                top = maxY + yPadding;
+            }
+        }
+
+        scottPlot.Axes.SetLimits(left, right, bottom, top);
+
+        // Auto 全关时锁定当前范围，供下一帧 10Hz Refresh 使用
+        if (!autoX && !autoY)
+        {
+            plot.LockedLimits =
+                scottPlot.Axes.GetLimits();
+        }
+        else if (autoX && autoY)
+        {
+            plot.LockedLimits = null;
+        }
+        else
+        {
+            // 单轴 Auto：仍保存当前完整范围，关闭那一轴时用
+            plot.LockedLimits =
+                scottPlot.Axes.GetLimits();
         }
     }
 
@@ -3267,6 +3369,11 @@ public partial class MainWindow : Window
 
         /// <summary>曲线标题栏 Auto Y 复选框，便于手动缩放时同步关闭。</summary>
         public CheckBox? AutoScaleYCheckBox { get; set; }
+
+        /// <summary>
+        /// Auto 关闭时锁定的轴范围；10Hz Refresh 不得从数据重算覆盖。
+        /// </summary>
+        public ScottPlot.AxisLimits? LockedLimits { get; set; }
 
         /// <summary>最近一次绘制的 X / 各通道 Y，供光标插值。</summary>
         public double[]? LastXs { get; set; }
