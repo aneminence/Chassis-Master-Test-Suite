@@ -222,7 +222,18 @@ public sealed class UdpReceiver : IDataSource
                 Longitude = packet.Longitude,
                 Altitude = packet.Altitude,
 
-                Heading = packet.Heading
+                Heading = packet.Heading,
+
+                Channels = VehicleSample.BuildCoreChannels(
+                    packet.SpeedKph,
+                    packet.LongitudinalAcceleration,
+                    packet.LateralAcceleration,
+                    packet.VerticalAcceleration,
+                    packet.YawRate,
+                    packet.Heading,
+                    packet.Latitude,
+                    packet.Longitude,
+                    packet.Altitude)
             };
 
             _dataBus.TryPublish(sample);

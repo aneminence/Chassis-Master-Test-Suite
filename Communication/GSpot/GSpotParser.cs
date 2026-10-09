@@ -187,7 +187,17 @@ public static class GSpotParser
             Latitude = latitude,
             Longitude = longitude,
             Altitude = altitude,
-            Heading = heading
+            Heading = heading,
+            Channels = VehicleSample.BuildCoreChannels(
+                speed,
+                ax,
+                ay,
+                az,
+                yawRate,
+                heading,
+                latitude,
+                longitude,
+                altitude)
         };
 
         return true;

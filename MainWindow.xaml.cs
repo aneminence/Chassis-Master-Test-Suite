@@ -63,6 +63,9 @@ public partial class MainWindow : Window
 
     private long _sampleCount;
 
+    /// <summary>最近一次成功加载 VBO 的可绘通道数（不含合成 Time）。</summary>
+    private int _lastLoadedChannelCount;
+
     private readonly DispatcherTimer _uiTimer;
 
     private VehicleSample? _latestSample;
@@ -129,6 +132,17 @@ public partial class MainWindow : Window
         InitializeAxisSelector();
 
         InitializePlotSystem();
+
+        ChannelRegistry.Instance.AvailableChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RefreshChannelSelectorsFromRegistry);
+                return;
+            }
+
+            RefreshChannelSelectorsFromRegistry();
+        };
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
 
@@ -352,6 +366,16 @@ public partial class MainWindow : Window
                 return 0;
             }
 
+            // 通道下拉只显示本文件实际存在的列。
+            // 优先 [column names]；若为空则回退到首条样本 Channels 键。
+            var columnNames = reader.Columns.Count > 0
+                ? reader.Columns
+                : samples[0].Channels.Keys.ToList();
+
+            ChannelRegistry.Instance.SetFromVboColumns(columnNames);
+            // AvailableChanged 会刷新下拉；此处再显式刷一次，避免事件未挂上时漏刷。
+            RefreshChannelSelectorsFromRegistry();
+
             // 离线数据替换掉当前历史，
             // 避免和实时采集的数据混在一起。
             _sampleHistory.Clear();
@@ -376,6 +400,9 @@ public partial class MainWindow : Window
             RefreshAllPlots();
 
             UpdateNumericDisplay();
+
+            // 把通道数挂在返回值旁：调用方用于状态栏。
+            _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
 
             return samples.Count;
         }
@@ -447,16 +474,23 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        var preferredDirs = new[]
+        {
+            @"D:\CMTS",
+            Path.Combine(AppContext.BaseDirectory, "Recordings"),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+
+        var initialDir = preferredDirs.FirstOrDefault(Directory.Exists)
+            ?? AppContext.BaseDirectory;
+
         var dialog =
             new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Open VBO file",
                 Filter =
                     "VBO files (*.vbo)|*.vbo|All files (*.*)|*.*",
-                InitialDirectory =
-                    Path.Combine(
-                        AppContext.BaseDirectory,
-                        "Recordings")
+                InitialDirectory = initialDir
             };
 
         if (dialog.ShowDialog(this) != true)
@@ -479,7 +513,7 @@ public partial class MainWindow : Window
             Path.GetFileName(dialog.FileName);
 
         ReplayInfoText.Text =
-            $"{count} samples loaded";
+            $"{count} samples · {_lastLoadedChannelCount} channels";
     }
 
 
@@ -487,13 +521,54 @@ public partial class MainWindow : Window
     // X Axis
     // ============================================================
 
+    /// <summary>
+    /// 当前可用通道变化后，把已选但已不存在的通道改成默认。
+    /// </summary>
+    private void SanitizePlotChannelSelections()
+    {
+        var fallback = ChannelRegistry.Instance.DefaultPlotChannelId;
+
+        foreach (var plot in _plots)
+        {
+            foreach (var channel in plot.Channels)
+            {
+                if (!ChannelRegistry.Instance.IsAvailable(channel.ChannelId) ||
+                    string.Equals(channel.ChannelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+                {
+                    channel.ChannelId = fallback;
+                }
+            }
+        }
+    }
+
+
+    /// <summary>
+    /// 按 ChannelRegistry.Available 重建 X 轴与各 Plot 的 Channel 下拉。
+    /// </summary>
+    private void RefreshChannelSelectorsFromRegistry()
+    {
+        SanitizePlotChannelSelections();
+        InitializeAxisSelector();
+        RefreshPlotContainer();
+    }
+
+
     private void InitializeAxisSelector()
     {
-        XAxisSelector.ItemsSource =
-            Enum.GetValues<PlotSignal>();
+        var available = ChannelRegistry.Instance.Available.ToList();
 
-        XAxisSelector.SelectedItem =
-            PlotSignal.Time;
+        XAxisSelector.DisplayMemberPath = nameof(ChannelInfo.DisplayName);
+        XAxisSelector.SelectedValuePath = nameof(ChannelInfo.Id);
+        XAxisSelector.ItemsSource = available;
+
+        var selectedId = ChannelIds.AxisTime;
+        if (XAxisSelector.SelectedValue is string current &&
+            available.Any(c => string.Equals(c.Id, current, StringComparison.OrdinalIgnoreCase)))
+        {
+            selectedId = current;
+        }
+
+        XAxisSelector.SelectedValue = selectedId;
     }
 
 
@@ -556,7 +631,7 @@ public partial class MainWindow : Window
         plot.Channels.Add(
             new ChannelDefinition
             {
-                Signal = PlotSignal.Speed
+                ChannelId = ChannelRegistry.Instance.DefaultPlotChannelId
             });
 
         _plots.Add(plot);
@@ -1156,11 +1231,13 @@ public partial class MainWindow : Window
 
         var comboBox = new ComboBox
         {
+            DisplayMemberPath = nameof(ChannelInfo.DisplayName),
+            SelectedValuePath = nameof(ChannelInfo.Id),
             ItemsSource =
-                Enum.GetValues<PlotSignal>(),
+                ChannelRegistry.Instance.AvailablePlotChannels,
 
-            SelectedItem =
-                channel.Signal,
+            SelectedValue =
+                channel.ChannelId,
 
             Height = 28,
 
@@ -1168,16 +1245,20 @@ public partial class MainWindow : Window
                 System.Windows.VerticalAlignment.Center
         };
 
+        // 若当前通道不在可用列表，回退到默认。
+        if (comboBox.SelectedValue is null)
+        {
+            channel.ChannelId =
+                ChannelRegistry.Instance.DefaultPlotChannelId;
+            comboBox.SelectedValue = channel.ChannelId;
+        }
 
         comboBox.SelectionChanged +=
             (_, _) =>
             {
-                if (comboBox.SelectedItem
-                    is PlotSignal signal)
+                if (comboBox.SelectedValue is string channelId)
                 {
-                    channel.Signal =
-                        signal;
-
+                    channel.ChannelId = channelId;
                     RefreshPlot(plot);
                 }
             };
@@ -1197,7 +1278,7 @@ public partial class MainWindow : Window
         {
             Text =
                 GetSignalUnit(
-                    channel.Signal),
+                    channel.ChannelId),
 
             Foreground =
                 new SolidColorBrush(
@@ -1219,11 +1300,11 @@ public partial class MainWindow : Window
         comboBox.SelectionChanged +=
             (_, _) =>
             {
-                if (comboBox.SelectedItem
-                    is PlotSignal signal)
+                if (comboBox.SelectedValue
+                    is string channelId)
                 {
                     unitText.Text =
-                        GetSignalUnit(signal);
+                        GetSignalUnit(channelId);
                 }
             };
 
@@ -1290,8 +1371,8 @@ public partial class MainWindow : Window
         plot.Channels.Add(
             new ChannelDefinition
             {
-                Signal =
-                    PlotSignal.Speed
+                ChannelId =
+                    ChannelRegistry.Instance.DefaultPlotChannelId
             });
 
         RefreshPlotContainer();
@@ -1368,10 +1449,10 @@ public partial class MainWindow : Window
 
 
         var selectedXSignal =
-            XAxisSelector.SelectedItem
-                is PlotSignal xSignal
+            XAxisSelector.SelectedValue
+                is string xSignal
                 ? xSignal
-                : PlotSignal.Time;
+                : ChannelIds.AxisTime;
 
 
         var selectedChannels =
@@ -1394,7 +1475,7 @@ public partial class MainWindow : Window
         plot.LastXs = null;
         plot.LastSamples = null;
         plot.LastChannelSeries.Clear();
-        plot.IsTimeAxis = selectedXSignal == PlotSignal.Time;
+        plot.IsTimeAxis = string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
 
 
         // ========================================================
@@ -1477,7 +1558,7 @@ public partial class MainWindow : Window
                 var value =
                     GetSignalValue(
                         history[i],
-                        channel.Signal);
+                        channel.ChannelId);
 
                 ys[i] = value;
 
@@ -1498,15 +1579,15 @@ public partial class MainWindow : Window
 
 
             scatter.LegendText =
-                $"{GetSignalDisplayName(channel.Signal)} " +
-                $"({GetSignalUnit(channel.Signal)})";
+                $"{GetSignalDisplayName(channel.ChannelId)} " +
+                $"({GetSignalUnit(channel.ChannelId)})";
 
 
             scatter.LineWidth = 1;
             scatter.MarkerSize = 0;
 
             plot.LastChannelSeries.Add(
-                (channel.Signal, ys));
+                (channel.ChannelId, ys));
         }
 
 
@@ -1900,9 +1981,9 @@ public partial class MainWindow : Window
     private void ApplyCursorFromTrackSample(VehicleSample sample)
     {
         var selectedXSignal =
-            XAxisSelector.SelectedItem is PlotSignal xSignal
+            XAxisSelector.SelectedValue is string xSignal
                 ? xSignal
-                : PlotSignal.Time;
+                : ChannelIds.AxisTime;
 
         var cursorX = GetAxisValue(sample, selectedXSignal);
 
@@ -2071,12 +2152,12 @@ public partial class MainWindow : Window
 
     private void ApplyDateTimeAxisIfNeeded(
         PlotDefinition plot,
-        PlotSignal selectedXSignal)
+        string selectedXSignal)
     {
         if (plot.WpfPlot is null)
             return;
 
-        if (selectedXSignal != PlotSignal.Time)
+        if (!string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
             return;
 
         var axis =
@@ -2299,9 +2380,9 @@ public partial class MainWindow : Window
 
     private static double GetAxisValue(
         VehicleSample sample,
-        PlotSignal signal)
+        string channelId)
     {
-        if (signal == PlotSignal.Time)
+        if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
         {
             // UTC 瞬间 → OADate，供 DateTime 轴使用
             var utc =
@@ -2311,16 +2392,16 @@ public partial class MainWindow : Window
             return utc.ToOADate();
         }
 
-        return GetSignalValue(sample, signal);
+        return GetSignalValue(sample, channelId);
     }
 
 
-    private static string GetAxisLabel(PlotSignal signal)
+    private static string GetAxisLabel(string channelId)
     {
-        if (signal == PlotSignal.Time)
+        if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
             return "Time (Beijing)";
 
-        return $"{GetSignalDisplayName(signal)} ({GetSignalUnit(signal)})";
+        return $"{GetSignalDisplayName(channelId)} ({GetSignalUnit(channelId)})";
     }
 
 
@@ -2340,42 +2421,12 @@ public partial class MainWindow : Window
 
     private static double GetSignalValue(
         VehicleSample sample,
-        PlotSignal signal)
+        string channelId)
     {
-        return signal switch
-        {
-            PlotSignal.Time =>
-                sample.Timestamp / 1000.0,
+        if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            return sample.Timestamp / 1000.0;
 
-            PlotSignal.Speed =>
-                sample.SpeedKph,
-
-            PlotSignal.LongitudinalAcceleration =>
-                sample.LongitudinalAcceleration,
-
-            PlotSignal.LateralAcceleration =>
-                sample.LateralAcceleration,
-
-            PlotSignal.VerticalAcceleration =>
-                sample.VerticalAcceleration,
-
-            PlotSignal.YawRate =>
-                sample.YawRate,
-
-            PlotSignal.Heading =>
-                sample.Heading,
-
-            PlotSignal.Latitude =>
-                sample.Latitude,
-
-            PlotSignal.Longitude =>
-                sample.Longitude,
-
-            PlotSignal.Altitude =>
-                sample.Altitude,
-
-            _ => 0
-        };
+        return sample.GetChannel(channelId);
     }
 
 
@@ -2384,42 +2435,12 @@ public partial class MainWindow : Window
     // ============================================================
 
     private static string GetSignalDisplayName(
-        PlotSignal signal)
+        string channelId)
     {
-        return signal switch
-        {
-            PlotSignal.Time =>
-                "Time",
+        if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            return "Time";
 
-            PlotSignal.Speed =>
-                "Speed",
-
-            PlotSignal.LongitudinalAcceleration =>
-                "Longitudinal Accel",
-
-            PlotSignal.LateralAcceleration =>
-                "Lateral Accel",
-
-            PlotSignal.VerticalAcceleration =>
-                "Vertical Accel",
-
-            PlotSignal.YawRate =>
-                "Yaw Rate",
-
-            PlotSignal.Heading =>
-                "Heading",
-
-            PlotSignal.Latitude =>
-                "Latitude",
-
-            PlotSignal.Longitude =>
-                "Longitude",
-
-            PlotSignal.Altitude =>
-                "Altitude",
-
-            _ => "Value"
-        };
+        return ChannelRegistry.Instance.GetDisplayName(channelId);
     }
 
 
@@ -2428,42 +2449,12 @@ public partial class MainWindow : Window
     // ============================================================
 
     private static string GetSignalUnit(
-        PlotSignal signal)
+        string channelId)
     {
-        return signal switch
-        {
-            PlotSignal.Time =>
-                "Beijing",
+        if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            return "Beijing";
 
-            PlotSignal.Speed =>
-                "km/h",
-
-            PlotSignal.LongitudinalAcceleration =>
-                "m/s²",
-
-            PlotSignal.LateralAcceleration =>
-                "m/s²",
-
-            PlotSignal.VerticalAcceleration =>
-                "m/s²",
-
-            PlotSignal.YawRate =>
-                "deg/s",
-
-            PlotSignal.Heading =>
-                "deg",
-
-            PlotSignal.Latitude =>
-                "deg",
-
-            PlotSignal.Longitude =>
-                "deg",
-
-            PlotSignal.Altitude =>
-                "m",
-
-            _ => ""
-        };
+        return ChannelRegistry.Instance.GetUnit(channelId);
     }
 
 
@@ -3381,7 +3372,7 @@ public partial class MainWindow : Window
         /// <summary>与 LastXs 对齐的样本缓存，供 Dashboard 冻结读数。</summary>
         public VehicleSample[]? LastSamples { get; set; }
 
-        public List<(PlotSignal Signal, double[] Ys)> LastChannelSeries { get; }
+        public List<(string ChannelId, double[] Ys)> LastChannelSeries { get; }
             = new();
 
         public bool IsTimeAxis { get; set; }
@@ -3394,34 +3385,7 @@ public partial class MainWindow : Window
 
     private sealed class ChannelDefinition
     {
-        public PlotSignal Signal { get; set; }
-    }
-
-
-    // ============================================================
-    // 可选数据
-    // ============================================================
-
-    private enum PlotSignal
-    {
-        Time,
-
-        Speed,
-
-        LongitudinalAcceleration,
-
-        LateralAcceleration,
-
-        VerticalAcceleration,
-
-        YawRate,
-
-        Heading,
-
-        Latitude,
-
-        Longitude,
-
-        Altitude
+        /// <summary>通道 Id（见 ChannelIds / ChannelRegistry）。</summary>
+        public string ChannelId { get; set; } = ChannelIds.Velocity;
     }
 }
