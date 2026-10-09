@@ -6,14 +6,13 @@
 
 ---
 
-## 最近更新（2026-10-08）
+## 最近更新（2026-10-09）
 
-- **UI 外壳重构**：顶部栏 + 导航栏 + 上方三区 + 下方曲线区的完整布局，深色金色主题统一到 `App.xaml`。
-- **VBO 记录 / 回放**：录制由 CSV 改为 Racelogic VBO 文本格式，可直接用 VBOX Test Suite 打开验证；新增 `VboReader` 支持离线回放。
-- **录制控制**：顶部栏三态录制按钮（`● Start` / `❚❚ Pause` / `▶ Resume`）+ 独立 `■ Stop`，支持暂停续录。
-- **Dashboard / Test Results / Track Map 三面板**：实时数值面板可用，Track Map 已实现 GPS 轨迹绘制与比例尺。
-- **经纬度符号约定统一**：内部统一「正 = 东经」，VBO 的相反符号只在记录器 / 读取器做换算。
-- **配套 VI 设计系统**：建于 `D:\CMTS\VI`（不纳入本工程仓库）。
+- **可替换数据源**：`IDataSource` 抽象；支持本机 **UDP / Simulator** 与 **GSpot WebSocket**（房间号 + 密码）。
+- **曲线交互**：横轴北京时间；左键光标、中键平移、右键缩放；`X Auto Scale` 勾选才自动缩放；Esc 清除光标。
+- **光标联动**：曲线光标 / Track Map 点击 / Dashboard 冻结读数互相同步。
+- **通道注册表**：按数据源可用通道显示下拉；实时核心通道 vs VBO 文件通道。
+- **VBO 记录 / 回放**：Racelogic 兼容文本格式，可用 VBOX Test Suite 打开。
 
 ---
 
@@ -24,44 +23,33 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
   数据采集   →  数据解析  →  统一数据  →  实时处理   →   UI 显示      →   原始数据记录
 ```
 
-核心原则：
-
-1. **数据采集与 UI 解耦** —— UI 不直接依赖 UDP
-2. **原始数据与计算数据分离** —— 任何计算结果都不覆盖原始数据
-3. **DataBus 是实时数据中心** —— 模块之间通过 DataBus 交互，不互相直接调用
-4. **数据源可替换** —— Simulator 只是数据源之一，将来可替换为 CAN / VBOX / IMU / RTK 实车设备
+1. **数据采集与 UI 解耦** —— UI 通过 `IDataSource` / DataBus，不直接绑死 UDP  
+2. **原始数据与计算数据分离** —— 计算结果不覆盖原始样本  
+3. **DataBus 是实时数据中心** —— 模块经总线交互  
+4. **数据源可替换** —— UDP、GSpot，后续可接 CAN / VBOX / IMU / RTK  
 
 ---
 
 ## 当前架构
 
 ```text
-VehicleSimulator (100 Hz)
-        │  UdpPacket (89 字节小端二进制)
-        ▼
-   UdpSender ──UDP 127.0.0.1:50000──► UdpReceiver
-                                          │  解析 + 丢包/乱序统计
-                                          ▼
-                                    VehicleSample  (统一数据模型)
-                                          │
-                                    DataBus (BoundedChannel, 容量 2000)
-                                          │
-                                          ▼
-                                  数据消费循环 ConsumeDataAsync
-                                          │
-                    ┌─────────────────────┼──────────────────────┐
-                    ▼                     ▼                      ▼
-              VboRecorder           _sampleHistory          网络统计 Rx / Lost / OOO
-          (后台线程 → VBO 文件)  (上限 1,000,000 条)
-                                          │
-                                  DispatcherTimer (100 ms)
-                                          │
-                    ┌─────────────────────┼──────────────────────┐
-                    ▼                     ▼                      ▼
-             DashboardPanel        ScottPlot 曲线区         TrackMapPanel
-             5 项实时数值      (多 Plot / 多 Channel)   (GPS 轨迹 + 比例尺)
+                    ┌─ UdpReceiver (127.0.0.1:50000) ◄── Simulator / UdpSender
+  IDataSource ──────┤
+                    └─ GSpotDataSource (WebSocket 房间)
+                              │
+                              ▼
+                       VehicleSample
+                              │
+                         DataBus (BoundedChannel)
+                              │
+                     ConsumeDataAsync + 历史缓冲
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+     VboRecorder        ScottPlot 曲线      Dashboard / Track Map
+     (可选录制)         + 光标 / 选区         + 通道注册表
 
-离线回放：VboReader ──► _sampleHistory ──► 同一条曲线 / 轨迹管线
+离线：VboReader ──► _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
 ```
 
 ---
@@ -70,32 +58,22 @@ VehicleSimulator (100 Hz)
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
-│ CMTS  Chassis Master Test Suite   ● Online  [● Start] [■ Stop]        │  顶部栏
-│                                   Elapsed 00:00:12.3  15:04:21        │
+│ CMTS   ● Online/Offline   [● Start] [■ Stop]   Elapsed / 时钟         │  顶部栏
 ├───────────────────────────────────────────────────────────────────────┤
 │ ⊞ Dashboard │ ▤ Data │ ⌁ Analysis │ ▷ Replay │ ⚙ Settings            │  导航栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
-│ Dashboard        │ Test Results        │ Track Map                    │  上方三区
-│ 实时数值 5 项    │ 自动评价（未实现）  │ GPS 轨迹 + 比例尺网格        │  （可拖动分隔条）
-│ Speed / Yaw Rate │ "Not implemented    │ Lat / Lon / Alt              │
-│ Lat / Long Acc.  │  yet"               │                              │
-│ Steering Angle   │                     │                              │
+│ Dashboard        │ Test Results        │ Track Map                    │
+│ 实时 / 光标冻结  │ （占位）            │ GPS 轨迹；点击同步光标       │
 ├──────────────────┴─────────────────────┴──────────────────────────────┤
-│ ══════════════════ 横向分隔条（可拖动）══════════════════════════════ │
-├───────────────────────────────────────────────────────────────────────┤
-│ Test Data Curves                                                      │  曲线区
-│ [X Axis ▾] [X Auto Scale] [+ Add Plot] [Reset View] [Simulator]       │
-│                                              Rx 0  Lost 0  OOO 0       │
-│ ┌─ Plot 1 ─── Plot Name [        ] [Auto Y] [+ Channel] [Remove Plot]─┐│
-│ │  Channel [Speed ▾]  km/h  ×                                        ││
-│ │  （ScottPlot 实时曲线）                                             ││
-│ └────────────────────────────────────────────────────────────────────┘│
+│ [X Axis] [X Auto Scale] [+ Add Plot] [Reset View]                     │
+│ [Simulator] [GSpot…] [UDP]                    Rx / Lost / OOO         │
+│ Plot：Channel 下拉（仅显示当前可用通道）+ 曲线交互                    │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-- **顶部栏**：Logo、网络状态指示（静态）、录制控制、已录时长 `Elapsed`、系统时钟。
-- **导航栏**：`Dashboard` 与 `Replay` 可用；`Data` / `Analysis` / `Settings` 为占位项，暂时禁用。
-- **Replay 页**：`📂 Open VBO…` 加载录制文件后自动切回 Dashboard，离线数据进入同一条曲线 / 轨迹管线。
+- **顶部栏**：网络状态、录制、已录时长、系统时钟。  
+- **导航**：`Dashboard` / `Replay` 可用；`Data` / `Analysis` / `Settings` 暂禁用。  
+- **数据源按钮**：`GSpot…` / `UDP` 在曲线工具栏（Settings 完善前的快捷入口）。
 
 ---
 
@@ -104,28 +82,18 @@ VehicleSimulator (100 Hz)
 ```text
 Chassis Master Test Suite/
 ├─ Core/
-│   ├─ VehicleSample.cs        统一车辆数据模型（不可变）
-│   └─ DataBus.cs              实时数据总线（BoundedChannel，容量 2000）
+│   ├─ VehicleSample.cs / DataBus.cs
+│   └─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
 ├─ Communication/
-│   ├─ UdpPacket.cs            UDP 线格式对象
-│   ├─ UdpPacketSerializer.cs  89 字节小端序列化 / 反序列化
-│   ├─ UdpReceiver.cs          接收 + 解析 + 质量统计
-│   └─ UdpSender.cs            发送（Simulator 使用）
-├─ Recorder/
-│   ├─ VboRecorder.cs          异步 VBO 记录器（Racelogic / VBOX 兼容）
-│   ├─ VboReader.cs            VBO 解析器（离线回放）
-│   └─ CsvRecorder.cs          异步 CSV 记录器（早期实现，当前未接线）
-├─ Simulator/
-│   └─ VehicleSimulator.cs     人工驾驶车辆运动学模型
-├─ Controls/
-│   ├─ DashboardPanel.xaml(.cs)   实时数值面板（固定 5 项）
-│   ├─ TestResultsPanel.xaml(.cs) 自动评价面板（占位，未实现）
-│   ├─ TrackMapPanel.xaml(.cs)    GPS 轨迹图 + 屏幕层比例尺网格
-│   └─ TrackProjection.cs         经纬度 / 米平面 / Web Mercator 投影
-├─ App.xaml(.cs)               深色金色主题与全局控件样式
-├─ MainWindow.xaml(.cs)        主界面：外壳 / 录制控制 / 数据消费 / Plot 系统
-├─ SimulatorWindow.xaml(.cs)   三维车辆仿真视景
-└─ rebuild.cmd                 一键清理 + 重建脚本
+│   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
+│   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
+│   └─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
+├─ Recorder/    VboRecorder / VboReader / CsvRecorder（未接线）
+├─ Simulator/   VehicleSimulator
+├─ Controls/    Dashboard / TestResults / TrackMap / TrackProjection
+├─ MainWindow.* 外壳、录制、曲线、数据源切换、光标联动
+├─ SimulatorWindow.* 三维仿真
+└─ rebuild.cmd
 ```
 
 ---
@@ -136,12 +104,11 @@ Chassis Master Test Suite/
 |---|---|
 | 操作系统 | Windows |
 | .NET | 10.0（`net10.0-windows`） |
-| UI 框架 | WPF |
-| 绘图库 | ScottPlot.WPF 5.1.59 |
+| UI | WPF |
+| 绘图 | ScottPlot.WPF 5.x |
 | IDE | Visual Studio 2022 / 2026 |
 
-> 编译时会出现 `NU1701` 警告（`SkiaSharp.Views.WPF` 兼容性），
-> 这是已知情况，**不影响运行**。
+> 编译时 `NU1701`（SkiaSharp.Views.WPF）为已知警告，**不影响运行**。
 
 ---
 
@@ -153,277 +120,165 @@ dotnet build
 dotnet run
 ```
 
-或在 Visual Studio 中直接 `F5`。
+或在 Visual Studio 中 **F5**。
 
-### 一键重建脚本 rebuild.cmd
+### 一键重建 `rebuild.cmd`
 
-```cmd
-rebuild.cmd
-```
+强杀占用中的 exe → 删 `bin` / `obj` → `dotnet build`。适用于：
 
-依次执行：**强杀正在运行的 exe → 删除 `bin` / `obj` → `dotnet build`**。
-
-适用于两种情况：
-
-- Visual Studio 的 XAML 智能感知缓存过期，报出一堆并不存在的 `CS0103`（「不存在名称 XXX」），清理重建即可恢复；
-- 上一次运行的 exe 仍被占用，导致 `MSB3021` / `MSB3027` 复制失败。
-
-`bin` / `obj` 均为可再生目录，已在 `.gitignore` 中排除。
+- VS XAML 误报大量 `CS0103`  
+- `MSB3021` / `MSB3027` 文件被占用  
 
 ---
 
-## 使用方法
+## 软件操作指南
 
-### 1. 启动
+### 1. 启动与默认数据源
 
-启动 CMTS 后**自动开始接收 UDP 数据**（`127.0.0.1:50000`），
-但**不会自动开始录制** —— 录制由顶部栏按钮显式控制。
+启动后默认走 **UDP**（`127.0.0.1:50000`），**不会自动录制**。  
+若端口被占用，会提示错误而不是闪退；请结束残留 CMTS 进程后再开。
 
-### 2. 录制控制（顶部栏）
+### 2. UDP + Simulator（本机仿真）
 
-| 按钮 | 作用 |
-|---|---|
-| `● Start` | 新建 VBO 文件并开始录制 |
-| `❚❚ Pause` | 暂停写入（实时曲线 / 数值 / 数据消费照常运行） |
-| `▶ Resume` | 继续写入**同一个文件** |
-| `■ Stop` | 结束录制并关闭文件 |
-
-只有从 `Stopped` 状态开始才会新建文件；暂停后恢复不会另起文件。
-`Elapsed` 显示最新样本与首样本的时间差，停止后显示 `--`。
-
-### 3. 打开 Simulator
-
-点击曲线区的 **Simulator** 按钮打开三维仿真窗口，驾驶控制：
+1. 确认工具栏为 **UDP**（或点一次 **UDP**）。  
+2. 点 **Simulator**，用 WASD / Space / R 驾驶：
 
 | 按键 | 功能 |
 |---|---|
-| `W` | 加速 |
-| `S` | 制动 |
-| `A` | 左转 |
-| `D` | 右转 |
+| `W` / `S` | 加速 / 制动 |
+| `A` / `D` | 左转 / 右转 |
 | `Space` | 紧急制动 |
-| `R` | 车辆复位 |
+| `R` | 复位 |
 
-> 当前版本**没有全局键盘快捷键**，主界面的所有操作均为鼠标点击。
+3. 主窗口顶部 **Rx** 应上涨，Dashboard、曲线、Track Map 同步更新。
 
-### 4. Dashboard 三区
+### 3. GSpot 连接（实车 / 设备房间）
 
-- **Dashboard**：Speed（km/h）、Yaw Rate（deg/s）、Lateral Accel.（m/s²）、Longitudinal Acc.（m/s²）、Steering Angle（deg）。`Customize` 暂未开放。
-- **Test Results**：占位面板，自动评价功能尚未实现。
-- **Track Map**：GPS 轨迹，右下角显示 Lat / Lon / Alt，随缩放更新比例尺网格。
+1. 点 **GSpot…**。  
+2. 填写 **房间号**、**密码**；**Filter cNum 建议先留空**（填错会滤掉全部车辆）。  
+3. 也可预先设环境变量 `CMTS_GSPOT_ROOM` / `CMTS_GSPOT_PASSWORD`。  
+4. 只有 WebSocket **真正连上**才会切源并提示成功；密码错误会报错并保持原数据源。  
+5. 连上后：按钮可显示 `GSpot●`，状态为 Online；有车上报时 Rx 上涨。  
+6. 空房间也能连接成功，但可能长期 Rx=0（正常）。  
+7. 切回本机仿真：点 **UDP**。
 
-### 5. 曲线区
+> GSpot 的 Lost/OOO 无 UDP 语义，通常显示为 0。acc/gyro 映射仍待实车标定。
 
-- `X Axis` 选择横轴信号（默认 `Time`），`X Auto Scale` 默认勾选。
-- `+ Add Plot` 新增图表；每个 Plot 可改名、切换 `Auto Y`、`+ Channel` 增加通道、`Remove Plot` 删除。
-- 每个通道行可选择信号（下拉）并显示单位，`×` 删除该通道。
-- `Reset View` 恢复全部自动缩放。
-- 右侧 `Rx` / `Lost` / `OOO` 为网络接收统计。
+### 4. 录制（顶部栏）
 
-### 6. 离线回放
+| 按钮 | 作用 |
+|---|---|
+| `● Start` | 新建 VBO 并开始写 |
+| `❚❚ Pause` / `▶ Resume` | 暂停 / 续写同一文件 |
+| `■ Stop` | 结束并关闭文件 |
 
-1. 切到 **Replay** 页，点击 `📂 Open VBO…`
-2. 默认打开 `Recordings` 目录，选择 `CMTS_yyyyMMdd_HHmmss.vbo`
-3. 加载成功后自动切回 Dashboard，并显示 `{count} samples loaded`
-4. 历史数据进入与实时相同的曲线 / 轨迹管线
-
-### 数据记录位置
+录制文件默认：
 
 ```text
 bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 ```
 
+### 5. Replay：打开 VBO
+
+1. 导航到 **Replay** → **📂 Open VBO…**  
+2. 选择录制文件或外部 VBO（如 `ons shot 7.vbo`）  
+3. 加载成功后回到 Dashboard；状态栏显示样本数与通道数  
+4. 曲线 / Track Map / Dashboard 使用同一套历史数据  
+
+### 6. 曲线交互
+
+| 操作 | 行为 |
+|---|---|
+| 横轴标签 | **北京时间**（`HH:mm:ss`），轴标题含 Time (Beijing) |
+| **左键** 点击 / 拖动 | 竖向光标；左上角读数；Dashboard 冻结为该点 |
+| **中键** 拖动 | 平移视野（会取消 Auto） |
+| **右键** / 滚轮 | 缩放（会取消 Auto） |
+| **X Auto Scale** 勾选 | 仅勾选时随数据自动缩放；人手操作后自动取消勾选并锁定视野 |
+| **Esc** | 清除光标与选区，Dashboard 恢复实时 |
+| Shift+左键拖拽 | 横向选区高亮（辅助查看） |
+| Reset View | 恢复自动缩放视野 |
+
+### 7. Track Map
+
+- 网格在轨迹下方，随缩放更新比例尺。  
+- **点击轨迹上某点**：车辆标记跳到该点，并同步曲线光标与 Dashboard。  
+- 手动缩放/平移地图后视野锁定，不会被刷新强行弹回（换数据集或显式复位除外）。
+
+### 8. Dashboard 光标冻结
+
+- 无光标：显示最新实时值。  
+- 有光标（来自曲线或 Track Map）：标题进入 Cursor 模式，数值为选中样本。  
+- Esc 或清除光标后恢复实时。
+
+### 9. 通道选择（Channel Registry）
+
+- 下拉**只列出当前数据源真正可用的通道**，没有的不显示。  
+- **实时 UDP / GSpot**：核心通道（车速、加速度、横摆、经纬高等）。  
+- **打开 VBO 后**：按文件 `[column names]` 注册，可出现数十个通道（例如完整 Racelogic 导出约 50+）。  
+- 换回实时源时，下拉恢复为核心通道列表。
+
+### 10. 多 Plot
+
+- `+ Add Plot` 增加图；每图可改名、`Auto Y`、`+ Channel`、`Remove Plot`。  
+- `X Axis` 可选横轴信号（默认时间）。
+
 ---
 
-## VBO 数据格式
+## VBO 数据格式（摘要）
 
-录制文件采用 **Racelogic VBO 文本格式**，目标是能被 **VBOX Test Suite** 直接打开。
+Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[header]` → `[channel units]` → `[comments]` → `[SessionData]` → `[column names]` → `[data]`。
 
-### 文件结构
+要点：
 
-固定 6 段顺序，首行为 `File created on ...`：
-
-```text
-[header]          通道全名
-[channel units]   通道单位
-[comments]        通道数、经纬度单位说明、导出时间
-[SessionData]     时区与会话信息
-[column names]    列短名（单行、空格分隔）
-[data]            数据行
-```
-
-### 列定义（11 列 = 2 时间 + 9 数据）
-
-| # | [column names] | [header] | [channel units] | 来源字段 | 格式 |
-|---|---|---|---|---|---|
-| 1 | `time` | time | s | `Timestamp` → UTC `HHmmss.fff` | — |
-| 2 | `Elapsed_time` | Elapsed time | s | 相对第一条数据 | F4 |
-| 3 | `velocity` | velocity kmh | km/h | `SpeedKph` | F3 |
-| 4 | `Longacc` | Long accel g | g | `LongitudinalAcceleration` / 9.80665 | F6 |
-| 5 | `Latacc` | Lat accel g | g | `LateralAcceleration` / 9.80665 | F6 |
-| 6 | `Yaw_Rate` | Yaw rate | deg/s | `YawRate` | F6 |
-| 7 | `heading` | heading | deg | `Heading` | F6 |
-| 8 | `lat` | latitude | arcmin | `Latitude` × 60 | F8 |
-| 9 | `long` | longitude | arcmin | **−**`Longitude` × 60 | F8 |
-| 10 | `height` | height | m | `Altitude` | F3 |
-| 11 | `Z_Accel` | Z accel g | g | `VerticalAcceleration` / 9.80665 | F6 |
-
-### 实现要点（踩坑记录）
-
-- **`[header]` 名称必须对齐 Racelogic 命名**（`velocity kmh` / `Long accel g` / `Z accel g` …），
-  否则 VBOX Test Suite 认不出通道。
-- **`[column names]` 必须写在同一行、空格分隔、末尾留一个空格。**
-  曾写成一列一行，结果 VBOX 报 `primary channel(s) missing. Speed`，通道表全部失效。
-- 文件编码为 **UTF-8 无 BOM**，换行强制 **CRLF**。
-- `[channel units]` 不照抄外部 VBO 文件 —— 实测 Racelogic 该段单位与列存在错位，不可信。
-- `Elapsed_time` 以**第一条数据**为时间原点（首行必为 `0.0000`）。
-  因此暂停后恢复时，首行 Elapsed 会自然跳过暂停时长，无需额外补偿。
-- 采样率**不做任何假设**：记录器使用后台写线程 + 有界 Channel，
-  按真实时间约每 1000 ms Flush 一次。
-  （旧实现用 `Sequence % 200` 隐含 200 Hz 假设，已被移除。）
-- `Dispose` 时排空队列、等待写入完成并做最后一次 Flush，
-  刻意**不使用 CancellationToken**，以免关闭时丢数据。
-
-### VboReader（回放解析）
-
-- 按 `[段名]` 切分，**只解析 `[data]` 段**。
-- 列定义**以 `[column names]` 为准，不使用 `[header]`**（header 名可能含空格导致列数错位）。
-- **完全不信 `[channel units]`**，单位由内置规则决定，列名大小写不敏感，缺失列记 `0.0`。
-- 时间列 `HHMMSS.mmm` **只能还原「当天 UTC 起毫秒数」，不含日期，不能当作绝对时间使用**。
+- `[column names]` 单行空格分隔；列定义以该段为准。  
+- 内部经度 **正 = 东经**；写入 VBO 时经度符号取反（Racelogic 约定），读取时再还原。  
+- 文件 UTF-8 无 BOM，换行 CRLF。  
+- VBO 的 `time` 列为 `HHMMSS.mmm`，不含日期；UI 时间轴在有 Unix 时间戳时用北京时间显示。
 
 ---
 
 ## 坐标系约定
 
-### 三维场景
-
-三维场景经过实测验证，约定如下：
-
-| 轴 | 含义 |
+| 项 | 约定 |
 |---|---|
-| `+X` | 车辆左侧（屏幕上表现为左） |
-| `+Y` | 高度向上 |
-| `+Z` | Heading = 0° 时的前方 |
-
-**车头方向向量：**
-
-```text
-forward = ( sin(Heading), cos(Heading) )
-```
-
-| Heading | 含义 |
-|---|---|
-| `0°` | 正前方（+Z） |
-| `+` | 左转 |
-| `-` | 右转 |
-
-> 位置积分、车辆模型旋转、摄像机跟随**必须使用同一个 forward 定义**。
-> 任何一处写成 `-sin(Heading)` 都会导致「车头朝左、车却向右开」。
-
-### 经纬度符号
-
-| 字段 | 约定 |
-|---|---|
-| `Latitude` | 正 = 北纬，负 = 南纬 |
-| `Longitude` | 正 = 东经，负 = 西经 |
-
-内部数据模型统一使用上述约定。
-
-**但 Racelogic VBO 的经度符号相反**（负值表示东经），
-换算只在两处进行，绝不外泄：
-
-- 记录时：`VboRecorder` 写入 `-Longitude × 60`（角分）
-- 读取时：`VboReader` 还原 `-long / 60.0`（度）
-
-> 直接拷贝经纬度而不做符号换算，会导致轨迹在地图上**左右镜像**。
-
-### Track Map 投影
-
-`TrackProjection` 提供三套坐标系：
-
-| 坐标系 | 用途 |
-|---|---|
-| 经纬度（deg） | 数据模型与 VBO 交换 |
-| 局部米平面（+X 正东 / +Y 正北，原点在轨迹中心） | 轨迹绘制与比例尺 |
-| Web Mercator（米） | 预留在线地图瓦片叠加 |
-
-- 纬度按 `111320.0` m/° 换算，经度按 `cos(lat)` 收缩
-  （北纬 33° 处 1° 经度约 93 km，不做收缩会把圆轨迹拉成椭圆）。
-- 投影原点只在**换数据源**时重建（锚定第一条样本），实时采集期间保持不变，
-  否则整条轨迹会随原点漂移。
-- 比例尺取 `1 / 2 / 5 / 10 …` 的整数步长，锚定在屏幕上：
-  拖动不移动，仅在缩放时重绘。
-
----
-
-## 数据格式
-
-`VehicleSample` 字段（实时数据模型，也是 CSV 列）：
-
-| 字段 | 单位 | 说明 |
-|---|---|---|
-| `Timestamp` | ms | Unix 毫秒时间戳 |
-| `Sequence` | — | 包序号，用于丢包检测 |
-| `SpeedKph` | km/h | 车速 |
-| `LongitudinalAcceleration` | m/s² | 纵向加速度 |
-| `LateralAcceleration` | m/s² | 横向加速度 |
-| `VerticalAcceleration` | m/s² | 垂向加速度 |
-| `YawRate` | deg/s | 横摆角速度 |
-| `Latitude` | deg | 纬度（正 = 北纬） |
-| `Longitude` | deg | 经度（正 = 东经） |
-| `Altitude` | m | 海拔 |
-| `Heading` | deg | 航向角 |
-
-> `CsvRecorder` 仍保留 CSV 输出能力（UTF-8 带 BOM），
-> 但当前界面只使用 VBO 记录，CSV 通道**尚未接线**。
+| Latitude | 正 = 北纬 |
+| Longitude | 正 = 东经（内部） |
+| 三维场景 +X / +Y / +Z | 左 / 上 / Heading0° 前方 |
+| Track Map 米平面 | +X 东 / +Y 北 |
 
 ---
 
 ## 开发路线
 
-- [x] UDP 实时接收 / 解析 / DataBus
-- [x] 统一数据模型 `VehicleSample`
-- [x] 三维车辆仿真（人工驾驶）
-- [x] 实时曲线（多 Plot / 多 Channel / 可选 X 轴）
-- [x] 实时数值显示
-- [x] UI 外壳（顶部栏 / 导航栏 / 三面板 / 曲线区）
-- [x] 深色金色主题（全局样式集中于 `App.xaml`）
-- [x] VBO 记录（VBOX / Racelogic 兼容）
-- [x] VBO 离线回放
-- [x] Track Map（GPS 轨迹图 + 比例尺）
-- [ ] 自动测试评价（0-100 km/h、制动距离、稳态区间等）
-- [ ] 在线地图底图叠加（Mercator 投影已就绪）
-- [ ] 通用 Channel 注册表（字段元数据系统）
-- [ ] VBTS 风格 X/Y 轴选择
-- [ ] 时间轴：UTC / 北京时间 / 本地时间 / 相对时间
-- [ ] 距离轴
-- [ ] 测试项目 / 工况管理
-- [ ] 测试报告生成
-- [ ] Data / Analysis / Settings 页面
-- [ ] 方向盘转角采集（需扩展 UDP 协议与 `VehicleSample`）
+- [x] UDP + DataBus + Simulator  
+- [x] 多 Plot / 通道曲线  
+- [x] UI 外壳与深色金色主题  
+- [x] VBO 录制与回放  
+- [x] Track Map  
+- [x] `IDataSource` + GSpot  
+- [x] 北京时间轴 / 光标 / Auto 缩放策略  
+- [x] 通道注册表（实时 vs 文件）  
+- [ ] GSpot 轴向 / 单位实车标定  
+- [ ] 自动测试评价（Test Results）  
+- [ ] Settings 正式页（替代 GSpot/UDP 快捷按钮）  
+- [ ] 在线地图底图  
+- [ ] 测试项目 / 报告  
 
 ---
 
 ## 已知限制
 
-- 车辆模型为**纯运动学**自行车模型，未包含轮胎侧偏特性。
-  高速转向时横摆率与侧向加速度会偏大（实车不可能达到），
-  后续需引入线性二自由度模型。
-- **时间基准**：VBO 的 `time` 列只有 `HHMMSS.mmm`，不含日期；
-  回放时只能还原「当天 UTC 起毫秒数」，尚不能当作绝对时间使用。
-- **曲线绘制为全量重绘**：每次刷新都会复制完整历史并重建所有曲线，
-  数据量增大后需要改为固定时间窗口 + 降采样。
-- **Track Map 显示上限 50,000 点**，超出按步长抽稀；刷新限流 250 ms。
-- **Test Results 面板尚未实现**，仅占位骨架。
-- **Steering Angle 恒为 0**：UDP 协议与 `VehicleSample` 均无该字段，
-  当前为硬编码占位值。
-- **Data / Analysis / Settings 三个导航页未启用**。
-- **无键盘快捷键**，全部操作为鼠标点击。
-- `CsvRecorder` 仍在代码库中，但已不在 UI 链路上。
+- 仿真为纯运动学模型，高速极限工况偏大。  
+- GSpot 部分 IMU 映射为临时方案，需标定。  
+- 曲线全量重绘，大数据量后需窗口 + 降采样。  
+- Track Map 显示上限约 50,000 点（抽稀）。  
+- Test Results / Data / Analysis / Settings 未完整启用。  
+- Steering Angle 在部分路径上仍为占位。  
+- `CsvRecorder` 保留但未接线。
 
 ---
 
 ## 相关资源
 
-- VI 设计系统（配色、字体、组件规范）：`D:\CMTS\VI`
-  —— 独立于本工程仓库，随项目并行演进。
+- VI 设计系统：`D:\CMTS\VI`（独立目录，不在本仓库）  
+- 仓库：https://github.com/aneminence/Chassis-Master-Test-Suite  
