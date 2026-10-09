@@ -11,7 +11,7 @@
 - **可替换数据源**：`IDataSource` 抽象；支持本机 **UDP / Simulator** 与 **GSpot WebSocket**（房间号 + 密码）。
 - **曲线交互**：横轴北京时间；左键光标、中键平移、右键缩放；`X Auto Scale` 勾选才自动缩放；Esc 清除光标。
 - **光标联动**：曲线光标 / Track Map 点击 / Dashboard 冻结读数互相同步。
-- **通道注册表**：按数据源可用通道显示下拉；实时核心通道 vs VBO 文件通道。
+- **通道注册表**：按 `ChannelRegistry.Available` 显示下拉；启动为核心通道，打开 VBO 后切为文件列（切回实时源暂不自动复位）。
 - **VBO 记录 / 回放**：Racelogic 兼容文本格式，可用 VBOX Test Suite 打开。
 
 ---
@@ -51,6 +51,13 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 离线：VboReader ──► _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
 ```
+
+要点（与代码一致）：
+
+- 生产者实现 `IDataSource`，经构造注入的 `DataBus.TryPublish` 写入；UI / Recorder 只读总线与 `_sampleHistory`。  
+- `DataBus`：`BoundedChannel` 容量 2000，`DropOldest`，允许多写多读。  
+- `VehicleSample`：typed 核心物理量 + `Channels` 字典；`GetChannel` 优先字典、核心 Id 有 typed 回退。  
+- GSpot：HTTP token → properties（按 `pos`）→ subscribe → WebSocket；多车过滤 / 断线指数退避；Lost/OOO 恒为 0。
 
 ---
 
@@ -156,9 +163,9 @@ dotnet run
 
 1. 点 **GSpot…**。  
 2. 填写 **房间号**、**密码**；**Filter cNum 建议先留空**（填错会滤掉全部车辆）。  
-3. 也可预先设环境变量 `CMTS_GSPOT_ROOM` / `CMTS_GSPOT_PASSWORD`。  
+3. 也可预先设环境变量 `CMTS_GSPOT_ROOM` / `CMTS_GSPOT_PASSWORD` / `CMTS_GSPOT_CNUM`（选车过滤，可选）。  
 4. 只有 WebSocket **真正连上**才会切源并提示成功；密码错误会报错并保持原数据源。  
-5. 连上后：按钮可显示 `GSpot●`，状态为 Online；有车上报时 Rx 上涨。  
+5. 连上后：按钮可显示 `GSpot●`，顶部状态为 **Online**（连接中为 Connecting… / 断线重试为 Reconnecting… / 失败为 Faulted）；有车上报时 Rx 上涨。  
 6. 空房间也能连接成功，但可能长期 Rx=0（正常）。  
 7. 切回本机仿真：点 **UDP**。
 
@@ -183,7 +190,8 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 1. 导航到 **Replay** → **📂 Open VBO…**  
 2. 选择录制文件或外部 VBO（如 `ons shot 7.vbo`）  
 3. 加载成功后回到 Dashboard；状态栏显示样本数与通道数  
-4. 曲线 / Track Map / Dashboard 使用同一套历史数据  
+4. 曲线 / Track Map / Dashboard 使用同一套 `_sampleHistory`  
+5. **注意**：打开 VBO 会清空并替换历史缓冲，但**不会停止**当前 UDP/GSpot 数据源；若实时源仍在推流，新样本可能继续追加进历史  
 
 ### 6. 曲线交互
 
@@ -212,10 +220,10 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 
 ### 9. 通道选择（Channel Registry）
 
-- 下拉**只列出当前数据源真正可用的通道**，没有的不显示。  
-- **实时 UDP / GSpot**：核心通道（车速、加速度、横摆、经纬高等）。  
-- **打开 VBO 后**：按文件 `[column names]` 注册，可出现数十个通道（例如完整 Racelogic 导出约 50+）。  
-- 换回实时源时，下拉恢复为核心通道列表。
+- 下拉**只列出当前 `ChannelRegistry.Available` 中的通道**，没有的不显示。  
+- **启动时 / 实时核心**：`SetLiveCore()` 注册约 9 个核心通道（`velocity`、`Longacc`、`Latacc`、`Z_Accel`、`Yaw_Rate`、`heading`、`lat`、`long`、`height`），外加合成 X 轴 `Time`。  
+- **打开 VBO 后**：`SetFromVboColumns([column names])`，下拉变为文件实际列（例如完整 Racelogic 导出约 50+）。  
+- **注意（当前实现）**：点 **UDP** / **GSpot…** 切换数据源时**不会**自动调用 `SetLiveCore()`；打开过 VBO 后，通道下拉会继续显示该文件的列，直到重启应用。这是已知缺口，不是「一切回实时就恢复核心列表」。
 
 ### 10. 多 Plot
 
@@ -269,11 +277,14 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 ## 已知限制
 
 - 仿真为纯运动学模型，高速极限工况偏大。  
-- GSpot 部分 IMU 映射为临时方案，需标定。  
+- GSpot 部分 IMU 映射为临时方案，需标定（`acc`/`gyro`/`exts` 临时约定见 `GSpotParser`）。  
 - 曲线全量重绘，大数据量后需窗口 + 降采样。  
+- 内存历史缓冲上限约 **1,000,000** 条样本（超出丢最旧）。  
 - Track Map 显示上限约 50,000 点（抽稀）。  
+- 打开 VBO 后通道列表不会因切回 UDP/GSpot 自动恢复为核心集（需重启，或后续补 `SetLiveCore` 接线）。  
+- Replay 打开 VBO 不暂停活动数据源，实时包仍可能写入历史。  
 - Test Results / Data / Analysis / Settings 未完整启用。  
-- Steering Angle 在部分路径上仍为占位。  
+- Steering Angle 无 `VehicleSample` 字段，Dashboard 固定显示 0。  
 - `CsvRecorder` 保留但未接线。
 
 ---
