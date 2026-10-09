@@ -63,6 +63,9 @@ public partial class MainWindow : Window
 
     private long _sampleCount;
 
+    /// <summary>最近一次成功加载 VBO 的可绘通道数（不含合成 Time）。</summary>
+    private int _lastLoadedChannelCount;
+
     private readonly DispatcherTimer _uiTimer;
 
     private VehicleSample? _latestSample;
@@ -129,6 +132,17 @@ public partial class MainWindow : Window
         InitializeAxisSelector();
 
         InitializePlotSystem();
+
+        ChannelRegistry.Instance.AvailableChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RefreshChannelSelectorsFromRegistry);
+                return;
+            }
+
+            RefreshChannelSelectorsFromRegistry();
+        };
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
 
@@ -353,10 +367,14 @@ public partial class MainWindow : Window
             }
 
             // 通道下拉只显示本文件实际存在的列。
-            ChannelRegistry.Instance.SetFromVboColumns(reader.Columns);
-            SanitizePlotChannelSelections();
-            InitializeAxisSelector();
-            RefreshPlotContainer();
+            // 优先 [column names]；若为空则回退到首条样本 Channels 键。
+            var columnNames = reader.Columns.Count > 0
+                ? reader.Columns
+                : samples[0].Channels.Keys.ToList();
+
+            ChannelRegistry.Instance.SetFromVboColumns(columnNames);
+            // AvailableChanged 会刷新下拉；此处再显式刷一次，避免事件未挂上时漏刷。
+            RefreshChannelSelectorsFromRegistry();
 
             // 离线数据替换掉当前历史，
             // 避免和实时采集的数据混在一起。
@@ -382,6 +400,9 @@ public partial class MainWindow : Window
             RefreshAllPlots();
 
             UpdateNumericDisplay();
+
+            // 把通道数挂在返回值旁：调用方用于状态栏。
+            _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
 
             return samples.Count;
         }
@@ -453,16 +474,23 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        var preferredDirs = new[]
+        {
+            @"D:\CMTS",
+            Path.Combine(AppContext.BaseDirectory, "Recordings"),
+            Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)
+        };
+
+        var initialDir = preferredDirs.FirstOrDefault(Directory.Exists)
+            ?? AppContext.BaseDirectory;
+
         var dialog =
             new Microsoft.Win32.OpenFileDialog
             {
                 Title = "Open VBO file",
                 Filter =
                     "VBO files (*.vbo)|*.vbo|All files (*.*)|*.*",
-                InitialDirectory =
-                    Path.Combine(
-                        AppContext.BaseDirectory,
-                        "Recordings")
+                InitialDirectory = initialDir
             };
 
         if (dialog.ShowDialog(this) != true)
@@ -485,7 +513,7 @@ public partial class MainWindow : Window
             Path.GetFileName(dialog.FileName);
 
         ReplayInfoText.Text =
-            $"{count} samples loaded";
+            $"{count} samples · {_lastLoadedChannelCount} channels";
     }
 
 
@@ -511,6 +539,17 @@ public partial class MainWindow : Window
                 }
             }
         }
+    }
+
+
+    /// <summary>
+    /// 按 ChannelRegistry.Available 重建 X 轴与各 Plot 的 Channel 下拉。
+    /// </summary>
+    private void RefreshChannelSelectorsFromRegistry()
+    {
+        SanitizePlotChannelSelections();
+        InitializeAxisSelector();
+        RefreshPlotContainer();
     }
 
 
