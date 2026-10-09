@@ -526,26 +526,27 @@
             <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Foreground" Value="{StaticResource ScrollBarGlyphBrush}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RepeatButton">
                         <Border x:Name="Bd"
                                 Background="{StaticResource ScrollBarButtonBrush}"
                                 CornerRadius="2">
-                            <Path x:Name="Arrow"
-                                  Fill="{StaticResource ScrollBarGlyphBrush}"
-                                  Data="{Binding Content, RelativeSource={RelativeSource TemplatedParent}}"
-                                  Stretch="Uniform"
-                                  Width="8" Height="8"
-                                  HorizontalAlignment="Center"
-                                  VerticalAlignment="Center"/>
+                            <TextBlock x:Name="Arrow"
+                                       Text="{TemplateBinding Content}"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       FontSize="10"
+                                       FontFamily="Segoe UI Symbol"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Arrow" Property="Fill" Value="#C3CBD8"/>
+                                <Setter TargetName="Arrow" Property="Foreground" Value="#C3CBD8"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
-                                <Setter TargetName="Arrow" Property="Fill" Value="#C8A34A"/>
+                                <Setter TargetName="Arrow" Property="Foreground" Value="#C8A34A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -563,7 +564,7 @@
                 <RepeatButton Grid.Row="0"
                               Command="ScrollBar.LineUpCommand"
                               Style="{StaticResource DarkScrollBarLineButtonStyle}"
-                              Content="M 0 4 L 4 0 L 8 4 Z"
+                              Content="▲"
                               Height="16"/>
                 <Track x:Name="PART_Track" Grid.Row="1" IsDirectionReversed="True">
                     <Track.DecreaseRepeatButton>
@@ -581,7 +582,7 @@
                 <RepeatButton Grid.Row="2"
                               Command="ScrollBar.LineDownCommand"
                               Style="{StaticResource DarkScrollBarLineButtonStyle}"
-                              Content="M 0 0 L 4 4 L 8 0 Z"
+                              Content="▼"
                               Height="16"/>
             </Grid>
         </ControlTemplate>
@@ -596,7 +597,7 @@
                 <RepeatButton Grid.Column="0"
                               Command="ScrollBar.LineLeftCommand"
                               Style="{StaticResource DarkScrollBarLineButtonStyle}"
-                              Content="M 4 0 L 0 4 L 4 8 Z"
+                              Content="◀"
                               Width="16"/>
                 <Track x:Name="PART_Track" Grid.Column="1" IsDirectionReversed="False">
                     <Track.DecreaseRepeatButton>
@@ -614,7 +615,7 @@
                 <RepeatButton Grid.Column="2"
                               Command="ScrollBar.LineRightCommand"
                               Style="{StaticResource DarkScrollBarLineButtonStyle}"
-                              Content="M 0 0 L 4 4 L 0 8 Z"
+                              Content="▶"
                               Width="16"/>
             </Grid>
         </ControlTemplate>

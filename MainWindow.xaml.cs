@@ -2249,14 +2249,45 @@ public partial class MainWindow : Window
     {
         try
         {
-            if (_dataSource is UdpReceiver)
+            // 已是 UDP 且正在监听：提示即可。
+            // Faulted（例如端口占用）时允许原地重试 StartAsync。
+            if (_dataSource is UdpReceiver existingUdp)
             {
-                MessageBox.Show(
-                    this,
-                    "当前已是 UDP 数据源。",
-                    "UDP",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                if (existingUdp.State == DataSourceState.Connected)
+                {
+                    MessageBox.Show(
+                        this,
+                        "当前已是 UDP 数据源。",
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                    return;
+                }
+
+                try
+                {
+                    await existingUdp.StartAsync();
+                    GSpotButton.Content = "GSpot…";
+                    MessageBox.Show(
+                        this,
+                        "UDP 已重新监听。",
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                catch (Exception retryEx)
+                {
+                    var detail = !string.IsNullOrWhiteSpace(existingUdp.LastError)
+                        ? existingUdp.LastError
+                        : retryEx.Message;
+                    MessageBox.Show(
+                        this,
+                        "UDP 重试失败:\n" + detail,
+                        "UDP",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Error);
+                }
+
                 return;
             }
 
@@ -2782,7 +2813,28 @@ public partial class MainWindow : Window
             new UdpReceiver(
                 _dataBus);
 
-        await _dataSource.StartAsync();
+        try
+        {
+            await _dataSource.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            // 端口占用等绑定失败：弹窗提示，窗口继续可用（可切 GSpot 或稍后点 UDP 重试）。
+            var detail = _dataSource is UdpReceiver udp &&
+                         !string.IsNullOrWhiteSpace(udp.LastError)
+                ? udp.LastError
+                : ex.Message;
+
+            MessageBox.Show(
+                this,
+                "UDP 监听未能启动，程序仍会打开。\n\n" +
+                detail +
+                "\n\n请先关掉仍在运行的旧 CMTS / 占用 50000 端口的进程，" +
+                "再点工具栏「UDP」重试；或改用「GSpot…」。",
+                "UDP",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
 
 
         // ========================================================
