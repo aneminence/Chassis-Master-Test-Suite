@@ -603,9 +603,9 @@ public partial class MainWindow : Window
                 DataBackgroundColor =
                     ScottPlot.Color.FromHex("#0E131A"),
 
-                // 坐标轴 / 刻度文字
+                // 坐标轴 / 刻度文字（DateTimeTicksBottom 会冲掉，见 ApplyAxisLabelColors）
                 AxisColor =
-                    ScottPlot.Color.FromHex("#8A94A6"),
+                    ScottPlot.Color.FromHex("#C3CBD8"),
 
                 // 网格线
                 GridMajorLineColor =
@@ -625,6 +625,28 @@ public partial class MainWindow : Window
                 Palette =
                     new ScottPlot.Palettes.Dark()
             });
+
+        ApplyAxisLabelColors(scottPlot);
+    }
+
+
+    /// <summary>
+    /// DateTimeTicksBottom() 会把 TickLabelStyle.ForeColor 重置为黑色，
+    /// 所以每次套深色主题 / 切时间轴后都要显式刷一遍浅色刻度。
+    /// </summary>
+    private static void ApplyAxisLabelColors(ScottPlot.Plot scottPlot)
+    {
+        var tickColor =
+            ScottPlot.Color.FromHex("#C3CBD8");
+
+        var axisLabelColor =
+            ScottPlot.Color.FromHex("#8A94A6");
+
+        foreach (var axis in scottPlot.Axes.GetAxes())
+        {
+            axis.TickLabelStyle.ForeColor = tickColor;
+            axis.Label.ForeColor = axisLabelColor;
+        }
     }
 
 
@@ -854,6 +876,8 @@ public partial class MainWindow : Window
             Margin =
                 new Thickness(15, 0, 15, 0)
         };
+
+        plot.AutoScaleYCheckBox = autoScaleCheckBox;
 
 
         autoScaleCheckBox.Checked +=
@@ -1619,8 +1643,18 @@ public partial class MainWindow : Window
         PlotDefinition plot,
         ScottPlot.WPF.WpfPlot wpfPlot)
     {
+        ConfigurePlotMouseBindings(wpfPlot);
+
         wpfPlot.MouseDown += (_, e) =>
         {
+            if (e.ChangedButton == MouseButton.Middle ||
+                e.ChangedButton == MouseButton.Right)
+            {
+                // 用户手动平移/缩放后，关掉 Auto，否则下一帧 RefreshPlot 会把视图拽回去
+                SuspendAutoScaleForUserInteraction(plot);
+                return;
+            }
+
             if (e.ChangedButton != MouseButton.Left)
                 return;
 
@@ -1633,6 +1667,7 @@ public partial class MainWindow : Window
             if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
             {
                 plot.IsSelectingRange = true;
+                plot.IsDraggingCursor = false;
                 plot.SelectionX1 = x;
                 plot.SelectionX2 = x;
                 wpfPlot.UserInputProcessor.Disable();
@@ -1640,8 +1675,11 @@ public partial class MainWindow : Window
             }
             else
             {
+                plot.IsDraggingCursor = true;
                 plot.CursorX = x;
                 _cursorSourcePlot = plot;
+                // 左键专用于光标，避免与其它左键交互抢事件
+                e.Handled = true;
             }
 
             ApplyPlotOverlays(plot);
@@ -1651,6 +1689,22 @@ public partial class MainWindow : Window
 
         wpfPlot.MouseMove += (_, e) =>
         {
+            if (plot.IsDraggingCursor &&
+                e.LeftButton == MouseButtonState.Pressed)
+            {
+                var cx = GetPlotMouseX(wpfPlot, e);
+                if (cx is null)
+                    return;
+
+                plot.CursorX = cx;
+                _cursorSourcePlot = plot;
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
+                UpdateNumericDisplay();
+                e.Handled = true;
+                return;
+            }
+
             if (!plot.IsSelectingRange ||
                 e.LeftButton != MouseButtonState.Pressed)
                 return;
@@ -1669,6 +1723,23 @@ public partial class MainWindow : Window
         {
             if (e.ChangedButton != MouseButton.Left)
                 return;
+
+            if (plot.IsDraggingCursor)
+            {
+                plot.IsDraggingCursor = false;
+                var cx = GetPlotMouseX(wpfPlot, e);
+                if (cx is not null)
+                {
+                    plot.CursorX = cx;
+                    _cursorSourcePlot = plot;
+                }
+
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
+                UpdateNumericDisplay();
+                e.Handled = true;
+                return;
+            }
 
             if (!plot.IsSelectingRange)
                 return;
@@ -1703,6 +1774,11 @@ public partial class MainWindow : Window
 
         wpfPlot.MouseLeave += (_, _) =>
         {
+            if (plot.IsDraggingCursor)
+            {
+                plot.IsDraggingCursor = false;
+            }
+
             if (!plot.IsSelectingRange)
                 return;
 
@@ -1719,6 +1795,7 @@ public partial class MainWindow : Window
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
             plot.IsSelectingRange = false;
+            plot.IsDraggingCursor = false;
             if (ReferenceEquals(_cursorSourcePlot, plot))
                 _cursorSourcePlot = null;
             wpfPlot.UserInputProcessor.Enable();
@@ -1729,7 +1806,52 @@ public partial class MainWindow : Window
     }
 
 
-    private static double? GetPlotMouseX(
+    /// <summary>
+    /// 左键 = 竖线光标；中键 = 平移；右键 = 缩放（保持 ScottPlot 默认右键拖拽缩放）。
+    /// 关掉默认「中键单击自动缩放 / 中键拖拽缩放矩形」，否则拖动像被锁死。
+    /// </summary>
+    private static void ConfigurePlotMouseBindings(
+        ScottPlot.WPF.WpfPlot wpfPlot)
+    {
+        var processor = wpfPlot.UserInputProcessor;
+
+        // 先清掉左键平移（会 RemoveAll MouseDragPan）
+        processor.LeftClickDragPan(enable: false);
+
+        // 中键默认：单击 Autoscale、拖拽 ZoomRectangle —— 正是「缩放被锁定」的来源
+        processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.MouseDragZoomRectangle>();
+        processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
+        processor.DoubleLeftClickBenchmark(false);
+
+        // 中键拖拽 = 平移
+        processor.UserActionResponses.Add(
+            new ScottPlot.Interactivity.UserActionResponses.MouseDragPan(
+                ScottPlot.Interactivity.StandardMouseButtons.Middle));
+
+        // 右键拖拽 = 缩放（与原先默认一致）
+        processor.RightClickDragZoom(enable: true);
+    }
+
+
+    /// <summary>
+    /// 用户手动平移/缩放时关掉 Auto X / Auto Y，避免 10 Hz 刷新把视图重置。
+    /// </summary>
+    private void SuspendAutoScaleForUserInteraction(
+        PlotDefinition plot)
+    {
+        if (XAxisAutoScaleCheckBox.IsChecked == true)
+            XAxisAutoScaleCheckBox.IsChecked = false;
+
+        if (plot.AutoScaleY)
+        {
+            plot.AutoScaleY = false;
+            if (plot.AutoScaleYCheckBox is not null)
+                plot.AutoScaleYCheckBox.IsChecked = false;
+        }
+    }
+
+
+        private static double? GetPlotMouseX(
         ScottPlot.WPF.WpfPlot wpfPlot,
         MouseEventArgs e)
     {
@@ -1766,6 +1888,9 @@ public partial class MainWindow : Window
         {
             tickGen.LabelFormatter = FormatBeijingTickLabel;
         }
+
+        // DateTimeTicksBottom 会把刻度字重置成黑色，必须再刷浅色
+        ApplyAxisLabelColors(plot.WpfPlot.Plot);
     }
 
 
@@ -2671,6 +2796,9 @@ public partial class MainWindow : Window
             yawRate: sample.YawRate,
             steeringAngleDeg: 0.0,
             cursorFrozen: cursorSample is not null);
+
+        // 光标移动时 Track Map 车辆位置跟着走；清除光标后回到实时最新点
+        TrackMapPanelControl.SetCursorSample(cursorSample);
     }
 
 
@@ -3036,6 +3164,12 @@ public partial class MainWindow : Window
         public double? SelectionX2 { get; set; }
 
         public bool IsSelectingRange { get; set; }
+
+        /// <summary>左键按住拖动竖线光标中。</summary>
+        public bool IsDraggingCursor { get; set; }
+
+        /// <summary>曲线标题栏 Auto Y 复选框，便于手动缩放时同步关闭。</summary>
+        public CheckBox? AutoScaleYCheckBox { get; set; }
 
         /// <summary>最近一次绘制的 X / 各通道 Y，供光标插值。</summary>
         public double[]? LastXs { get; set; }

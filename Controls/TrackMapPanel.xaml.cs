@@ -72,6 +72,12 @@ public partial class TrackMapPanel : UserControl
 
     private ScottPlot.Plottables.Scatter? _track;
 
+    /// <summary>曲线光标对应的车辆位置标记。</summary>
+    private ScottPlot.Plottables.Marker? _cursorMarker;
+
+    /// <summary>当前光标样本；null 表示跟最新点。</summary>
+    private VehicleSample? _cursorSample;
+
     private bool _hasData;
 
     // 网格重绘缓存：间距和尺寸都没变就不用重画。
@@ -194,6 +200,8 @@ public partial class TrackMapPanel : UserControl
         _projection = null;
         _projectionAnchor = null;
         _track = null;
+        _cursorMarker = null;
+        _cursorSample = null;
         _hasData = false;
 
         _wpfPlot.Plot.Clear();
@@ -235,6 +243,21 @@ public partial class TrackMapPanel : UserControl
             maxY + padY);
 
         _wpfPlot.Refresh();
+    }
+
+    /// <summary>
+    /// 用曲线光标对应的样本更新车辆位置标记。
+    /// sample 为 null 时清除标记，坐标读数回到轨迹最新点。
+    /// </summary>
+    public void SetCursorSample(VehicleSample? sample)
+    {
+        // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
+        if (ReferenceEquals(_cursorSample, sample))
+            return;
+
+        _cursorSample = sample;
+        UpdateCursorMarker(refresh: true);
+        UpdateCoordinateReadout();
     }
 
     // ============================================================
@@ -308,6 +331,10 @@ public partial class TrackMapPanel : UserControl
 
         UpdateCoordinateReadout();
 
+        // Clear() 清掉了光标标记，重建后再画上
+        _cursorMarker = null;
+        UpdateCursorMarker(refresh: false);
+
         // 换数据源时重新取景；实时采集时只在轨迹跑出视图后才重新取景。
         if (needNewProjection || IsLatestPointOutsideView(projection))
         {
@@ -364,16 +391,63 @@ public partial class TrackMapPanel : UserControl
 
     private void UpdateCoordinateReadout()
     {
-        if (_samples.Count == 0)
+        var sample = _cursorSample;
+
+        if (sample is null)
         {
+            if (_samples.Count == 0)
+            {
+                LatText.Text = "--";
+                LonText.Text = "--";
+                AltText.Text = "--";
+                return;
+            }
+
+            sample = _samples[^1];
+        }
+
+        LatText.Text = FormatLatitude(sample.Latitude);
+        LonText.Text = FormatLongitude(sample.Longitude);
+        AltText.Text = $"{sample.Altitude:0.0} m";
+    }
+
+
+    /// <summary>
+    /// 在轨迹上画金色车辆标记；Rebuild 之后也要再调用（Clear 会抹掉）。
+    /// </summary>
+    private void UpdateCursorMarker(bool refresh)
+    {
+        if (_cursorMarker is not null)
+        {
+            _wpfPlot.Plot.Remove(_cursorMarker);
+            _cursorMarker = null;
+        }
+
+        if (_cursorSample is null ||
+            _projection is null ||
+            !_hasData)
+        {
+            if (refresh)
+                _wpfPlot.Refresh();
             return;
         }
 
-        var latest = _samples[^1];
+        var (x, y) = _projection.ToMeters(
+            _cursorSample.Latitude,
+            _cursorSample.Longitude);
 
-        LatText.Text = FormatLatitude(latest.Latitude);
-        LonText.Text = FormatLongitude(latest.Longitude);
-        AltText.Text = $"{latest.Altitude:0.0} m";
+        _cursorMarker = _wpfPlot.Plot.Add.Marker(x, y);
+        _cursorMarker.Size = 16;
+        _cursorMarker.Shape =
+            ScottPlot.MarkerShape.FilledCircle;
+        _cursorMarker.Color =
+            ScottPlot.Color.FromHex("#C8A34A");
+        _cursorMarker.MarkerLineColor =
+            ScottPlot.Color.FromHex("#F5E6B8");
+        _cursorMarker.MarkerLineWidth = 1.5f;
+
+        if (refresh)
+            _wpfPlot.Refresh();
     }
 
     private static string FormatLatitude(double value)
