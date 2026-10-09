@@ -162,10 +162,23 @@ public sealed class CsvRecorder : IDisposable
     }
 
     /// <summary>
+    /// 是否已经释放过。
+    /// Dispose() 必须可以重复调用（与 VboRecorder 对齐）。
+    /// </summary>
+    private bool _disposed;
+
+    /// <summary>
     /// 停止后台写入并等待队列中的数据全部写入磁盘。
     /// </summary>
     public void Dispose()
     {
+        if (_disposed)
+        {
+            return;
+        }
+
+        _disposed = true;
+
         // 不再接受新数据。
         //
         // 这会通知后台循环：

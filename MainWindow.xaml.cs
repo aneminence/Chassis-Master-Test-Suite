@@ -57,9 +57,16 @@ public partial class MainWindow : Window
 
     private CancellationTokenSource? _cancellationTokenSource;
 
-    private readonly List<VehicleSample> _sampleHistory = new();
-
     private const int MaxHistorySamples = 1_000_000;
+
+    private readonly SampleHistoryBuffer _sampleHistory =
+        new(MaxHistorySamples);
+
+    /// <summary>
+    /// 打开 VBO 离线回放后为 true：消费循环仍读总线，但不写入历史，
+    /// 避免实时包污染 Replay 曲线 / Track Map。切回 live 源时清零。
+    /// </summary>
+    private volatile bool _historyOfflineMode;
 
     private long _sampleCount;
 
@@ -378,18 +385,10 @@ public partial class MainWindow : Window
 
             // 离线数据替换掉当前历史，
             // 避免和实时采集的数据混在一起。
+            // 环形缓冲 AddRange 满容量时 O(1) 丢最旧，无需 RemoveAt(0)。
+            _historyOfflineMode = true;
             _sampleHistory.Clear();
-
-            foreach (var sample in samples)
-            {
-                _sampleHistory.Add(sample);
-            }
-
-            // 控制内存占用：保留最近的样本。
-            while (_sampleHistory.Count > MaxHistorySamples)
-            {
-                _sampleHistory.RemoveAt(0);
-            }
+            _sampleHistory.AddRange(samples);
 
             _latestSample = samples[^1];
 
@@ -1424,7 +1423,8 @@ public partial class MainWindow : Window
 
             // 轨迹图。SetTrack 内部按 250 ms 限流，
             // 所以这里跟着 10 Hz 的 UI 定时器调也不会重画太频繁。
-            TrackMapPanelControl.SetTrack(_sampleHistory);
+            // 必须传 Snapshot，禁止把可变活缓冲交给 Track Map。
+            TrackMapPanelControl.SetTrack(_sampleHistory.Snapshot());
         }
         finally
         {
@@ -2409,9 +2409,9 @@ public partial class MainWindow : Window
     // 获取历史数据
     // ============================================================
 
-    private List<VehicleSample> GetHistorySnapshot()
+    private IReadOnlyList<VehicleSample> GetHistorySnapshot()
     {
-        return _sampleHistory.ToList();
+        return _sampleHistory.Snapshot();
     }
 
 
@@ -2572,6 +2572,7 @@ public partial class MainWindow : Window
             }
 
             _dataSource = next;
+            EnterLiveSourceMode();
             GSpotButton.Content = "GSpot●";
 
             MessageBox.Show(
@@ -2634,6 +2635,7 @@ public partial class MainWindow : Window
                 try
                 {
                     await existingUdp.StartAsync();
+                    EnterLiveSourceMode();
                     GSpotButton.Content = "GSpot…";
                     MessageBox.Show(
                         this,
@@ -2692,6 +2694,17 @@ public partial class MainWindow : Window
 
         _dataSource = next;
         await next.StartAsync();
+        EnterLiveSourceMode();
+    }
+
+    /// <summary>
+    /// 切回 UDP / GSpot 等实时源：恢复通道目录，并允许消费循环再写历史。
+    /// </summary>
+    private void EnterLiveSourceMode()
+    {
+        _historyOfflineMode = false;
+        ChannelRegistry.Instance.SetLiveCore();
+        RefreshChannelSelectorsFromRegistry();
     }
 
     private static async Task<bool> WaitForDataSourceConnectedAsync(
@@ -3032,8 +3045,26 @@ public partial class MainWindow : Window
         ValidPacketsText.Text =
             stats.Valid.ToString();
 
-        LostPacketsText.Text =
-            stats.Lost.ToString();
+        var recordDrops = _recorder?.DroppedSamples ?? 0;
+        var busDrops = _dataBus.DroppedPublishCount;
+
+        if (recordDrops > 0)
+        {
+            LostPacketsText.Text =
+                $"{stats.Lost}+R{recordDrops}";
+            LostPacketsText.ToolTip =
+                $"网络丢包 {stats.Lost}；录制队列丢样 {recordDrops}" +
+                (busDrops > 0 ? $"；总线 TryPublish 失败 {busDrops}" : "");
+        }
+        else
+        {
+            LostPacketsText.Text =
+                stats.Lost.ToString();
+            LostPacketsText.ToolTip =
+                busDrops > 0
+                    ? $"总线 TryPublish 失败 {busDrops}"
+                    : null;
+        }
 
         OutOfOrderPacketsText.Text =
             stats.OutOfOrder.ToString();
@@ -3140,17 +3171,11 @@ public partial class MainWindow : Window
                 _latestSample =
                     sample;
 
-
-                _sampleHistory.Add(
-                    sample);
-
-
-                if (_sampleHistory.Count >
-                    MaxHistorySamples)
+                // 离线 VBO 回放时不把实时样本写入历史。
+                if (!_historyOfflineMode)
                 {
-                    _sampleHistory.RemoveAt(0);
+                    _sampleHistory.Add(sample);
                 }
-
 
                 Interlocked.Increment(
                     ref _sampleCount);
@@ -3161,14 +3186,15 @@ public partial class MainWindow : Window
                 // 暂停时刻意让"经过时间"按真实时间继续走：
                 // VboRecorder 内部以第一条数据为原点，
                 // 恢复后第一行的 Elapsed_time 会自然跳过暂停时长。
+                // TryWrite 失败会计入 VboRecorder.DroppedSamples，
+                // 并由 UpdateNetworkDisplay 在 Lost 区展示。
                 if (_recordingState ==
                     RecordingState.Recording)
                 {
                     _recordingStartTimestamp ??=
                         sample.Timestamp;
 
-                    _recorder?.TryWrite(
-                        sample);
+                    _recorder?.TryWrite(sample);
                 }
             }
         }

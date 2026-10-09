@@ -242,6 +242,26 @@ public sealed class UdpReceiver : IDataSource
         if (_disposed != 0)
         {
             SetState(DataSourceState.Disconnected);
+            return;
+        }
+
+        // Faulted / 非 Dispose 退出：释放 socket 并清 _started，
+        // 否则工具栏「UDP」对同一实例再调 StartAsync 会因幂等直接返回。
+        try
+        {
+            _udpClient?.Dispose();
+        }
+        catch
+        {
+            // ignore
+        }
+
+        _udpClient = null;
+        Interlocked.Exchange(ref _started, 0);
+
+        if (_state != DataSourceState.Faulted)
+        {
+            SetState(DataSourceState.Disconnected);
         }
     }
 
