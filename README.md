@@ -223,7 +223,7 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 - 下拉**只列出当前 `ChannelRegistry.Available` 中的通道**，没有的不显示。  
 - **启动时 / 实时核心**：`SetLiveCore()` 注册约 9 个核心通道（`velocity`、`Longacc`、`Latacc`、`Z_Accel`、`Yaw_Rate`、`heading`、`lat`、`long`、`height`），外加合成 X 轴 `Time`。  
 - **打开 VBO 后**：`SetFromVboColumns([column names])`，下拉变为文件实际列（例如完整 Racelogic 导出约 50+）。  
-- **注意（当前实现）**：点 **UDP** / **GSpot…** 切换数据源时**不会**自动调用 `SetLiveCore()`；打开过 VBO 后，通道下拉会继续显示该文件的列，直到重启应用。这是已知缺口，不是「一切回实时就恢复核心列表」。
+- **切回实时源**：点 **UDP** / **GSpot…** 成功切换后会调用 `SetLiveCore()`，通道下拉恢复为核心集，并退出 Replay 离线模式。
 
 ### 10. 多 Plot
 
@@ -278,14 +278,15 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 - 仿真为纯运动学模型，高速极限工况偏大。  
 - GSpot 部分 IMU 映射为临时方案，需标定（`acc`/`gyro`/`exts` 临时约定见 `GSpotParser`）。  
-- 曲线全量重绘，大数据量后需窗口 + 降采样。  
-- 内存历史缓冲上限约 **1,000,000** 条样本（超出丢最旧）。  
+- 曲线按可见窗口 + min-max 降采样绘制（上限约 12,000 点）；全量历史仍在内存缓冲。  
+- 内存历史缓冲上限约 **1,000,000** 条样本（环形丢最旧，线程安全快照）。  
 - Track Map 显示上限约 50,000 点（抽稀）。  
-- 打开 VBO 后通道列表不会因切回 UDP/GSpot 自动恢复为核心集（需重启，或后续补 `SetLiveCore` 接线）。  
-- Replay 打开 VBO 不暂停活动数据源，实时包仍可能写入历史。  
+- 切回 UDP/GSpot 会 `SetLiveCore()` 并退出 Replay 离线模式；打开 VBO 期间实时样本不再写入历史。  
+- 录制路径若 `TryWrite` 失败会在 Lost 区显示 `+R{n}`（仍建议长跑时关注磁盘与队列）。  
 - Test Results / Data / Analysis / Settings 未完整启用。  
 - Steering Angle 无 `VehicleSample` 字段，Dashboard 固定显示 0。  
-- `CsvRecorder` 保留但未接线。
+- `CsvRecorder` 保留但未接线。  
+- GSpot 密码仍走 HTTP GET query（待与供应商确认 POST/Header）。
 
 ---
 
