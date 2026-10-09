@@ -15,7 +15,12 @@ public partial class MainWindow : Window
 {
     private readonly DataBus _dataBus = new();
 
-    private UdpReceiver? _udpReceiver;
+    /// <summary>
+    /// 当前活动数据源。Phase 1 固定为 UDP；
+    /// 后续 Settings 切换时只换实现，UI 仍读 IDataSource。
+    /// </summary>
+    private IDataSource? _dataSource;
+
     private UdpSender? _udpSender;
 
     // ============================================================
@@ -1820,27 +1825,25 @@ public partial class MainWindow : Window
 
     private void UpdateNetworkDisplay()
     {
-        var receiver =
-            _udpReceiver;
+        var source =
+            _dataSource;
 
-        if (receiver is null)
+        if (source is null)
             return;
 
+        var stats = source.Stats;
 
         ReceivedPacketsText.Text =
-            receiver.ReceivedPackets.ToString();
-
+            stats.Received.ToString();
 
         ValidPacketsText.Text =
-            receiver.ValidPackets.ToString();
-
+            stats.Valid.ToString();
 
         LostPacketsText.Text =
-            receiver.LostPackets.ToString();
-
+            stats.Lost.ToString();
 
         OutOfOrderPacketsText.Text =
-            receiver.OutOfOrderPackets.ToString();
+            stats.OutOfOrder.ToString();
     }
 
 
@@ -1945,12 +1948,17 @@ public partial class MainWindow : Window
 
 
         // ========================================================
-        // UDP Receiver
+        // Data source（Phase 1：UDP）
+        //
+        // MainWindow 只依赖 IDataSource。
+        // 关闭时由 MainWindow_Closed 调用 StopAsync / Dispose。
         // ========================================================
 
-        _udpReceiver =
+        _dataSource =
             new UdpReceiver(
                 _dataBus);
+
+        await _dataSource.StartAsync();
 
 
         // ========================================================
@@ -1962,17 +1970,6 @@ public partial class MainWindow : Window
         //
         // 关闭窗口时由 MainWindow_Closed 统一 Dispose。
         // ========================================================
-
-
-        // ========================================================
-        // 启动 UDP 接收
-        //
-        // UdpReceiver 不使用 CancellationToken，
-        // 关闭时由 Dispose() 关闭 socket 自然退出。
-        // ========================================================
-
-        _ = Task.Run(() =>
-            _udpReceiver.RunAsync());
 
 
         // ========================================================
@@ -1989,9 +1986,6 @@ public partial class MainWindow : Window
         // ========================================================
 
         _uiTimer.Start();
-
-
-        await Task.CompletedTask;
     }
 
 
@@ -2021,7 +2015,7 @@ public partial class MainWindow : Window
         // ========================================================
         // 关闭顺序很重要
         //
-        // 1. 先关闭 UDP socket，
+        // 1. 先 Stop / Dispose 数据源，
         //    让接收循环通过 ObjectDisposedException 自然退出。
         // 2. 再 Complete DataBus，
         //    让数据消费循环通过 WaitToReadAsync 返回 false 退出。
@@ -2030,7 +2024,10 @@ public partial class MainWindow : Window
         // 这样关闭过程中不会产生 OperationCanceledException。
         // ========================================================
 
-        _udpReceiver?.Dispose();
+        // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
+        // 关闭窗口时不必阻塞等待接收循环收尾。
+        _dataSource?.Dispose();
+        _dataSource = null;
 
 
         _dataBus.Complete();
