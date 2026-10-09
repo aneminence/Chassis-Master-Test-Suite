@@ -15,8 +15,8 @@
 
     <!--
         所有深色主题样式（SplitterStyle / NavButtonStyle / ToolButtonStyle /
-        DangerButtonStyle / DarkTextBoxStyle / DarkComboBoxStyle /
-        DarkCheckBoxStyle，以及 CheckBox、ComboBox 的隐式样式）都已统一放在
+        DangerButtonStyle / DarkTextBoxStyle / DarkPasswordBoxStyle /
+        DarkComboBoxStyle / DarkCheckBoxStyle，以及 CheckBox、ComboBox 的隐式样式）都已统一放在
         App.xaml 的 Application.Resources 中。
 
         原因：曲线区里每个 Plot 的控件（Plot Name 输入框、Auto Y、+ Channel、

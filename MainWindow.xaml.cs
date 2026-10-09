@@ -1833,6 +1833,7 @@ public partial class MainWindow : Window
     {
         options = null;
 
+        // SizeToContent + MinHeight：避免固定 Height 被标题栏吃掉后裁掉底部按钮。
         var dialog = new Window
         {
             Title = "Connect GSpot",
@@ -1840,17 +1841,17 @@ public partial class MainWindow : Window
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
             Width = 380,
-            Height = 260,
+            MinHeight = 300,
+            SizeToContent = SizeToContent.Height,
             Background = (Brush)FindResource("AppBackground"),
             ShowInTaskbar = false
         };
 
-        var root = new Grid { Margin = new Thickness(16) };
+        var root = new Grid { Margin = new Thickness(16, 16, 16, 16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var roomBox = new TextBox
@@ -1861,7 +1862,8 @@ public partial class MainWindow : Window
         };
         var pwBox = new PasswordBox
         {
-            Margin = new Thickness(0, 4, 0, 10)
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkPasswordBoxStyle") as Style
         };
         if (!string.IsNullOrEmpty(passwordDefault))
             pwBox.Password = passwordDefault;
@@ -1896,7 +1898,7 @@ public partial class MainWindow : Window
             Text = "Base: weixin.jichexiaozi.com/transponder",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 12)
         };
         Grid.SetRow(hint, 3);
         root.Children.Add(hint);
@@ -1904,7 +1906,8 @@ public partial class MainWindow : Window
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 4, 0, 0)
         };
         var ok = new Button
         {
@@ -1912,6 +1915,7 @@ public partial class MainWindow : Window
             Width = 88,
             Margin = new Thickness(0, 0, 8, 0),
             IsDefault = true,
+            IsEnabled = true,
             Style = TryFindResource("ToolButtonStyle") as Style
         };
         var cancel = new Button
@@ -1919,11 +1923,12 @@ public partial class MainWindow : Window
             Content = "Cancel",
             Width = 88,
             IsCancel = true,
+            IsEnabled = true,
             Style = TryFindResource("ToolButtonStyle") as Style
         };
         buttons.Children.Add(ok);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 5);
+        Grid.SetRow(buttons, 4);
         root.Children.Add(buttons);
 
         dialog.Content = root;
