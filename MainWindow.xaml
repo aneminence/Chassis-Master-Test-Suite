@@ -413,7 +413,21 @@
                         <Button x:Name="SimulatorButton"
                                 Content="Simulator"
                                 Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
                                 Click="SimulatorButton_Click"/>
+
+                        <Button x:Name="GSpotButton"
+                                Content="GSpot…"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="GSpotButton_Click"
+                                ToolTip="切换到 GSpot WebSocket 数据源（房间号+密码）"/>
+
+                        <Button x:Name="UdpSourceButton"
+                                Content="UDP"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Click="UdpSourceButton_Click"
+                                ToolTip="切回本机 UDP / Simulator 数据源"/>
 
                     </StackPanel>
 

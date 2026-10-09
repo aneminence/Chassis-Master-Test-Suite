@@ -5,6 +5,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 
 using Chassis_Master_Test_Suite.Communication;
+using Chassis_Master_Test_Suite.Communication.GSpot;
 using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Recorder;
 using Chassis_Master_Test_Suite.Simulator;
@@ -16,8 +17,8 @@ public partial class MainWindow : Window
     private readonly DataBus _dataBus = new();
 
     /// <summary>
-    /// 当前活动数据源。Phase 1 固定为 UDP；
-    /// 后续 Settings 切换时只换实现，UI 仍读 IDataSource。
+    /// 当前活动数据源（UDP 或 GSpot）。
+    /// Settings 完善前用顶部 GSpot… / UDP 按钮切换。
     /// </summary>
     private IDataSource? _dataSource;
 
@@ -1715,6 +1716,258 @@ public partial class MainWindow : Window
 
 
     // ============================================================
+    // 数据源切换（UDP / GSpot）
+    // ============================================================
+
+    private async void GSpotButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        var roomDefault =
+            Environment.GetEnvironmentVariable("CMTS_GSPOT_ROOM")
+            ?? "";
+        var pwDefault =
+            Environment.GetEnvironmentVariable("CMTS_GSPOT_PASSWORD")
+            ?? "";
+        var cNumDefault =
+            Environment.GetEnvironmentVariable("CMTS_GSPOT_CNUM");
+
+        if (!TryPromptGSpotOptions(
+                roomDefault,
+                pwDefault,
+                cNumDefault,
+                out var options) ||
+            options is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var next = new GSpotDataSource(_dataBus, options);
+            await SwitchDataSourceAsync(next);
+            GSpotButton.Content = "GSpot●";
+            MessageBox.Show(
+                this,
+                "已切换到 GSpot。\n" +
+                $"房间: {options.RoomId}\n" +
+                "若房间内无在线车辆，Rx 会保持 0（事件推送，非 100 Hz）。\n" +
+                "Lost/OOO 对 GSpot 无意义，显示为 0。",
+                "GSpot",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "启动 GSpot 失败:\n" + ex.Message,
+                "GSpot",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async void UdpSourceButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        try
+        {
+            if (_dataSource is UdpReceiver)
+            {
+                MessageBox.Show(
+                    this,
+                    "当前已是 UDP 数据源。",
+                    "UDP",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                return;
+            }
+
+            var next = new UdpReceiver(_dataBus);
+            await SwitchDataSourceAsync(next);
+            GSpotButton.Content = "GSpot…";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "切回 UDP 失败:\n" + ex.Message,
+                "UDP",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async Task SwitchDataSourceAsync(IDataSource next)
+    {
+        var old = _dataSource;
+        _dataSource = null;
+
+        if (old is not null)
+        {
+            try
+            {
+                await old.StopAsync();
+            }
+            catch
+            {
+                try { old.Dispose(); } catch { /* ignore */ }
+            }
+        }
+
+        _dataSource = next;
+        await next.StartAsync();
+    }
+
+    /// <summary>
+    /// 临时接线用的房间/密码对话框（Settings 页就绪前）。
+    /// 也可用环境变量 CMTS_GSPOT_ROOM / CMTS_GSPOT_PASSWORD / CMTS_GSPOT_CNUM。
+    /// </summary>
+    private bool TryPromptGSpotOptions(
+        string roomDefault,
+        string passwordDefault,
+        string? cNumDefault,
+        out GSpotOptions? options)
+    {
+        options = null;
+
+        var dialog = new Window
+        {
+            Title = "Connect GSpot",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Width = 380,
+            Height = 260,
+            Background = (Brush)FindResource("AppBackground"),
+            ShowInTaskbar = false
+        };
+
+        var root = new Grid { Margin = new Thickness(16) };
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var roomBox = new TextBox
+        {
+            Text = roomDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+        var pwBox = new PasswordBox
+        {
+            Margin = new Thickness(0, 4, 0, 10)
+        };
+        if (!string.IsNullOrEmpty(passwordDefault))
+            pwBox.Password = passwordDefault;
+
+        var cNumBox = new TextBox
+        {
+            Text = cNumDefault ?? "",
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+
+        void AddLabeled(int row, string label, UIElement field)
+        {
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 12
+            });
+            stack.Children.Add(field);
+            Grid.SetRow(stack, row);
+            root.Children.Add(stack);
+        }
+
+        AddLabeled(0, "Room ID", roomBox);
+        AddLabeled(1, "Password", pwBox);
+        AddLabeled(2, "Filter cNum (optional)", cNumBox);
+
+        var hint = new TextBlock
+        {
+            Text = "Base: weixin.jichexiaozi.com/transponder",
+            Foreground = (Brush)FindResource("TextMuted"),
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        Grid.SetRow(hint, 3);
+        root.Children.Add(hint);
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        var ok = new Button
+        {
+            Content = "Connect",
+            Width = 88,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsDefault = true,
+            Style = TryFindResource("ToolButtonStyle") as Style
+        };
+        var cancel = new Button
+        {
+            Content = "Cancel",
+            Width = 88,
+            IsCancel = true,
+            Style = TryFindResource("ToolButtonStyle") as Style
+        };
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        Grid.SetRow(buttons, 5);
+        root.Children.Add(buttons);
+
+        dialog.Content = root;
+
+        var accepted = false;
+        ok.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(roomBox.Text))
+            {
+                MessageBox.Show(
+                    dialog,
+                    "请填写 Room ID。",
+                    "GSpot",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            accepted = true;
+            dialog.DialogResult = true;
+            dialog.Close();
+        };
+        cancel.Click += (_, _) =>
+        {
+            dialog.DialogResult = false;
+            dialog.Close();
+        };
+
+        var result = dialog.ShowDialog();
+        if (result != true || !accepted)
+            return false;
+
+        options = new GSpotOptions
+        {
+            RoomId = roomBox.Text.Trim(),
+            Password = pwBox.Password,
+            FilterCNum = string.IsNullOrWhiteSpace(cNumBox.Text)
+                ? null
+                : cNumBox.Text.Trim()
+        };
+        return true;
+    }
+
+    // ============================================================
     // Simulator
     // ============================================================
 
@@ -1948,7 +2201,7 @@ public partial class MainWindow : Window
 
 
         // ========================================================
-        // Data source（Phase 1：UDP）
+        // Data source（默认 UDP；可用 GSpot… / UDP 按钮切换）
         //
         // MainWindow 只依赖 IDataSource。
         // 关闭时由 MainWindow_Closed 调用 StopAsync / Dispose。
