@@ -112,3 +112,51 @@ Date: 2026-10-09 (Asia/Shanghai)
 ## Build on Linux box
 
 With `-p:EnableWindowsTargeting=true`, Release build **succeeded** (0 errors; NU1701 warnings only). Prefer full verify on P16/Windows.
+
+---
+
+# Quality tranche 4 — minimal xUnit tests
+
+Branch: `feature/quality-history-recording-safety`  
+Date: 2026-10-09 (Asia/Shanghai)
+
+## Files added / changed
+
+| File | Change |
+|------|--------|
+| `ChassisMasterTestSuite.Tests/ChassisMasterTestSuite.Tests.csproj` | **New** — `net10.0` xUnit; stock xUnit only; **links** pure Core/Communication/Recorder sources (no WPF ProjectReference — that needs `Microsoft.WindowsDesktop.App` at testhost runtime) |
+| `ChassisMasterTestSuite.Tests/GlobalUsings.cs` | `global using Xunit;` |
+| `ChassisMasterTestSuite.Tests/*Tests.cs` | SampleHistoryBuffer, DataBus, PlotDownsampler, UdpPacketSerializer, Vbo longitude round-trip, GSpotParser `pos` mapping (no network) |
+| `Chassis Master Test Suite.csproj` | `Compile`/`None`/`Page`/`EmbeddedResource` Remove for nested `ChassisMasterTestSuite.Tests/**` so SDK glob does not bake tests into the WPF app |
+| `Chassis Master Test Suite.slnx` | Include test project |
+| `Chassis Master Test Suite.sln` | **New** classic `.sln` (same two projects) |
+| `README.md` | How to run `dotnet test` |
+| `CHANGELOG-quality.md` | This tranche |
+
+## How to run
+
+```bash
+# From repo root (Linux box or Windows):
+dotnet test "Chassis Master Test Suite.sln" -c Release
+# or:
+dotnet test ChassisMasterTestSuite.Tests/ChassisMasterTestSuite.Tests.csproj -c Release
+```
+
+Optional on non-Windows when also building the WPF app: `-p:EnableWindowsTargeting=true`.
+
+**Why linked sources instead of ProjectReference?**  
+Referencing the WPF `net10.0-windows` app makes testhost require `Microsoft.WindowsDesktop.App`, which is unavailable on Linux. Tests instead `<Compile Include="..\...Link=...">` the pure types under test so `dotnet test` runs here and on Windows without UI deps. Linked files are the live sources — do not edit copies.
+
+## Coverage (14 facts)
+
+- `SampleHistoryBuffer` — drop-oldest at capacity; Snapshot isolation; empty snapshot
+- `DataBus` — DropOldest keeps newest; DroppedPublishCount stays 0 under DropOldest; Complete drain
+- `PlotDownsampler` — ≤ Max returns all; over Max ≤ MaxPlotPoints + endpoints; min-max keeps spike; full visible range
+- `UdpPacketSerializer` — 89-byte round-trip; wrong length fails
+- `VboRecorder`/`VboReader` — east longitude stays positive in sample; file `long` arcmin is negative
+- `GSpotPropertyIndex` / `GSpotParser.TryMap` — `pos`-based mapping only (no network)
+
+## Verify
+
+1. `dotnet test` — **14 passed / 0 failed** (this box, 2026-10-09).
+2. `dotnet build "Chassis Master Test Suite.csproj" -c Release -p:EnableWindowsTargeting=true` — 0 errors (tests folder excluded).

@@ -292,4 +292,17 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 ## 相关资源
 
 - VI 设计系统：`D:\CMTS\VI`（独立目录，不在本仓库）  
-- 仓库：https://github.com/aneminence/Chassis-Master-Test-Suite  
+- 仓库：https://github.com/aneminence/Chassis-Master-Test-Suite
+
+## Tests / quality
+
+Minimal xUnit project: `ChassisMasterTestSuite.Tests` (`net10.0`, stock xUnit).
+
+Covers pure logic via **linked** production sources (history buffer, DataBus, plot downsampler, UDP serializer, VBO longitude round-trip, GSpot property `pos` mapping) — no WPF / no live network.
+
+```bash
+dotnet test "Chassis Master Test Suite.sln" -c Release
+```
+
+Quality notes: see `CHANGELOG-quality.md`.
+
