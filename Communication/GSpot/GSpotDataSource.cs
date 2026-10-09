@@ -40,6 +40,9 @@ public sealed class GSpotDataSource : IDataSource
     private string? _lockedGUserId;
     private string? _lockedCNum;
 
+    /// <summary>最近一次连接/推流错误（供 UI 显示）。</summary>
+    private string? _lastError;
+
     public GSpotDataSource(
         DataBus dataBus,
         GSpotOptions options)
@@ -70,6 +73,9 @@ public sealed class GSpotDataSource : IDataSource
     public string? LockedGUserId => _lockedGUserId;
 
     public string? LockedCNum => _lockedCNum;
+
+    /// <summary>最近一次失败原因；连接成功时清空。</summary>
+    public string? LastError => _lastError;
 
     public Task StartAsync(
         CancellationToken cancellationToken = default)
@@ -148,6 +154,7 @@ public sealed class GSpotDataSource : IDataSource
                         ct,
                         onConnected: () =>
                         {
+                            _lastError = null;
                             delayMs = _options.InitialReconnectDelayMs;
                             attempt = 0;
                         })
@@ -161,7 +168,7 @@ public sealed class GSpotDataSource : IDataSource
             {
                 break;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 if (ct.IsCancellationRequested ||
                     _disposed != 0)
@@ -169,6 +176,7 @@ public sealed class GSpotDataSource : IDataSource
                     break;
                 }
 
+                _lastError = ex.Message;
                 SetState(DataSourceState.Reconnecting);
                 attempt++;
 
@@ -230,11 +238,11 @@ public sealed class GSpotDataSource : IDataSource
                 .ConfigureAwait(false);
 
         var tokenRoot = tokenDoc.RootElement;
-        if (!TryGetStatusOk(tokenRoot) ||
-            !tokenRoot.TryGetProperty("body", out var tokenBody))
+        EnsureApiOk(tokenRoot, "GSpot 登录(token)");
+        if (!tokenRoot.TryGetProperty("body", out var tokenBody))
         {
             throw new InvalidOperationException(
-                "GSpot 登录失败：token 响应 status != 1。");
+                "GSpot 登录失败：响应缺少 body。");
         }
 
         var accessToken = tokenBody.ValueKind switch
@@ -275,11 +283,11 @@ public sealed class GSpotDataSource : IDataSource
                 .ConfigureAwait(false);
 
         var propsRoot = propsDoc.RootElement;
-        if (!TryGetStatusOk(propsRoot) ||
-            !propsRoot.TryGetProperty("body", out var propsBody))
+        EnsureApiOk(propsRoot, "获取 properties");
+        if (!propsRoot.TryGetProperty("body", out var propsBody))
         {
             throw new InvalidOperationException(
-                "获取 properties 失败。");
+                "获取 properties 失败：响应缺少 body。");
         }
 
         var index =
@@ -318,8 +326,8 @@ public sealed class GSpotDataSource : IDataSource
                 .ConfigureAwait(false);
 
         var subRoot = subDoc.RootElement;
-        if (!TryGetStatusOk(subRoot) ||
-            !subRoot.TryGetProperty("body", out var subBody) ||
+        EnsureApiOk(subRoot, "subscribe");
+        if (!subRoot.TryGetProperty("body", out var subBody) ||
             !subBody.TryGetProperty("wsPath", out var wsPathEl))
         {
             throw new InvalidOperationException(
@@ -513,29 +521,73 @@ public sealed class GSpotDataSource : IDataSource
         string httpBaseUrl,
         string wsPath)
     {
-        // 从 BaseUrl 推导 wss/ws，避免 Python 里硬编码域名的坑
+        // 从 BaseUrl 推导 wss/ws，并保留 /transponder 路径前缀。
+        // 旧实现清空 Path 会得到 wss://host + wsPath，若 wsPath 不含
+        // /transponder 会连错（Python 客户端是 host+/transponder+wsPath）。
         if (!Uri.TryCreate(httpBaseUrl, UriKind.Absolute, out var httpUri))
         {
             throw new InvalidOperationException(
                 $"无效的 BaseUrl: {httpBaseUrl}");
         }
 
-        var builder = new UriBuilder(httpUri)
-        {
-            Scheme = httpUri.Scheme.Equals(
+        var scheme = httpUri.Scheme.Equals(
                          "https",
                          StringComparison.OrdinalIgnoreCase)
-                ? "wss"
-                : "ws",
-            Path = string.Empty,
-            Query = string.Empty
-        };
+            ? "wss"
+            : "ws";
 
-        var root = builder.Uri.ToString().TrimEnd('/');
         if (!wsPath.StartsWith('/'))
             wsPath = "/" + wsPath;
 
-        return root + wsPath;
+        var basePath = httpUri.AbsolutePath.TrimEnd('/');
+        string fullPath;
+        if (string.IsNullOrEmpty(basePath) || basePath == "/")
+        {
+            fullPath = wsPath;
+        }
+        else if (wsPath.StartsWith(
+                     basePath + "/",
+                     StringComparison.OrdinalIgnoreCase) ||
+                 wsPath.Equals(
+                     basePath,
+                     StringComparison.OrdinalIgnoreCase))
+        {
+            fullPath = wsPath;
+        }
+        else
+        {
+            fullPath = basePath + wsPath;
+        }
+
+        return $"{scheme}://{httpUri.Authority}{fullPath}";
+    }
+
+    private static void EnsureApiOk(JsonElement root, string action)
+    {
+        if (TryGetStatusOk(root))
+            return;
+
+        string? name = null;
+        string? detail = null;
+        if (root.TryGetProperty("status_name", out var n) &&
+            n.ValueKind == JsonValueKind.String)
+        {
+            name = n.GetString();
+        }
+
+        if (root.TryGetProperty("status_detail", out var d) &&
+            d.ValueKind == JsonValueKind.String)
+        {
+            detail = d.GetString();
+        }
+
+        var statusText = "?";
+        if (root.TryGetProperty("status", out var st))
+            statusText = st.ToString();
+
+        throw new InvalidOperationException(
+            $"{action}失败 (status={statusText}): " +
+            $"{name ?? "unknown"} / {detail ?? "no detail"}");
     }
 
     private static bool TryGetStatusOk(JsonElement root)
