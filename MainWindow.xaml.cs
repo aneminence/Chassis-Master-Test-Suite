@@ -83,6 +83,12 @@ public partial class MainWindow : Window
 
     private bool _isRefreshingPlots;
 
+    /// <summary>
+    /// 当前驱动 Dashboard 冻结读数的曲线（有光标时）。
+    /// Escape 清除光标后恢复实时。
+    /// </summary>
+    private PlotDefinition? _cursorSourcePlot;
+
     /// <summary>北京时间（Asia/Shanghai / China Standard Time）。</summary>
     private static readonly TimeZoneInfo BeijingTimeZone = ResolveBeijingTimeZone();
 
@@ -556,6 +562,12 @@ public partial class MainWindow : Window
             return;
 
         _plots.Remove(plot);
+
+        if (ReferenceEquals(_cursorSourcePlot, plot))
+        {
+            _cursorSourcePlot = null;
+            UpdateNumericDisplay();
+        }
 
         RefreshPlotContainer();
 
@@ -1332,6 +1344,7 @@ public partial class MainWindow : Window
 
 
         plot.LastXs = null;
+        plot.LastSamples = null;
         plot.LastChannelSeries.Clear();
         plot.IsTimeAxis = selectedXSignal == PlotSignal.Time;
 
@@ -1450,6 +1463,7 @@ public partial class MainWindow : Window
 
 
         plot.LastXs = xs;
+        plot.LastSamples = history.ToArray();
 
 
         // ========================================================
@@ -1627,10 +1641,12 @@ public partial class MainWindow : Window
             else
             {
                 plot.CursorX = x;
+                _cursorSourcePlot = plot;
             }
 
             ApplyPlotOverlays(plot);
             wpfPlot.Refresh();
+            UpdateNumericDisplay();
         };
 
         wpfPlot.MouseMove += (_, e) =>
@@ -1675,10 +1691,14 @@ public partial class MainWindow : Window
 
             // 松手后把光标放到选区终点（或点击位置）
             if (plot.SelectionX2 is double endX)
+            {
                 plot.CursorX = endX;
+                _cursorSourcePlot = plot;
+            }
 
             ApplyPlotOverlays(plot);
             wpfPlot.Refresh();
+            UpdateNumericDisplay();
         };
 
         wpfPlot.MouseLeave += (_, _) =>
@@ -1699,9 +1719,12 @@ public partial class MainWindow : Window
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
             plot.IsSelectingRange = false;
+            if (ReferenceEquals(_cursorSourcePlot, plot))
+                _cursorSourcePlot = null;
             wpfPlot.UserInputProcessor.Enable();
             ApplyPlotOverlays(plot);
             wpfPlot.Refresh();
+            UpdateNumericDisplay();
         };
     }
 
@@ -1750,6 +1773,20 @@ public partial class MainWindow : Window
     {
         // OADate 按 UTC 存；刻度显示为北京时间
         var utc = DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+
+        // 旧秒表时间戳会落在 1970；显示为经过时间，避免误导
+        if (utc.Year < 2000)
+        {
+            var elapsedMs = (long)Math.Round(
+                (utc - DateTime.UnixEpoch).TotalMilliseconds);
+            if (elapsedMs < 0)
+                elapsedMs = 0;
+            var ts = TimeSpan.FromMilliseconds(elapsedMs);
+            return ts.TotalHours >= 1
+                ? $"{(int)ts.TotalHours}h{ts.Minutes:D2}m"
+                : $"{ts.Minutes:D2}:{ts.Seconds:D2}";
+        }
+
         var beijing =
             TimeZoneInfo.ConvertTimeFromUtc(utc, BeijingTimeZone);
 
@@ -1887,6 +1924,21 @@ public partial class MainWindow : Window
             var utc = DateTime.SpecifyKind(
                 DateTime.FromOADate(x),
                 DateTimeKind.Utc);
+
+            // 旧 Simulator 用秒表毫秒当 Timestamp，会落在 1970 附近。
+            // 墙钟修好后不应再出现；这里仍给出可读回退，避免再显示 1970。
+            if (utc.Year < 2000)
+            {
+                var elapsedMs = (long)Math.Round(
+                    (utc - DateTime.UnixEpoch).TotalMilliseconds);
+                if (elapsedMs < 0)
+                    elapsedMs = 0;
+                var ts = TimeSpan.FromMilliseconds(elapsedMs);
+                return ts.TotalHours >= 1
+                    ? $"{(int)ts.TotalHours}h{ts.Minutes:D2}m{ts.Seconds:D2}s"
+                    : $"{ts.Minutes:D2}:{ts.Seconds:D2}.{ts.Milliseconds:D3}";
+            }
+
             var beijing =
                 TimeZoneInfo.ConvertTimeFromUtc(utc, BeijingTimeZone);
             return beijing.ToString("yyyy-MM-dd HH:mm:ss.fff");
@@ -2595,18 +2647,21 @@ public partial class MainWindow : Window
 
     private void UpdateNumericDisplay()
     {
+        var cursorSample =
+            TryGetCursorSample();
+
         var sample =
-            _latestSample;
+            cursorSample ?? _latestSample;
 
         if (sample is null)
             return;
 
         // ------------------------------------------------------------
-        // 数值显示已迁移到 Controls\DashboardPanel。
+        // 有曲线光标时 Dashboard 冻结为选中点（对齐 VBTS）；
+        // Escape 清除光标后恢复实时。
         //
         // 注意：VehicleSample 目前没有 SteeringAngleDeg 字段，
         // 也没有对应的 UDP 数据字段，所以方向盘角度暂时显示 0。
-        // 等协议扩展后，把 sample.SteeringAngleDeg 传进来即可。
         // ------------------------------------------------------------
 
         DashboardPanelControl.SetValues(
@@ -2614,7 +2669,32 @@ public partial class MainWindow : Window
             longitudinalAcceleration: sample.LongitudinalAcceleration,
             lateralAcceleration: sample.LateralAcceleration,
             yawRate: sample.YawRate,
-            steeringAngleDeg: 0.0);
+            steeringAngleDeg: 0.0,
+            cursorFrozen: cursorSample is not null);
+    }
+
+
+    /// <summary>
+    /// 取当前光标最近邻样本；无光标或无缓存时返回 null。
+    /// </summary>
+    private VehicleSample? TryGetCursorSample()
+    {
+        var plot = _cursorSourcePlot;
+        if (plot is null ||
+            plot.CursorX is not double cursorX ||
+            plot.LastXs is null ||
+            plot.LastXs.Length == 0 ||
+            plot.LastSamples is null ||
+            plot.LastSamples.Length == 0)
+        {
+            return null;
+        }
+
+        var index = FindNearestIndex(plot.LastXs, cursorX);
+        if (index < 0 || index >= plot.LastSamples.Length)
+            return null;
+
+        return plot.LastSamples[index];
     }
 
 
@@ -2959,6 +3039,9 @@ public partial class MainWindow : Window
 
         /// <summary>最近一次绘制的 X / 各通道 Y，供光标插值。</summary>
         public double[]? LastXs { get; set; }
+
+        /// <summary>与 LastXs 对齐的样本缓存，供 Dashboard 冻结读数。</summary>
+        public VehicleSample[]? LastSamples { get; set; }
 
         public List<(PlotSignal Signal, double[] Ys)> LastChannelSeries { get; }
             = new();

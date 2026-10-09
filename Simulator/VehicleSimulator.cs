@@ -647,8 +647,10 @@ public sealed class VehicleSimulator
             Sequence =
                 _sequence++,
 
+            // 墙钟 Unix 毫秒（与 GSpot serverTime 一致），供曲线北京时间轴使用。
+            // 物理积分仍用 _stopwatch，不受 NTP 跳变影响。
             Timestamp =
-                _stopwatch.ElapsedMilliseconds,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
 
             SpeedKph =
                 state.SpeedMps * 3.6,
