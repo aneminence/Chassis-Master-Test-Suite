@@ -15,8 +15,8 @@
 
     <!--
         所有深色主题样式（SplitterStyle / NavButtonStyle / ToolButtonStyle /
-        DangerButtonStyle / DarkTextBoxStyle / DarkComboBoxStyle /
-        DarkCheckBoxStyle，以及 CheckBox、ComboBox 的隐式样式）都已统一放在
+        DangerButtonStyle / DarkTextBoxStyle / DarkPasswordBoxStyle /
+        DarkComboBoxStyle / DarkCheckBoxStyle，以及 CheckBox、ComboBox 的隐式样式）都已统一放在
         App.xaml 的 Application.Resources 中。
 
         原因：曲线区里每个 Plot 的控件（Plot Name 输入框、Auto Y、+ Channel、
@@ -95,16 +95,19 @@
                             VerticalAlignment="Center"
                             Margin="20,0,0,0">
 
-                    <Ellipse Width="7"
+                    <Ellipse x:Name="ConnectionDot"
+                             Width="7"
                              Height="7"
                              Fill="#3FBF6F"
                              VerticalAlignment="Center"
                              Margin="0,0,6,0"/>
 
-                    <TextBlock Text="Online"
+                    <TextBlock x:Name="ConnectionStatusText"
+                               Text="Offline"
                                Foreground="#8A94A6"
                                FontSize="11"
-                               VerticalAlignment="Center"/>
+                               VerticalAlignment="Center"
+                               ToolTip="数据源连接状态"/>
 
                 </StackPanel>
 

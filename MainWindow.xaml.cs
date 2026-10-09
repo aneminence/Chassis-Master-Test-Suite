@@ -1742,16 +1742,72 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 先探测连接；只有真正 Connected 才替换当前数据源。
+        // 失败时保留原来的 UDP/GSpot，避免「假成功」把可用源切掉。
+        var previous = _dataSource;
+        var next = new GSpotDataSource(_dataBus, options);
+        GSpotButton.IsEnabled = false;
+        UdpSourceButton.IsEnabled = false;
+
         try
         {
-            var next = new GSpotDataSource(_dataBus, options);
-            await SwitchDataSourceAsync(next);
+            await next.StartAsync();
+
+            // StartAsync 立即返回；必须等到 Connected，或首轮失败进入 Reconnecting。
+            var connected = await WaitForDataSourceConnectedAsync(
+                next,
+                TimeSpan.FromSeconds(20));
+
+            if (!connected)
+            {
+                var err = next.LastError
+                          ?? "超时：未能进入 Connected（可能卡在 Connecting/Reconnecting）。";
+
+                try
+                {
+                    await next.StopAsync();
+                }
+                catch
+                {
+                    try { next.Dispose(); } catch { /* ignore */ }
+                }
+
+                // previous 从未被停掉
+                MessageBox.Show(
+                    this,
+                    "GSpot 连接失败，已保持原数据源不变。\n\n" +
+                    $"房间: {options.RoomId}\n" +
+                    $"原因: {err}\n\n" +
+                    "请核对房间号/密码；Filter cNum 请先留空。\n" +
+                    "并请供应商确认同房间在官方客户端能看到实时数据。",
+                    "GSpot",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            // 连接成功：再停旧源、提交切换
+            _dataSource = null;
+            if (previous is not null)
+            {
+                try
+                {
+                    await previous.StopAsync();
+                }
+                catch
+                {
+                    try { previous.Dispose(); } catch { /* ignore */ }
+                }
+            }
+
+            _dataSource = next;
             GSpotButton.Content = "GSpot●";
+
             MessageBox.Show(
                 this,
-                "已切换到 GSpot。\n" +
+                "GSpot WebSocket 已连接。\n" +
                 $"房间: {options.RoomId}\n" +
-                "若房间内无在线车辆，Rx 会保持 0（事件推送，非 100 Hz）。\n" +
+                "若房间内无在线车辆推流，Rx 仍可能保持 0（事件推送，非固定 100 Hz）。\n" +
                 "Lost/OOO 对 GSpot 无意义，显示为 0。",
                 "GSpot",
                 MessageBoxButton.OK,
@@ -1759,12 +1815,27 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
+            try
+            {
+                await next.StopAsync();
+            }
+            catch
+            {
+                try { next.Dispose(); } catch { /* ignore */ }
+            }
+
             MessageBox.Show(
                 this,
-                "启动 GSpot 失败:\n" + ex.Message,
+                "GSpot 连接失败，已保持原数据源不变。\n\n" +
+                ex.Message,
                 "GSpot",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+        }
+        finally
+        {
+            GSpotButton.IsEnabled = true;
+            UdpSourceButton.IsEnabled = true;
         }
     }
 
@@ -1821,6 +1892,37 @@ public partial class MainWindow : Window
         await next.StartAsync();
     }
 
+    private static async Task<bool> WaitForDataSourceConnectedAsync(
+        IDataSource source,
+        TimeSpan timeout)
+    {
+        var deadline = DateTime.UtcNow + timeout;
+        while (DateTime.UtcNow < deadline)
+        {
+            if (source.State == DataSourceState.Connected)
+                return true;
+
+            if (source.State == DataSourceState.Faulted)
+                return false;
+
+            // Reconnecting 且已有 LastError：首轮已失败，不必空等满超时
+            if (source is GSpotDataSource gspot &&
+                source.State == DataSourceState.Reconnecting &&
+                !string.IsNullOrWhiteSpace(gspot.LastError))
+            {
+                // 再给一次瞬间机会，避免刚写下 LastError 时误判
+                await Task.Delay(400);
+                if (source.State == DataSourceState.Connected)
+                    return true;
+                return false;
+            }
+
+            await Task.Delay(200);
+        }
+
+        return source.State == DataSourceState.Connected;
+    }
+
     /// <summary>
     /// 临时接线用的房间/密码对话框（Settings 页就绪前）。
     /// 也可用环境变量 CMTS_GSPOT_ROOM / CMTS_GSPOT_PASSWORD / CMTS_GSPOT_CNUM。
@@ -1833,6 +1935,7 @@ public partial class MainWindow : Window
     {
         options = null;
 
+        // SizeToContent + MinHeight：避免固定 Height 被标题栏吃掉后裁掉底部按钮。
         var dialog = new Window
         {
             Title = "Connect GSpot",
@@ -1840,17 +1943,17 @@ public partial class MainWindow : Window
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
             Width = 380,
-            Height = 260,
+            MinHeight = 300,
+            SizeToContent = SizeToContent.Height,
             Background = (Brush)FindResource("AppBackground"),
             ShowInTaskbar = false
         };
 
-        var root = new Grid { Margin = new Thickness(16) };
+        var root = new Grid { Margin = new Thickness(16, 16, 16, 16) };
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var roomBox = new TextBox
@@ -1861,7 +1964,8 @@ public partial class MainWindow : Window
         };
         var pwBox = new PasswordBox
         {
-            Margin = new Thickness(0, 4, 0, 10)
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkPasswordBoxStyle") as Style
         };
         if (!string.IsNullOrEmpty(passwordDefault))
             pwBox.Password = passwordDefault;
@@ -1896,7 +2000,7 @@ public partial class MainWindow : Window
             Text = "Base: weixin.jichexiaozi.com/transponder",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
-            Margin = new Thickness(0, 0, 0, 8)
+            Margin = new Thickness(0, 0, 0, 12)
         };
         Grid.SetRow(hint, 3);
         root.Children.Add(hint);
@@ -1904,7 +2008,8 @@ public partial class MainWindow : Window
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            HorizontalAlignment = HorizontalAlignment.Right
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 4, 0, 0)
         };
         var ok = new Button
         {
@@ -1912,6 +2017,7 @@ public partial class MainWindow : Window
             Width = 88,
             Margin = new Thickness(0, 0, 8, 0),
             IsDefault = true,
+            IsEnabled = true,
             Style = TryFindResource("ToolButtonStyle") as Style
         };
         var cancel = new Button
@@ -1919,11 +2025,12 @@ public partial class MainWindow : Window
             Content = "Cancel",
             Width = 88,
             IsCancel = true,
+            IsEnabled = true,
             Style = TryFindResource("ToolButtonStyle") as Style
         };
         buttons.Children.Add(ok);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 5);
+        Grid.SetRow(buttons, 4);
         root.Children.Add(buttons);
 
         dialog.Content = root;
@@ -2097,6 +2204,66 @@ public partial class MainWindow : Window
 
         OutOfOrderPacketsText.Text =
             stats.OutOfOrder.ToString();
+
+        UpdateConnectionStatusUi(source);
+    }
+
+    private void UpdateConnectionStatusUi(IDataSource source)
+    {
+        if (ConnectionStatusText is null || ConnectionDot is null)
+            return;
+
+        var (label, color) = source.State switch
+        {
+            DataSourceState.Connected =>
+                ("Online", "#3FBF6F"),
+            DataSourceState.Connecting =>
+                ("Connecting…", "#E0B060"),
+            DataSourceState.Reconnecting =>
+                ("Reconnecting…", "#E0B060"),
+            DataSourceState.Faulted =>
+                ("Faulted", "#E08A8A"),
+            _ =>
+                ("Offline", "#8A94A6")
+        };
+
+        // UDP 无真实会话：保持 Online 语义（绑定成功即视为就绪）
+        if (source is UdpReceiver &&
+            source.State is DataSourceState.Connected
+                or DataSourceState.Disconnected)
+        {
+            // UdpReceiver StartAsync 后即 Connected；未启动则 Offline
+            if (source.State == DataSourceState.Connected)
+            {
+                label = "Online";
+                color = "#3FBF6F";
+            }
+        }
+
+        ConnectionStatusText.Text = label;
+        if (source is GSpotDataSource gspot &&
+            !string.IsNullOrWhiteSpace(gspot.LastError) &&
+            source.State is DataSourceState.Reconnecting
+                or DataSourceState.Faulted)
+        {
+            ConnectionStatusText.ToolTip =
+                $"{source.Name}: {gspot.LastError}";
+        }
+        else
+        {
+            ConnectionStatusText.ToolTip =
+                $"{source.Name} · {source.State}";
+        }
+
+        try
+        {
+            ConnectionDot.Fill =
+                (Brush)new BrushConverter().ConvertFromString(color)!;
+        }
+        catch
+        {
+            // ignore brush parse
+        }
     }
 
 
