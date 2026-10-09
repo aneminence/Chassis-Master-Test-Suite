@@ -69,17 +69,15 @@
 
                 <Grid x:Name="MapHost">
 
-                    <!-- 第 1 层：轨迹（ScottPlot 自己画，坐标轴刻度全部隐藏） -->
-                    <Grid x:Name="PlotHost"/>
-
-                    <!-- 第 2 层：比例尺网格
-                         刻意做成"屏幕层"覆盖物：
-                         拖动时完全不动，只有缩放时间距跟着变。
-                         它是用户拿来核对尺寸的参考底图，
-                         不参与任何经纬度换算。 -->
+                    <!-- 第 1 层：比例尺网格（在轨迹下方）
+                         屏幕层覆盖物：平移时不动，缩放时间距跟着变。
+                         Plot 背景透明，所以网格能透过显示。 -->
                     <Canvas x:Name="GridOverlay"
                             IsHitTestVisible="False"
                             ClipToBounds="True"/>
+
+                    <!-- 第 2 层：轨迹（ScottPlot，背景透明以便网格在下方可见） -->
+                    <Grid x:Name="PlotHost"/>
 
                     <!-- 第 3 层：悬停速度提示 -->
                     <Border x:Name="HoverTip"

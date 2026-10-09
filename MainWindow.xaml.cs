@@ -89,6 +89,16 @@ public partial class MainWindow : Window
     /// </summary>
     private PlotDefinition? _cursorSourcePlot;
 
+    /// <summary>
+    /// 中键平移 / 右键缩放进行中：跳过 RefreshPlot，避免 10 Hz Clear 把手势锁死。
+    /// </summary>
+    private int _activeManualAxisGestures;
+
+    /// <summary>
+    /// SuspendAutoScale 时程序化改勾选，不要顺带触发 RefreshAllPlots。
+    /// </summary>
+    private bool _suppressAutoScaleCheckboxRefresh;
+
     /// <summary>北京时间（Asia/Shanghai / China Standard Time）。</summary>
     private static readonly TimeZoneInfo BeijingTimeZone = ResolveBeijingTimeZone();
 
@@ -119,6 +129,8 @@ public partial class MainWindow : Window
         InitializeAxisSelector();
 
         InitializePlotSystem();
+
+        TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
 
         _uiTimer = new DispatcherTimer
         {
@@ -500,7 +512,7 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
-        if (!IsInitialized)
+        if (!IsInitialized || _suppressAutoScaleCheckboxRefresh)
             return;
 
         RefreshAllPlots();
@@ -885,7 +897,8 @@ public partial class MainWindow : Window
             {
                 plot.AutoScaleY = true;
 
-                RefreshPlot(plot);
+                if (!_suppressAutoScaleCheckboxRefresh)
+                    RefreshPlot(plot);
             };
 
 
@@ -1313,9 +1326,13 @@ public partial class MainWindow : Window
 
         try
         {
-            foreach (var plot in _plots)
+            // 手动平移/缩放时不要 Clear+重建，否则像「缩放被锁定」
+            if (_activeManualAxisGestures == 0)
             {
-                RefreshPlot(plot);
+                foreach (var plot in _plots)
+                {
+                    RefreshPlot(plot);
+                }
             }
 
             // 轨迹图。SetTrack 内部按 250 ms 限流，
@@ -1645,13 +1662,20 @@ public partial class MainWindow : Window
     {
         ConfigurePlotMouseBindings(wpfPlot);
 
+        wpfPlot.PreviewMouseWheel += (_, _) =>
+        {
+            // 滚轮缩放也算手动操作：立刻退出自动缩放
+            SuspendAutoScaleForUserInteraction(plot);
+        };
+
         wpfPlot.MouseDown += (_, e) =>
         {
             if (e.ChangedButton == MouseButton.Middle ||
                 e.ChangedButton == MouseButton.Right)
             {
-                // 用户手动平移/缩放后，关掉 Auto，否则下一帧 RefreshPlot 会把视图拽回去
+                // 立刻取消 Auto，并在手势期间跳过 RefreshPlot
                 SuspendAutoScaleForUserInteraction(plot);
+                BeginManualAxisGesture();
                 return;
             }
 
@@ -1721,6 +1745,13 @@ public partial class MainWindow : Window
 
         wpfPlot.MouseUp += (_, e) =>
         {
+            if (e.ChangedButton == MouseButton.Middle ||
+                e.ChangedButton == MouseButton.Right)
+            {
+                EndManualAxisGesture();
+                return;
+            }
+
             if (e.ChangedButton != MouseButton.Left)
                 return;
 
@@ -1774,6 +1805,10 @@ public partial class MainWindow : Window
 
         wpfPlot.MouseLeave += (_, _) =>
         {
+            // 拖出控件时也结束手势，避免计数卡死导致曲线永不刷新
+            if (_activeManualAxisGestures > 0)
+                EndManualAxisGesture();
+
             if (plot.IsDraggingCursor)
             {
                 plot.IsDraggingCursor = false;
@@ -1833,25 +1868,87 @@ public partial class MainWindow : Window
     }
 
 
+    private void BeginManualAxisGesture()
+    {
+        _activeManualAxisGestures++;
+    }
+
+
+    private void EndManualAxisGesture()
+    {
+        if (_activeManualAxisGestures > 0)
+            _activeManualAxisGestures--;
+    }
+
+
     /// <summary>
-    /// 用户手动平移/缩放时关掉 Auto X / Auto Y，避免 10 Hz 刷新把视图重置。
+    /// 用户手动平移/缩放时关掉 Auto X / Auto Y；
+    /// 只有再次勾选才会恢复自动缩放。
     /// </summary>
     private void SuspendAutoScaleForUserInteraction(
         PlotDefinition plot)
     {
-        if (XAxisAutoScaleCheckBox.IsChecked == true)
-            XAxisAutoScaleCheckBox.IsChecked = false;
-
-        if (plot.AutoScaleY)
+        _suppressAutoScaleCheckboxRefresh = true;
+        try
         {
-            plot.AutoScaleY = false;
-            if (plot.AutoScaleYCheckBox is not null)
-                plot.AutoScaleYCheckBox.IsChecked = false;
+            if (XAxisAutoScaleCheckBox.IsChecked == true)
+                XAxisAutoScaleCheckBox.IsChecked = false;
+
+            if (plot.AutoScaleY)
+            {
+                plot.AutoScaleY = false;
+                if (plot.AutoScaleYCheckBox is not null)
+                    plot.AutoScaleYCheckBox.IsChecked = false;
+            }
+        }
+        finally
+        {
+            _suppressAutoScaleCheckboxRefresh = false;
         }
     }
 
 
-        private static double? GetPlotMouseX(
+    /// <summary>
+    /// Track Map 点选轨迹点 → 同步曲线光标、Dashboard、车辆标记。
+    /// </summary>
+    private void ApplyCursorFromTrackSample(VehicleSample sample)
+    {
+        var selectedXSignal =
+            XAxisSelector.SelectedItem is PlotSignal xSignal
+                ? xSignal
+                : PlotSignal.Time;
+
+        var cursorX = GetAxisValue(sample, selectedXSignal);
+
+        PlotDefinition? source = null;
+        foreach (var plot in _plots)
+        {
+            plot.CursorX = cursorX;
+            source ??= plot;
+
+            if (plot.WpfPlot is null)
+                continue;
+
+            ApplyPlotOverlays(plot);
+            plot.WpfPlot.Refresh();
+        }
+
+        _cursorSourcePlot = source;
+
+        // 立刻刷新 Dashboard + 地图标记（不等下一帧 UI 定时器）
+        DashboardPanelControl.SetValues(
+            speedKph: sample.SpeedKph,
+            longitudinalAcceleration: sample.LongitudinalAcceleration,
+            lateralAcceleration: sample.LateralAcceleration,
+            yawRate: sample.YawRate,
+            steeringAngleDeg: 0.0,
+            cursorFrozen: true);
+
+        TrackMapPanelControl.SetCursorSample(sample);
+    }
+
+
+    private static double? GetPlotMouseX(
         ScottPlot.WPF.WpfPlot wpfPlot,
         MouseEventArgs e)
     {

@@ -39,7 +39,7 @@ public partial class TrackMapPanel : UserControl
     /// 网格线大致每隔这么多像素一条。
     /// 实际间距会被 NiceDistanceStep 收敛成 1/2/5/10... 的整齐米数。
     /// </summary>
-    private const double GridTargetPixels = 80.0;
+    private const double GridTargetPixels = 40.0;
 
     /// <summary>
     /// 实时刷新限流。MainWindow 的 UI 定时器是 10 Hz，
@@ -102,6 +102,11 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public int SampleCount => _samples.Count;
 
+    /// <summary>
+    /// 用户在轨迹上点选样本时触发（供曲线光标 / Dashboard 同步）。
+    /// </summary>
+    public event Action<VehicleSample>? SampleSelected;
+
     // ============================================================
     // 初始化
     // ============================================================
@@ -123,10 +128,13 @@ public partial class TrackMapPanel : UserControl
 
         ApplyDarkStyle();
 
+        // 背景透明，让下方 GridOverlay 网格透出来（网格在轨迹之下）。
+        _wpfPlot.Background = Brushes.Transparent;
+
         // 保留 ScottPlot 默认交互（左键拖动平移、滚轮缩放、右键拖动缩放）。
         _wpfPlot.UserInputProcessor.Reset();
 
-        // 显式确保左键拖动 = 平移。
+        // 显式确保左键拖动 = 平移（点在轨迹上时由我们接管，见 PreviewMouseLeftButtonDown）。
         _wpfPlot.UserInputProcessor.LeftClickDragPan(
             enable: true,
             horizontal: true,
@@ -135,6 +143,7 @@ public partial class TrackMapPanel : UserControl
         plot.RenderManager.RenderFinished += (_, _) => UpdateGridOverlay();
 
         _wpfPlot.PreviewMouseMove += WpfPlot_PreviewMouseMove;
+        _wpfPlot.PreviewMouseLeftButtonDown += WpfPlot_PreviewMouseLeftButtonDown;
         _wpfPlot.MouseLeave += WpfPlot_MouseLeave;
     }
 
@@ -144,11 +153,13 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     private void ApplyDarkStyle()
     {
+        // Alpha=0：网格 Canvas 在 Plot 下方可见，轨迹画在网格之上
+        var transparent = ScottPlot.Colors.Transparent;
         _wpfPlot.Plot.SetStyle(
             new ScottPlot.PlotStyle
             {
-                FigureBackgroundColor = ScottPlot.Color.FromHex("#0A0F15"),
-                DataBackgroundColor = ScottPlot.Color.FromHex("#0A0F15"),
+                FigureBackgroundColor = transparent,
+                DataBackgroundColor = transparent,
                 Palette = new ScottPlot.Palettes.Dark()
             });
     }
@@ -700,6 +711,43 @@ public partial class TrackMapPanel : UserControl
             Math.Max(0.0, top),
             0.0,
             0.0);
+    }
+
+    private void WpfPlot_PreviewMouseLeftButtonDown(
+        object sender,
+        MouseButtonEventArgs e)
+    {
+        if (!_hasData || _projection is null || _samples.Count == 0)
+            return;
+
+        var pixel = _wpfPlot.GetPlotPixelPosition(e);
+        var coordinates = _wpfPlot.Plot.GetCoordinates(
+            pixel.X,
+            pixel.Y,
+            _wpfPlot.Plot.Axes.Bottom,
+            _wpfPlot.Plot.Axes.Left);
+
+        var width = GridOverlay.ActualWidth;
+        if (width < 1.0)
+            return;
+
+        var limits = _wpfPlot.Plot.Axes.GetLimits();
+        var metersPerPixelX = (limits.Right - limits.Left) / width;
+
+        var index = FindNearestSample(
+            coordinates.X,
+            coordinates.Y,
+            metersPerPixelX * HoverPickPixels);
+
+        if (index < 0)
+            return;
+
+        var sample = _samples[index];
+        SetCursorSample(sample);
+        SampleSelected?.Invoke(sample);
+
+        // 点在轨迹上：选点并同步，不启动平移
+        e.Handled = true;
     }
 
     private void WpfPlot_MouseLeave(object sender, MouseEventArgs e)
