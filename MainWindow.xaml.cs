@@ -109,6 +109,19 @@ public partial class MainWindow : Window
     /// </summary>
     private bool _suppressAutoScaleCheckboxRefresh;
 
+    /// <summary>
+    /// 曲线脏检查：与上次成功重建时历史尾指纹相同则跳过 Clear+重建。
+    /// UI 改通道 / 轴 / 手势结束时置 <see cref="_forcePlotRebuild"/>。
+    /// </summary>
+    private int _lastPlotHistoryCount = -1;
+
+    private long _lastPlotHistoryTimestamp;
+
+    private long _lastPlotHistorySequence;
+
+    /// <summary>通道/轴/视野变化时强制下一拍重建（即使样本指纹未变）。</summary>
+    private bool _forcePlotRebuild = true;
+
     /// <summary>北京时间（Asia/Shanghai / China Standard Time）。</summary>
     private static readonly TimeZoneInfo BeijingTimeZone = ResolveBeijingTimeZone();
 
@@ -396,7 +409,7 @@ public partial class MainWindow : Window
                 ref _sampleCount,
                 samples.Count);
 
-            RefreshAllPlots();
+            RefreshAllPlots(force: true);
 
             UpdateNumericDisplay();
 
@@ -578,7 +591,7 @@ public partial class MainWindow : Window
         if (!IsInitialized)
             return;
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -593,7 +606,7 @@ public partial class MainWindow : Window
         if (XAxisAutoScaleCheckBox.IsChecked != true)
             CaptureLockedLimitsFromPlots();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -637,7 +650,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -661,7 +674,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1376,7 +1389,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1395,7 +1408,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1403,7 +1416,7 @@ public partial class MainWindow : Window
     // 刷新所有 Plot
     // ============================================================
 
-    private void RefreshAllPlots()
+    private void RefreshAllPlots(bool force = false)
     {
         if (_isRefreshingPlots)
             return;
@@ -1412,24 +1425,75 @@ public partial class MainWindow : Window
 
         try
         {
+            // 整拍只 Snapshot 一次，所有 Plot + Track Map 共用。
+            var history = _sampleHistory.Snapshot();
+
             // 手动平移/缩放时不要 Clear+重建，否则像「缩放被锁定」
             if (_activeManualAxisGestures == 0)
             {
-                foreach (var plot in _plots)
+                var rebuild =
+                    force
+                    || _forcePlotRebuild
+                    || IsPlotHistoryDirty(history);
+
+                if (rebuild)
                 {
-                    RefreshPlot(plot);
+                    foreach (var plot in _plots)
+                    {
+                        RefreshPlot(plot, history);
+                    }
+
+                    RememberPlotHistoryFingerprint(history);
+                    _forcePlotRebuild = false;
                 }
+            }
+            else if (force)
+            {
+                // 手势进行中来的强制请求延后到松手后下一拍
+                _forcePlotRebuild = true;
             }
 
             // 轨迹图。SetTrack 内部按 250 ms 限流，
             // 所以这里跟着 10 Hz 的 UI 定时器调也不会重画太频繁。
             // 必须传 Snapshot，禁止把可变活缓冲交给 Track Map。
-            TrackMapPanelControl.SetTrack(_sampleHistory.Snapshot());
+            TrackMapPanelControl.SetTrack(history);
         }
         finally
         {
             _isRefreshingPlots = false;
         }
+    }
+
+
+    private bool IsPlotHistoryDirty(
+        IReadOnlyList<VehicleSample> history)
+    {
+        if (history.Count != _lastPlotHistoryCount)
+            return true;
+
+        if (history.Count == 0)
+            return _lastPlotHistoryCount != 0;
+
+        var last = history[^1];
+        return last.Timestamp != _lastPlotHistoryTimestamp
+            || last.Sequence != _lastPlotHistorySequence;
+    }
+
+
+    private void RememberPlotHistoryFingerprint(
+        IReadOnlyList<VehicleSample> history)
+    {
+        _lastPlotHistoryCount = history.Count;
+        if (history.Count == 0)
+        {
+            _lastPlotHistoryTimestamp = 0;
+            _lastPlotHistorySequence = 0;
+            return;
+        }
+
+        var last = history[^1];
+        _lastPlotHistoryTimestamp = last.Timestamp;
+        _lastPlotHistorySequence = last.Sequence;
     }
 
 
@@ -1440,12 +1504,16 @@ public partial class MainWindow : Window
     private void RefreshPlot(
         PlotDefinition plot)
     {
+        RefreshPlot(plot, GetHistorySnapshot());
+    }
+
+
+    private void RefreshPlot(
+        PlotDefinition plot,
+        IReadOnlyList<VehicleSample> history)
+    {
         if (plot.WpfPlot is null)
             return;
-
-
-        var history =
-            GetHistorySnapshot();
 
 
         var selectedXSignal =
@@ -1516,22 +1584,55 @@ public partial class MainWindow : Window
 
 
         // ========================================================
-        // X 数据
+        // 可见窗口 + 降采样下标（各通道共用，保证 LastXs / LastSamples 对齐）
         // ========================================================
 
-        var xs =
-            new double[history.Count];
+        var autoX =
+            XAxisAutoScaleCheckBox.IsChecked == true;
 
+        double GetXAt(int index) =>
+            GetAxisValue(history[index], selectedXSignal);
 
-        for (var i = 0;
-             i < history.Count;
-             i++)
+        var (visStart, visEnd) =
+            PlotDownsampler.FindVisibleIndexRange(
+                history.Count,
+                GetXAt,
+                previousLimits.Left,
+                previousLimits.Right,
+                useFullRange: autoX);
+
+        if (visEnd - visStart < 2)
         {
-            xs[i] =
-                GetAxisValue(
-                    history[i],
-                    selectedXSignal);
+            visStart = 0;
+            visEnd = history.Count;
         }
+
+        // min-max 按首通道 Y 选点，保留尖峰；其余通道复用同一批下标
+        var primaryChannelId = selectedChannels[0].ChannelId;
+        double GetPrimaryY(int index) =>
+            GetSignalValue(history[index], primaryChannelId);
+
+        var indices =
+            PlotDownsampler.BuildDownsampleIndices(
+                visStart,
+                visEnd,
+                GetPrimaryY,
+                PlotDownsampler.MaxPlotPoints);
+
+        if (indices.Length < 2)
+        {
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            ApplyPlotOverlays(plot);
+            RefreshPlotTitle(plot);
+            plot.WpfPlot.Refresh();
+            return;
+        }
+
+        var xs =
+            PlotDownsampler.ExtractXs(
+                history,
+                indices,
+                sample => GetAxisValue(sample, selectedXSignal));
 
 
         // ========================================================
@@ -1548,24 +1649,17 @@ public partial class MainWindow : Window
         foreach (var channel in selectedChannels)
         {
             var ys =
-                new double[history.Count];
+                PlotDownsampler.ExtractYs(
+                    history,
+                    indices,
+                    sample => GetSignalValue(sample, channel.ChannelId));
 
-
-            for (var i = 0;
-                 i < history.Count;
-                 i++)
+            for (var i = 0; i < ys.Length; i++)
             {
-                var value =
-                    GetSignalValue(
-                        history[i],
-                        channel.ChannelId);
-
-                ys[i] = value;
-
+                var value = ys[i];
 
                 if (value < minY)
                     minY = value;
-
 
                 if (value > maxY)
                     maxY = value;
@@ -1592,7 +1686,9 @@ public partial class MainWindow : Window
 
 
         plot.LastXs = xs;
-        plot.LastSamples = history.ToArray();
+        // 与降采样后的 LastXs 对齐，供光标 / Dashboard 冻结；非全量历史。
+        plot.LastSamples =
+            PlotDownsampler.ExtractSamples(history, indices);
 
 
         // ========================================================
@@ -1639,6 +1735,7 @@ public partial class MainWindow : Window
 
         plot.WpfPlot.Refresh();
     }
+
 
 
     // ============================================================
@@ -1908,7 +2005,11 @@ public partial class MainWindow : Window
 
         // 手势结束立刻锁定当前轴范围，避免下一帧 Refresh 读到被冲掉的 GetLimits
         if (_activeManualAxisGestures == 0)
+        {
             CaptureLockedLimitsFromPlots();
+            // 视野变了但样本指纹可能未变：强制下一拍按新可见窗降采样
+            _forcePlotRebuild = true;
+        }
     }
 
 
@@ -1972,6 +2073,8 @@ public partial class MainWindow : Window
                 plot.LockedLimits = limits;
             }
         }
+
+        _forcePlotRebuild = true;
     }
 
 
@@ -2482,7 +2585,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
