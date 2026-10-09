@@ -69,3 +69,46 @@ Date: 2026-10-09 (Asia/Shanghai)
 WPF (`net10.0-windows` + `UseWPF`) typically cannot produce a full UI binary on Linux; treat Linux `dotnet build` failure as expected. Sync back to P16/Windows for compile.
 
 **This box:** `dotnet` 10.0.401 under `~/.dotnet`. Default `dotnet build` fails with NETSDK1100 (Windows TFM). With `-p:EnableWindowsTargeting=true`, Release build **succeeded** (0 errors; NU1701 SkiaSharp.Views.WPF warnings only). Prefer full verify on P16/Windows.
+
+---
+
+# Quality tranche 3 — MainWindow session extract (Recording + DataSource)
+
+Branch: `feature/quality-history-recording-safety`  
+Date: 2026-10-09 (Asia/Shanghai)
+
+## Files changed
+
+| File | Change |
+|------|--------|
+| `Session/RecordingSession.cs` | **New** — `RecordingState` enum; owns `VboRecorder` lifecycle, `ApplyState`, `TryWriteIfRecording`, `DroppedSamples` / `RecordingStartTimestamp` |
+| `Session/DataSourceSession.cs` | **New** — owns current `IDataSource`; `CreateUdpReceiver` / `CreateGSpot`; `SwitchAsync` / `CommitConnectedAsync` / `SetCurrent`; `WaitForConnectedAsync`; `Dispose` |
+| `MainWindow.xaml.cs` | Drop raw `_recorder` / `_recordingState` / `_recordingStartTimestamp` / `_dataSource`; button handlers + consume/close/status delegate to sessions; UI glyphs / Elapsed / MessageBox / `EnterLiveSourceMode` stay here |
+| `CHANGELOG-quality.md` | This tranche |
+
+## Behavior notes
+
+- **No feature changes.** Record / Pause / Stop, UDP retry, GSpot probe-then-commit, consume-loop write rules, Lost `+R{n}` display unchanged.
+- `EnterLiveSourceMode` (ChannelRegistry + offline flag + selector refresh) remains on MainWindow — not session-owned.
+- GSpot prompt dialog, MessageBoxes, toolbar button labels remain on MainWindow.
+- `_dataBus`, `_udpSender`, Simulator, ScottPlot / cursor / geometry, `SampleHistoryBuffer` unchanged.
+- Session methods preserve UI sync context (no `ConfigureAwait(false)`).
+
+## Intentional non-moves (later knives)
+
+- Plot system / Dashboard / Track Map stay in MainWindow.
+- VBO offline load / `_historyOfflineMode` stay in MainWindow (history policy, not source ownership).
+- CTS / `ConsumeDataAsync` stay in MainWindow (orchestrates bus + history + recording).
+- No tests project / NuGet adds this tranche.
+
+## Verify manually (Windows / WPF)
+
+1. Sync `/workspace/cmts-edit` → P16 working tree; `dotnet build` Release.
+2. ● Start → Pause → Resume → ■ Stop: same glyphs; new `.vbo` under `Recordings/`; pause skips rows; resume continues same file.
+3. Stream while recording — Lost still shows `+R{n}` if recorder drops.
+4. UDP Faulted → toolbar UDP retry; GSpot fail keeps previous source; GSpot success switches and EnterLiveSourceMode clears offline.
+5. Close window — no hang; recorder flushed; no leftover UDP bind.
+
+## Build on Linux box
+
+With `-p:EnableWindowsTargeting=true`, Release build **succeeded** (0 errors; NU1701 warnings only). Prefer full verify on P16/Windows.

@@ -10,6 +10,7 @@ using Chassis_Master_Test_Suite.Communication.GSpot;
 using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Recorder;
 using Chassis_Master_Test_Suite.Simulator;
+using Chassis_Master_Test_Suite.Session;
 
 namespace Chassis_Master_Test_Suite;
 
@@ -18,42 +19,19 @@ public partial class MainWindow : Window
     private readonly DataBus _dataBus = new();
 
     /// <summary>
-    /// 当前活动数据源（UDP 或 GSpot）。
-    /// Settings 完善前用顶部 GSpot… / UDP 按钮切换。
+    /// 当前活动数据源（UDP / GSpot）所有权；Settings 完善前用顶部按钮切换。
     /// </summary>
-    private IDataSource? _dataSource;
+    private readonly DataSourceSession _dataSourceSession;
 
     private UdpSender? _udpSender;
 
     // ============================================================
-    // 录制（VBO）
-    //
-    // Recorder 在窗口加载时创建，
-    // 但只有在 _recordingState == Recording 时才写入数据。
+    // 录制（VBO）— 文件 / 状态机在 RecordingSession；UI 外观仍在本类。
     // ============================================================
 
-    private VboRecorder? _recorder;
-
-    private RecordingState _recordingState = RecordingState.Stopped;
-
-    /// <summary>
-    /// 本次测试第一条数据的时间戳（毫秒），用于显示经过时间。
-    /// </summary>
-    private long? _recordingStartTimestamp;
+    private readonly RecordingSession _recordingSession = new();
 
     private DispatcherTimer? _elapsedTimer;
-
-    /// <summary>
-    /// 录制状态机。
-    ///
-    /// Stopped -> Recording <-> Paused -> Stopped
-    /// </summary>
-    private enum RecordingState
-    {
-        Stopped,
-        Recording,
-        Paused
-    }
 
     private CancellationTokenSource? _cancellationTokenSource;
 
@@ -147,6 +125,8 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _dataSourceSession = new DataSourceSession(_dataBus);
+
         InitializeComponent();
 
         InitializeAxisSelector();
@@ -219,20 +199,11 @@ public partial class MainWindow : Window
     // 实时曲线、数值显示和数据消费都照常运行。
     // ============================================================
 
-    private void StartRecorder()
-    {
-        _recorder = new VboRecorder(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "Recordings",
-                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"));
-    }
-
     private void RecordButton_Click(
         object sender,
         RoutedEventArgs e)
     {
-        switch (_recordingState)
+        switch (_recordingSession.State)
         {
             case RecordingState.Stopped:
                 ApplyRecordingState(
@@ -260,20 +231,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 切换录制状态，并同步按钮外观和 Elapsed 计时器。
+    /// 切换录制状态（委托 RecordingSession），并同步按钮外观和 Elapsed 计时器。
     /// </summary>
     private void ApplyRecordingState(
         RecordingState state)
     {
+        _recordingSession.ApplyState(state);
+
         switch (state)
         {
             case RecordingState.Stopped:
-                // 关闭并落盘当前文件。
-                _recorder?.Dispose();
-                _recorder = null;
-
-                _recordingStartTimestamp = null;
-
                 _elapsedTimer?.Stop();
 
                 RecordGlyphText.Text = "●";
@@ -287,16 +254,6 @@ public partial class MainWindow : Window
                 break;
 
             case RecordingState.Recording:
-                // 从停止状态开始时才新建文件；
-                // 从暂停恢复时继续写同一个文件。
-                if (_recorder is null)
-                {
-                    // 让第一条样本重新定义经过时间的零点。
-                    _recordingStartTimestamp = null;
-
-                    StartRecorder();
-                }
-
                 RecordGlyphText.Text = "❚❚";
                 RecordLabelText.Text = "Pause";
                 RecordGlyphText.Foreground = new SolidColorBrush(
@@ -314,8 +271,6 @@ public partial class MainWindow : Window
                 StopRecordButton.IsEnabled = true;
                 break;
         }
-
-        _recordingState = state;
     }
 
     private void StartElapsedTimer()
@@ -338,7 +293,7 @@ public partial class MainWindow : Window
         if (ElapsedTimeText is null)
             return;
 
-        if (_recordingStartTimestamp is null ||
+        if (_recordingSession.RecordingStartTimestamp is null ||
             _latestSample is null)
         {
             ElapsedTimeText.Text = "00:00:00.0";
@@ -348,7 +303,7 @@ public partial class MainWindow : Window
         var elapsed =
             TimeSpan.FromMilliseconds(
                 _latestSample.Timestamp -
-                _recordingStartTimestamp.Value);
+                _recordingSession.RecordingStartTimestamp.Value);
 
         if (elapsed < TimeSpan.Zero)
         {
@@ -2618,8 +2573,8 @@ public partial class MainWindow : Window
 
         // 先探测连接；只有真正 Connected 才替换当前数据源。
         // 失败时保留原来的 UDP/GSpot，避免「假成功」把可用源切掉。
-        var previous = _dataSource;
-        var next = new GSpotDataSource(_dataBus, options);
+        var previous = _dataSourceSession.Current;
+        var next = _dataSourceSession.CreateGSpot(options);
         GSpotButton.IsEnabled = false;
         UdpSourceButton.IsEnabled = false;
 
@@ -2628,7 +2583,7 @@ public partial class MainWindow : Window
             await next.StartAsync();
 
             // StartAsync 立即返回；必须等到 Connected，或首轮失败进入 Reconnecting。
-            var connected = await WaitForDataSourceConnectedAsync(
+            var connected = await DataSourceSession.WaitForConnectedAsync(
                 next,
                 TimeSpan.FromSeconds(20));
 
@@ -2661,20 +2616,7 @@ public partial class MainWindow : Window
             }
 
             // 连接成功：再停旧源、提交切换
-            _dataSource = null;
-            if (previous is not null)
-            {
-                try
-                {
-                    await previous.StopAsync();
-                }
-                catch
-                {
-                    try { previous.Dispose(); } catch { /* ignore */ }
-                }
-            }
-
-            _dataSource = next;
+            await _dataSourceSession.CommitConnectedAsync(previous, next);
             EnterLiveSourceMode();
             GSpotButton.Content = "GSpot●";
 
@@ -2722,7 +2664,7 @@ public partial class MainWindow : Window
         {
             // 已是 UDP 且正在监听：提示即可。
             // Faulted（例如端口占用）时允许原地重试 StartAsync。
-            if (_dataSource is UdpReceiver existingUdp)
+            if (_dataSourceSession.Current is UdpReceiver existingUdp)
             {
                 if (existingUdp.State == DataSourceState.Connected)
                 {
@@ -2763,7 +2705,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var next = new UdpReceiver(_dataBus);
+            var next = _dataSourceSession.CreateUdpReceiver();
             await SwitchDataSourceAsync(next);
             GSpotButton.Content = "GSpot…";
         }
@@ -2780,23 +2722,7 @@ public partial class MainWindow : Window
 
     private async Task SwitchDataSourceAsync(IDataSource next)
     {
-        var old = _dataSource;
-        _dataSource = null;
-
-        if (old is not null)
-        {
-            try
-            {
-                await old.StopAsync();
-            }
-            catch
-            {
-                try { old.Dispose(); } catch { /* ignore */ }
-            }
-        }
-
-        _dataSource = next;
-        await next.StartAsync();
+        await _dataSourceSession.SwitchAsync(next);
         EnterLiveSourceMode();
     }
 
@@ -2808,37 +2734,6 @@ public partial class MainWindow : Window
         _historyOfflineMode = false;
         ChannelRegistry.Instance.SetLiveCore();
         RefreshChannelSelectorsFromRegistry();
-    }
-
-    private static async Task<bool> WaitForDataSourceConnectedAsync(
-        IDataSource source,
-        TimeSpan timeout)
-    {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (source.State == DataSourceState.Connected)
-                return true;
-
-            if (source.State == DataSourceState.Faulted)
-                return false;
-
-            // Reconnecting 且已有 LastError：首轮已失败，不必空等满超时
-            if (source is GSpotDataSource gspot &&
-                source.State == DataSourceState.Reconnecting &&
-                !string.IsNullOrWhiteSpace(gspot.LastError))
-            {
-                // 再给一次瞬间机会，避免刚写下 LastError 时误判
-                await Task.Delay(400);
-                if (source.State == DataSourceState.Connected)
-                    return true;
-                return false;
-            }
-
-            await Task.Delay(200);
-        }
-
-        return source.State == DataSourceState.Connected;
     }
 
     /// <summary>
@@ -3135,7 +3030,7 @@ public partial class MainWindow : Window
     private void UpdateNetworkDisplay()
     {
         var source =
-            _dataSource;
+            _dataSourceSession.Current;
 
         if (source is null)
             return;
@@ -3148,7 +3043,7 @@ public partial class MainWindow : Window
         ValidPacketsText.Text =
             stats.Valid.ToString();
 
-        var recordDrops = _recorder?.DroppedSamples ?? 0;
+        var recordDrops = _recordingSession.DroppedSamples;
         var busDrops = _dataBus.DroppedPublishCount;
 
         if (recordDrops > 0)
@@ -3284,21 +3179,14 @@ public partial class MainWindow : Window
                     ref _sampleCount);
 
 
-                // 只有正在录制时才写入文件。
+                // 只有正在录制时才写入文件（RecordingSession）。
                 //
                 // 暂停时刻意让"经过时间"按真实时间继续走：
                 // VboRecorder 内部以第一条数据为原点，
                 // 恢复后第一行的 Elapsed_time 会自然跳过暂停时长。
-                // TryWrite 失败会计入 VboRecorder.DroppedSamples，
+                // TryWrite 失败会计入 DroppedSamples，
                 // 并由 UpdateNetworkDisplay 在 Lost 区展示。
-                if (_recordingState ==
-                    RecordingState.Recording)
-                {
-                    _recordingStartTimestamp ??=
-                        sample.Timestamp;
-
-                    _recorder?.TryWrite(sample);
-                }
+                _recordingSession.TryWriteIfRecording(sample);
             }
         }
     }
@@ -3336,20 +3224,19 @@ public partial class MainWindow : Window
         // 关闭时由 MainWindow_Closed 调用 StopAsync / Dispose。
         // ========================================================
 
-        _dataSource =
-            new UdpReceiver(
-                _dataBus);
+        var defaultUdp =
+            _dataSourceSession.CreateUdpReceiver();
+        _dataSourceSession.SetCurrent(defaultUdp);
 
         try
         {
-            await _dataSource.StartAsync();
+            await defaultUdp.StartAsync();
         }
         catch (Exception ex)
         {
             // 端口占用等绑定失败：弹窗提示，窗口继续可用（可切 GSpot 或稍后点 UDP 重试）。
-            var detail = _dataSource is UdpReceiver udp &&
-                         !string.IsNullOrWhiteSpace(udp.LastError)
-                ? udp.LastError
+            var detail = !string.IsNullOrWhiteSpace(defaultUdp.LastError)
+                ? defaultUdp.LastError
                 : ex.Message;
 
             MessageBox.Show(
@@ -3429,8 +3316,7 @@ public partial class MainWindow : Window
 
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
-        _dataSource?.Dispose();
-        _dataSource = null;
+        _dataSourceSession.Dispose();
 
 
         _dataBus.Complete();
@@ -3449,7 +3335,7 @@ public partial class MainWindow : Window
         // 释放资源
         // ========================================================
 
-        _recorder?.Dispose();
+        _recordingSession.Dispose();
 
 
         _udpSender?.Dispose();
