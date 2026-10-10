@@ -78,7 +78,8 @@ public sealed class RecordingSession : IDisposable
             Path.Combine(
                 AppContext.BaseDirectory,
                 "Recordings",
-                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"));
+                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"),
+            SessionMetadata.Current.Clone());
     }
 
     /// <summary>

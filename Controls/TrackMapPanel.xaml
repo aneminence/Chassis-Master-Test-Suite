@@ -1,4 +1,4 @@
-<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
+﻿<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="#12171E">
@@ -40,23 +40,31 @@
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
 
-                <!-- 预留：测试选择下拉 -->
-                <ComboBox Grid.Column="2"
-                          Width="100"
-                          Height="24"
-                          VerticalContentAlignment="Center"
-                          IsEnabled="False"
-                          Margin="0,0,8,0">
-                    <ComboBoxItem Content="Track 1"
-                                  IsSelected="True"/>
-                </ComboBox>
-
-                <Button Grid.Column="3"
-                        Content="⧉"
-                        Style="{StaticResource HeaderButtonStyle}"
-                        FontSize="13"
-                        Padding="4,0"
-                        IsEnabled="False"/>
+                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+                    <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                            Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
+                    <ComboBox x:Name="GateCombo" Width="130" Height="26" Margin="0,0,6,0"
+                              Style="{StaticResource DarkComboBoxStyle}"
+                              SelectionChanged="GateCombo_SelectionChanged"
+                              ToolTip="Select gate"/>
+                    <TextBlock Text="W" Foreground="#8A94A6" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
+                             Text="20" Style="{StaticResource DarkTextBoxStyle}"
+                             VerticalContentAlignment="Center"
+                             ToolTip="Gate width (meters)"
+                             LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
+                    <TextBlock Text="m" Foreground="#5A6474" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                            Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
+                    <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                            Click="DeleteGateButton_Click" ToolTip="Delete selected gate"/>
+                    <Button x:Name="DeleteAllGatesButton" Content="Delete All" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                            Click="DeleteAllGatesButton_Click" ToolTip="Remove every gate"/>
+                    <Button x:Name="ImportGatesButton" Content="Import" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                            Click="ImportGatesButton_Click" ToolTip="Import gates from VBTS (.vbts)"/>
+                    <Button x:Name="ExportGatesButton" Content="Export" Style="{StaticResource HeaderButtonStyle}"
+                            Click="ExportGatesButton_Click" ToolTip="Export gates (.spl) — coming soon"/>
+                </StackPanel>
             </Grid>
 
             <!-- 地图区 -->
@@ -78,6 +86,30 @@
 
                     <!-- 第 2 层：轨迹（ScottPlot，背景透明以便网格在下方可见） -->
                     <Grid x:Name="PlotHost"/>
+
+                    <!-- Gate color legend (UpperLeft; separate from ScottPlot UpperRight track legend) -->
+                    <Border x:Name="GateLegendPanel"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Margin="10,10,0,0"
+                            Background="#E612171E"
+                            BorderBrush="#1E2530"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,6"
+                            IsHitTestVisible="False"
+                            MaxWidth="200">
+                        <StackPanel>
+                            <TextBlock Text="Gates"
+                                       Foreground="#8A94A6"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,4"/>
+                            <ItemsControl x:Name="GateLegendItems"/>
+                        </StackPanel>
+                    </Border>
+
 
                     <!-- 第 3 层：悬停速度提示 -->
                     <Border x:Name="HoverTip"

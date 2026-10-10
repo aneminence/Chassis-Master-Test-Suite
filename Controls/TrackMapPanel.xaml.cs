@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Shapes;
+using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
 
 namespace Chassis_Master_Test_Suite.Controls;
@@ -86,6 +87,11 @@ public partial class TrackMapPanel : UserControl
     /// <summary>当前光标样本；null 表示跟最新点。</summary>
     private VehicleSample? _cursorSample;
 
+    private IReadOnlyList<AnnotatedTestRun> _runHighlights = Array.Empty<AnnotatedTestRun>();
+    // (samples live on each AnnotatedTestRun)
+    private int? _selectedRunNumber;
+    private readonly List<ScottPlot.Plottables.Scatter> _runHighlightPlots = new();
+
     private bool _hasData;
 
     /// <summary>
@@ -100,6 +106,11 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     private bool _leftDownWasTrackPick;
 
+    private enum GatePlaceMode { None, Add }
+    private GatePlaceMode _gatePlaceMode;
+    private readonly List<ScottPlot.Plottables.Scatter> _gatePlots = new();
+    private bool _suppressGateComboChanged;
+
     // 网格重绘缓存：间距和尺寸都没变就不用重画。
     private double _drawnSpacing;
     private double _drawnWidth;
@@ -112,7 +123,23 @@ public partial class TrackMapPanel : UserControl
 
         BuildPlot();
 
+        GateStore.Instance.Changed += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    RefreshGateCombo();
+                    RedrawGates();
+                });
+                return;
+            }
+            RefreshGateCombo();
+            RedrawGates();
+        };
+
         PlotHost.Children.Add(_wpfPlot);
+        Loaded += (_, _) => RefreshGateCombo();
 
         GridOverlay.SizeChanged += (_, _) => UpdateGridOverlay();
     }
@@ -183,15 +210,43 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     private void ApplyDarkStyle()
     {
-        // Alpha=0：网格 Canvas 在 Plot 下方可见，轨迹画在网格之上
+        // Transparent plot so GridOverlay shows through; legend must stay dark (not default white).
         var transparent = ScottPlot.Colors.Transparent;
         _wpfPlot.Plot.SetStyle(
             new ScottPlot.PlotStyle
             {
                 FigureBackgroundColor = transparent,
                 DataBackgroundColor = transparent,
+                LegendBackgroundColor = ScottPlot.Color.FromHex("#12171E").WithAlpha(0.92),
+                LegendFontColor = ScottPlot.Color.FromHex("#C3CBD8"),
+                LegendOutlineColor = ScottPlot.Color.FromHex("#1E2530"),
                 Palette = new ScottPlot.Palettes.Dark()
             });
+
+        ApplyDarkLegendPlacement();
+    }
+
+    /// <summary>
+    /// Top-right legend so it does not cover Lat/Lon/Alt readout (bottom-right).
+    /// </summary>
+    private void ApplyDarkLegendPlacement()
+    {
+        var legend = _wpfPlot.Plot.Legend;
+        legend.Alignment = ScottPlot.Alignment.UpperRight;
+        legend.FontColor = ScottPlot.Color.FromHex("#C3CBD8");
+        legend.FontSize = 11;
+        // Nudge away from edges; keep clear of bottom coordinate stack.
+        legend.Margin = new ScottPlot.PixelPadding(10, 10, 10, 10);
+    }
+
+    private void UpdateLegendVisibility(bool show)
+    {
+        if (show)
+            _wpfPlot.Plot.ShowLegend(ScottPlot.Alignment.UpperRight);
+        else
+            _wpfPlot.Plot.Legend.IsVisible = false;
+
+        ApplyDarkLegendPlacement();
     }
 
     // ============================================================
@@ -259,6 +314,7 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public void Clear()
     {
+        ClearRunHighlights();
         _tracks.Clear();
         _samples.Clear();
         _sampleTrackIndex.Clear();
@@ -357,6 +413,34 @@ public partial class TrackMapPanel : UserControl
     // ============================================================
     // 重建轨迹
     // ============================================================
+
+    
+
+    /// <summary>
+    /// 标注试验结果轨迹段（样本下标相对 <paramref name="samples"/>）。
+    /// selectedRunNumber 非空时该 run 加粗高亮，其余变淡。
+    /// </summary>
+    /// <summary>
+    /// Annotate test-run path segments. selectedRunNumber emphasizes that run.
+    /// </summary>
+    public void SetRunHighlights(
+        IReadOnlyList<AnnotatedTestRun> runs,
+        int? selectedRunNumber = null)
+    {
+        _runHighlights = runs ?? Array.Empty<AnnotatedTestRun>();
+        _selectedRunNumber = selectedRunNumber;
+        RedrawRunHighlights();
+        RedrawGates();
+    }
+
+    public void ClearRunHighlights()
+    {
+        _runHighlights = Array.Empty<AnnotatedTestRun>();
+        _selectedRunNumber = null;
+        ClearRunHighlightPlots();
+        if (_hasData)
+            _wpfPlot.Refresh();
+    }
 
     private void Rebuild(IReadOnlyList<TrackLayer> tracks)
     {
@@ -469,18 +553,19 @@ public partial class TrackMapPanel : UserControl
                 : layer.ColorHex;
 
             // 用 double[] 拷贝：ScottPlot 对 List 只持引用，避免后续被误改
+            // Base track: thin + muted so run overlays read clearly (VBTS-style).
             var scatter = _wpfPlot.Plot.Add.ScatterLine(
                 xs.ToArray(),
                 ys.ToArray(),
-                ScottPlot.Color.FromHex(colorHex));
+                ScottPlot.Color.FromHex(colorHex).WithAlpha(0.85));
 
-            scatter.LineWidth = 2.0f;
+            scatter.LineWidth = 2.4f;
             scatter.MarkerStyle.IsVisible = false;
             scatter.LegendText = layer.Name;
             _track ??= scatter;
         }
 
-        _wpfPlot.Plot.Legend.IsVisible = filteredLayers.Count > 1;
+        UpdateLegendVisibility(filteredLayers.Count > 1 || _runHighlights.Count > 0);
 
         _hasData = true;
         EmptyHint.Visibility = Visibility.Collapsed;
@@ -498,7 +583,11 @@ public partial class TrackMapPanel : UserControl
             _wpfPlot.Plot.Axes.SetLimits(savedLimits);
             _wpfPlot.Refresh();
         }
+
+        RedrawRunHighlights();
+        RedrawGates();
     }
+
 
     /// <summary>
     /// 标记用户已手动改过视野，后续实时刷新不再 AutoFit。
@@ -920,6 +1009,12 @@ public partial class TrackMapPanel : UserControl
     {
         _leftDownWasTrackPick = false;
 
+        if (TryPlaceGateAtMouse(e))
+            return;
+
+        if (TrySelectGateAtMouse(e))
+            return;
+
         if (!_hasData || _projection is null || _samples.Count == 0)
             return;
 
@@ -970,6 +1065,579 @@ public partial class TrackMapPanel : UserControl
     /// 线性扫描。样本量极大时按步长跳着扫，
     /// 精度略降但悬停本来就是粗定位。
     /// </summary>
+
+    private static readonly string[] RunHighlightPalette =
+    {
+        "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
+        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
+    };
+
+    private void ClearRunHighlightPlots()
+    {
+        foreach (var p in _runHighlightPlots)
+            _wpfPlot.Plot.Remove(p);
+        _runHighlightPlots.Clear();
+    }
+
+    private void RedrawRunHighlights()
+    {
+        ClearRunHighlightPlots();
+
+        if (!_hasData || _projection is null || _runHighlights.Count == 0)
+        {
+            if (_hasData)
+                _wpfPlot.Refresh();
+            return;
+        }
+
+        var projection = _projection;
+        foreach (var annotated in _runHighlights)
+        {
+            var run = annotated.Result;
+            var samples = annotated.Samples;
+            if (samples.Count == 0)
+                continue;
+
+            var start = Math.Clamp(run.StartSampleIndex, 0, samples.Count - 1);
+            var end = Math.Clamp(run.EndSampleIndex, 0, samples.Count - 1);
+            if (end < start)
+                (start, end) = (end, start);
+
+            var xs = new List<double>();
+            var ys = new List<double>();
+            for (var i = start; i <= end; i++)
+            {
+                var s = samples[i];
+                if (!TrackProjection.IsValidGps(s))
+                    continue;
+                var (x, y) = projection.ToMeters(s.Latitude, s.Longitude);
+                xs.Add(x);
+                ys.Add(y);
+            }
+
+            if (xs.Count < 2)
+                continue;
+
+            // Colors must match chart HorizontalSpan (AnnotatedTestRun.ColorHex / shared palette).
+            var colorHex = string.IsNullOrWhiteSpace(annotated.ColorHex)
+                ? RunHighlightPalette[(run.RunNumber - 1) % RunHighlightPalette.Length]
+                : annotated.ColorHex;
+            var selected = _selectedRunNumber is int sel && sel == run.RunNumber;
+            var dimOthers = _selectedRunNumber is not null && !selected;
+            var xa = xs.ToArray();
+            var ya = ys.ToArray();
+
+            // Dark underlay for contrast against muted base path (VBTS: thick solid run overlay).
+            var under = _wpfPlot.Plot.Add.ScatterLine(
+                xa, ya, ScottPlot.Color.FromHex("#0A0E14").WithAlpha(dimOthers ? 0.45 : 0.85));
+            under.LineWidth = selected ? 14.0f : (dimOthers ? 8.0f : 11.0f);
+            under.MarkerStyle.IsVisible = false;
+            under.LegendText = string.Empty;
+            _runHighlightPlots.Add(under);
+
+            var scatter = _wpfPlot.Plot.Add.ScatterLine(
+                xa, ya,
+                ScottPlot.Color.FromHex(colorHex).WithAlpha(dimOthers ? 0.70 : 1.0));
+            // ~4–5× muted base (1.0): selected brightest/thickest.
+            scatter.LineWidth = selected ? 10.0f : (dimOthers ? 6.0f : 8.0f);
+            scatter.MarkerStyle.IsVisible = false;
+            var src = string.IsNullOrWhiteSpace(annotated.SourceLabel) ? "" : annotated.SourceLabel + " · ";
+            scatter.LegendText = $"{src}Run {run.RunNumber}";
+            _runHighlightPlots.Add(scatter);
+        }
+
+        UpdateLegendVisibility(_tracks.Count > 1 || _runHighlights.Count > 0);
+        _wpfPlot.Refresh();
+    }
+
+
+
+    
+    private void AddGateButton_Click(object sender, RoutedEventArgs e)
+    {
+        _gatePlaceMode = GatePlaceMode.Add;
+        if (EmptyHint is not null)
+            EmptyHint.Visibility = Visibility.Collapsed;
+        StatusGate("Click the track to place a new gate");
+    }
+
+    private void DeleteGateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (GateStore.Instance.SelectedId is not Guid id)
+        {
+            StatusGate("Select a gate first");
+            return;
+        }
+        GateStore.Instance.Remove(id);
+        StatusGate("Gate deleted");
+    }
+
+    private void DeleteAllGatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        GateStore.Instance.Clear();
+        _gatePlaceMode = GatePlaceMode.None;
+        StatusGate("All gates deleted");
+    }
+
+    private void RenameGateButton_Click(object sender, RoutedEventArgs e)
+    {
+        var gate = GateStore.Instance.Selected;
+        if (gate is null)
+        {
+            StatusGate("Select a gate first");
+            return;
+        }
+
+        var name = PromptText("Rename Gate", "Name:", gate.Name);
+        if (name is null)
+            return;
+        if (!GateStore.Instance.Rename(gate.Id, name))
+            StatusGate("Rename failed");
+        else
+            StatusGate($"Renamed to {name}");
+    }
+
+    private void GateWidthBox_LostFocus(object sender, RoutedEventArgs e) => ApplyGateWidthFromBox();
+
+    private void GateWidthBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplyGateWidthFromBox();
+            e.Handled = true;
+        }
+    }
+
+    private void ApplyGateWidthFromBox()
+    {
+        if (GateStore.Instance.SelectedId is not Guid id)
+            return;
+        if (!double.TryParse(GateWidthBox.Text.Trim(),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var w) &&
+            !double.TryParse(GateWidthBox.Text.Trim(), out w))
+        {
+            StatusGate("Width must be a number (meters)");
+            return;
+        }
+        if (!GateStore.Instance.SetWidth(id, w))
+            StatusGate("Width must be >= 0.5 m");
+        else
+            StatusGate($"Width = {w:0.##} m");
+    }
+
+    private void GateCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressGateComboChanged)
+            return;
+        if (GateCombo.SelectedItem is GateComboItem item)
+            GateStore.Instance.Select(item.Id);
+        SyncGateWidthBox();
+    }
+
+    private void ImportGatesButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "Import Gates",
+            Filter = "VBOX Test Suite (*.vbts)|*.vbts|All files (*.*)|*.*",
+            DefaultExt = ".vbts",
+            CheckFileExists = true
+        };
+        if (dlg.ShowDialog(Window.GetWindow(this)) != true)
+            return;
+
+        try
+        {
+            var imported = VbtsGateImporter.ImportFile(dlg.FileName);
+            if (imported.Count == 0)
+            {
+                MessageBox.Show(Window.GetWindow(this),
+                    "No gates found in this file.",
+                    "Import Gates", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            if (GateStore.Instance.Gates.Count > 0)
+            {
+                var ask = MessageBox.Show(Window.GetWindow(this),
+                    $"Import {imported.Count} gate(s) and replace the current {GateStore.Instance.Gates.Count} gate(s)?",
+                    "Import Gates",
+                    MessageBoxButton.OKCancel,
+                    MessageBoxImage.Question);
+                if (ask != MessageBoxResult.OK)
+                    return;
+                GateStore.Instance.Clear();
+            }
+
+            foreach (var g in imported)
+                GateStore.Instance.Add(g);
+
+            SessionMemoryStore.LastImportedVbtsPath = dlg.FileName;
+
+            StatusGate($"Imported {imported.Count} gate(s) from {System.IO.Path.GetFileName(dlg.FileName)}");
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(Window.GetWindow(this),
+                "Failed to import gates:\n" + ex.Message,
+                "Import Gates", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+    private void ExportGatesButton_Click(object sender, RoutedEventArgs e) =>
+        MessageBox.Show(Window.GetWindow(this),
+            "Gate Export (.spl) is not implemented yet.",
+            "Export Gates", MessageBoxButton.OK, MessageBoxImage.Information);
+
+    private void StatusGate(string msg)
+    {
+        if (HoverTipText is not null)
+            HoverTipText.Text = msg;
+        if (HoverTip is not null)
+            HoverTip.Visibility = Visibility.Visible;
+    }
+
+    private void RefreshGateCombo()
+    {
+        if (GateCombo is null)
+            return;
+        _suppressGateComboChanged = true;
+        try
+        {
+            var selected = GateStore.Instance.SelectedId;
+            GateCombo.Items.Clear();
+            foreach (var g in GateStore.Instance.Gates)
+            {
+                var item = new GateComboItem(g.Id, g.Name);
+                GateCombo.Items.Add(item);
+                if (selected == g.Id)
+                    GateCombo.SelectedItem = item;
+            }
+            if (GateCombo.SelectedItem is null && GateCombo.Items.Count > 0)
+                GateCombo.SelectedIndex = 0;
+        }
+        finally
+        {
+            _suppressGateComboChanged = false;
+        }
+        SyncGateWidthBox();
+    }
+
+    private void SyncGateWidthBox()
+    {
+        if (GateWidthBox is null)
+            return;
+        var g = GateStore.Instance.Selected;
+        GateWidthBox.Text = g is null
+            ? "20"
+            : g.WidthMeters.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private sealed class GateComboItem
+    {
+        public Guid Id { get; }
+        public string Name { get; }
+        public GateComboItem(Guid id, string name) { Id = id; Name = name; }
+        public override string ToString() => Name;
+    }
+
+    private static string? PromptText(string title, string label, string initial)
+    {
+        var win = new Window
+        {
+            Title = title,
+            Width = 360,
+            Height = 160,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x17, 0x1E))
+        };
+        var root = new StackPanel { Margin = new Thickness(16) };
+        root.Children.Add(new TextBlock
+        {
+            Text = label,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        var box = new TextBox
+        {
+            Text = initial,
+            Height = 28,
+            Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0)),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
+            CaretBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(6, 0, 6, 0)
+        };
+        root.Children.Add(box);
+        var row = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0)
+        };
+        var ok = new Button { Content = "OK", Width = 72, Height = 28, Margin = new Thickness(0, 0, 8, 0), IsDefault = true };
+        var cancel = new Button { Content = "Cancel", Width = 72, Height = 28, IsCancel = true };
+        string? result = null;
+        ok.Click += (_, _) => { result = box.Text; win.DialogResult = true; };
+        row.Children.Add(ok);
+        row.Children.Add(cancel);
+        root.Children.Add(row);
+        win.Content = root;
+        win.Owner = Window.GetWindow(Application.Current.MainWindow);
+        return win.ShowDialog() == true ? result : null;
+    }
+
+    private bool TryPlaceGateAtMouse(MouseButtonEventArgs e)
+    {
+        if (_gatePlaceMode != GatePlaceMode.Add)
+            return false;
+        if (_projection is null || !_hasData || _samples.Count == 0)
+        {
+            StatusGate("Need a track with valid GPS first");
+            return true;
+        }
+
+        var pixel = _wpfPlot.GetPlotPixelPosition(e);
+        var coordinates = _wpfPlot.Plot.GetCoordinates(
+            pixel.X, pixel.Y, _wpfPlot.Plot.Axes.Bottom, _wpfPlot.Plot.Axes.Left);
+
+        var width = GridOverlay.ActualWidth;
+        var limits = _wpfPlot.Plot.Axes.GetLimits();
+        var metersPerPixelX = width > 1 ? (limits.Right - limits.Left) / width : 1;
+        var index = FindNearestSample(coordinates.X, coordinates.Y, metersPerPixelX * HoverPickPixels * 2);
+        double lat, lon;
+        double? heading = null;
+        if (index >= 0)
+        {
+            var sample = _samples[index];
+            lat = sample.Latitude;
+            lon = sample.Longitude;
+            heading = EstimateHeadingDegAt(index);
+        }
+        else
+        {
+            (lat, lon) = _projection.ToLatLon(coordinates.X, coordinates.Y);
+        }
+
+        var widthM = 20.0;
+        if (double.TryParse(GateWidthBox?.Text?.Trim(),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedW) || double.TryParse(GateWidthBox?.Text?.Trim(), out parsedW))
+            widthM = Math.Max(0.5, parsedW);
+
+        var gate = new GateDefinition
+        {
+            Name = "",
+            Latitude = lat,
+            Longitude = lon,
+            WidthMeters = widthM,
+            HeadingDeg = heading
+        };
+        GateStore.Instance.Add(gate);
+        _gatePlaceMode = GatePlaceMode.None;
+        StatusGate($"{gate.Name} @ {lat:F6},{lon:F6}  W={widthM:0.##}m");
+        e.Handled = true;
+        return true;
+    }
+
+    private bool TrySelectGateAtMouse(MouseButtonEventArgs e)
+    {
+        if (_projection is null || GateStore.Instance.Gates.Count == 0)
+            return false;
+
+        var pixel = _wpfPlot.GetPlotPixelPosition(e);
+        var coordinates = _wpfPlot.Plot.GetCoordinates(
+            pixel.X, pixel.Y, _wpfPlot.Plot.Axes.Bottom, _wpfPlot.Plot.Axes.Left);
+        var width = GridOverlay.ActualWidth;
+        if (width < 1)
+            return false;
+        var limits = _wpfPlot.Plot.Axes.GetLimits();
+        var metersPerPixelX = (limits.Right - limits.Left) / width;
+        var threshold = metersPerPixelX * 10;
+
+        Guid? bestId = null;
+        var bestDist = threshold * threshold;
+        foreach (var g in GateStore.Instance.Gates)
+        {
+            if (!g.IsValid) continue;
+            var (lat0, lon0, lat1, lon1) = GateCrossing.GetGateEndpointsLatLon(EnsureHeading(g));
+            var (x0, y0) = _projection.ToMeters(lat0, lon0);
+            var (x1, y1) = _projection.ToMeters(lat1, lon1);
+            var d2 = DistancePointToSegmentSq(coordinates.X, coordinates.Y, x0, y0, x1, y1);
+            if (d2 < bestDist)
+            {
+                bestDist = d2;
+                bestId = g.Id;
+            }
+        }
+
+        if (bestId is null)
+            return false;
+
+        GateStore.Instance.Select(bestId);
+        StatusGate($"Selected {GateStore.Instance.Selected?.Name}");
+        e.Handled = true;
+        return true;
+    }
+
+    private GateDefinition EnsureHeading(GateDefinition g)
+    {
+        if (g.HeadingDeg is not null)
+            return g;
+        // Fallback east-west gate (heading north) for drawing when unknown.
+        return new GateDefinition
+        {
+            Id = g.Id,
+            Name = g.Name,
+            Latitude = g.Latitude,
+            Longitude = g.Longitude,
+            WidthMeters = g.WidthMeters,
+            HeadingDeg = 0
+        };
+    }
+
+    private double? EstimateHeadingDegAt(int index)
+    {
+        if (_projection is null || _samples.Count < 2)
+            return null;
+        var i0 = Math.Max(0, index - 3);
+        var i1 = Math.Min(_samples.Count - 1, index + 3);
+        if (i1 <= i0) return null;
+        var a = _samples[i0];
+        var b = _samples[i1];
+        if (!TrackProjection.IsValidGps(a) || !TrackProjection.IsValidGps(b))
+            return null;
+        var (x0, y0) = _projection.ToMeters(a.Latitude, a.Longitude);
+        var (x1, y1) = _projection.ToMeters(b.Latitude, b.Longitude);
+        var dx = x1 - x0;
+        var dy = y1 - y0;
+        if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6)
+            return null;
+        // Atan2(east, north) -> heading deg
+        return Math.Atan2(dx, dy) * 180.0 / Math.PI;
+    }
+
+    private static double DistancePointToSegmentSq(
+        double px, double py, double x0, double y0, double x1, double y1)
+    {
+        var vx = x1 - x0;
+        var vy = y1 - y0;
+        var len2 = vx * vx + vy * vy;
+        if (len2 < 1e-12)
+        {
+            var dx = px - x0;
+            var dy = py - y0;
+            return dx * dx + dy * dy;
+        }
+        var t = ((px - x0) * vx + (py - y0) * vy) / len2;
+        t = Math.Clamp(t, 0, 1);
+        var qx = x0 + t * vx;
+        var qy = y0 + t * vy;
+        var ex = px - qx;
+        var ey = py - qy;
+        return ex * ex + ey * ey;
+    }
+
+
+    private void RefreshGateColorLegend()
+    {
+        if (GateLegendPanel is null || GateLegendItems is null)
+            return;
+
+        GateLegendItems.Items.Clear();
+        var gates = GateStore.Instance.Gates;
+        if (gates.Count == 0)
+        {
+            GateLegendPanel.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        GateLegendPanel.Visibility = Visibility.Visible;
+        foreach (var g in gates)
+        {
+            var row = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 1, 0, 1)
+            };
+            var swatch = new System.Windows.Shapes.Rectangle
+            {
+                Width = 14,
+                Height = 4,
+                RadiusX = 1,
+                RadiusY = 1,
+                Fill = (Brush)new BrushConverter().ConvertFromString(
+                    string.IsNullOrWhiteSpace(g.ColorHex) ? "#3FBF6F" : g.ColorHex)!,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0)
+            };
+            var label = new TextBlock
+            {
+                Text = g.Name,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC3, 0xCB, 0xD8)),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 150
+            };
+            if (GateStore.Instance.SelectedId == g.Id)
+                label.FontWeight = FontWeights.SemiBold;
+            row.Children.Add(swatch);
+            row.Children.Add(label);
+            GateLegendItems.Items.Add(row);
+        }
+    }
+
+    private void RedrawGates()
+    {
+        foreach (var p in _gatePlots)
+            _wpfPlot.Plot.Remove(p);
+        _gatePlots.Clear();
+
+        if (_projection is null)
+        {
+            _wpfPlot.Refresh();
+            return;
+        }
+
+        var selectedId = GateStore.Instance.SelectedId;
+
+        foreach (var g in GateStore.Instance.Gates)
+        {
+            if (!g.IsValid) continue;
+            var draw = EnsureHeading(g);
+            var (lat0, lon0, lat1, lon1) = GateCrossing.GetGateEndpointsLatLon(draw);
+            var (x0, y0) = _projection.ToMeters(lat0, lon0);
+            var (x1, y1) = _projection.ToMeters(lat1, lon1);
+            var xs = new[] { x0, x1 };
+            var ys = new[] { y0, y1 };
+
+            var isSelected = selectedId == g.Id;
+            var color = string.IsNullOrWhiteSpace(g.ColorHex) ? "#3FBF6F" : g.ColorHex;
+
+            // Dark underlay for visibility on track
+            var under = _wpfPlot.Plot.Add.ScatterLine(xs, ys, ScottPlot.Color.FromHex("#0A0E14").WithAlpha(0.9));
+            under.LineWidth = isSelected ? 10f : 7f;
+            under.MarkerStyle.IsVisible = false;
+            under.LegendText = string.Empty; // keep gates out of UpperRight track legend
+            _gatePlots.Add(under);
+
+            var scatter = _wpfPlot.Plot.Add.ScatterLine(xs, ys, ScottPlot.Color.FromHex(color));
+            scatter.LineWidth = isSelected ? 5.5f : 4.0f;
+            scatter.MarkerStyle.IsVisible = false;
+            scatter.LegendText = string.Empty;
+            _gatePlots.Add(scatter);
+        }
+
+        // UpperRight = tracks/files/runs only; UpperLeft = WPF gate color legend.
+        UpdateLegendVisibility(_tracks.Count > 1 || _runHighlights.Count > 0);
+        RefreshGateColorLegend();
+        _wpfPlot.Refresh();
+    }
     private int FindNearestSample(
         double x,
         double y,

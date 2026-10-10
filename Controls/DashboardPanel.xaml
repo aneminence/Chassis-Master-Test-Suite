@@ -4,48 +4,27 @@
              Background="#12171E">
 
     <UserControl.Resources>
-
-        <!-- 卡片边框样式 -->
-        <Style x:Key="CardBorder" TargetType="Border">
-            <Setter Property="Background" Value="#0E131A"/>
-            <Setter Property="BorderBrush" Value="#1E2530"/>
-            <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="4"/>
-            <Setter Property="Padding" Value="10"/>
+        <Style x:Key="DashToolButton" TargetType="Button" BasedOn="{StaticResource HeaderButtonStyle}">
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+            <Setter Property="FontSize" Value="12"/>
         </Style>
-
-        <!-- 卡片标题 -->
-        <Style x:Key="CardTitle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#8A94A6"/>
-            <Setter Property="FontSize" Value="11"/>
-            <Setter Property="TextWrapping" Value="NoWrap"/>
-        </Style>
-
-        <!-- 卡片单位 -->
-        <Style x:Key="CardUnit" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#5A6474"/>
-            <Setter Property="FontSize" Value="10"/>
-        </Style>
-
     </UserControl.Resources>
 
     <Border BorderBrush="#1E2530"
             BorderThickness="1"
             CornerRadius="6"
-            Padding="14">
+            Padding="10">
 
         <Grid>
-
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- 标题栏 -->
-            <Grid Grid.Row="0"
-                  Margin="0,0,0,10">
-
+            <!-- Header -->
+            <Grid Grid.Row="0" Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -54,36 +33,35 @@
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
-
-                    <TextBlock Text="⊞"
-                               Foreground="#8A94A6"
-                               FontSize="14"
-                               Margin="0,0,8,0"
-                               VerticalAlignment="Center"/>
-
                     <TextBlock Text="Dashboard"
                                Foreground="#E6EAF0"
                                FontSize="14"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
-
                     <TextBlock x:Name="CursorModeText"
                                Text=""
                                Foreground="#C8A34A"
                                FontSize="12"
                                Margin="10,0,0,0"
                                VerticalAlignment="Center"/>
-
                 </StackPanel>
 
-                <Button Grid.Column="1"
-                        Content="Customize"
-                        Style="{StaticResource HeaderButtonStyle}"
-                        IsEnabled="False"/>
-
+                <StackPanel Grid.Column="1" Orientation="Horizontal">
+                    <Button x:Name="AddGaugeButton"
+                            Content="Add Gauge"
+                            Style="{StaticResource DashToolButton}"
+                            Click="AddGaugeButton_Click"
+                            ToolTip="Add a Default numeric gauge"/>
+                    <Button x:Name="ResetLayoutButton"
+                            Content="Reset"
+                            Style="{StaticResource DashToolButton}"
+                            Margin="0"
+                            Click="ResetLayoutButton_Click"
+                            ToolTip="Reset gauges to default layout"/>
+                </StackPanel>
             </Grid>
 
-            <!-- 多车摘要（线下多文件 / 线上单车） -->
+            <!-- Multi-vehicle summary chips -->
             <ItemsControl x:Name="MultiVehicleHost"
                           Grid.Row="1"
                           Margin="0,0,0,8"
@@ -95,379 +73,18 @@
                 </ItemsControl.ItemsPanel>
             </ItemsControl>
 
-            <!-- 卡片区 -->
-            <ScrollViewer Grid.Row="2"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-
-                <Grid>
-
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <!-- ============ Speed（跨两列，大卡片） ============ -->
-                    <Border Grid.Row="0"
-                            Grid.Column="0"
-                            Grid.ColumnSpan="2"
-                            Style="{StaticResource CardBorder}"
-                            Margin="0,0,0,8"
-                            MinHeight="110">
-
-                        <Grid>
-
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-
-                            <!-- 标题行 -->
-                            <StackPanel Grid.Row="0"
-                                        Orientation="Horizontal">
-
-                                <TextBlock Text="↗"
-                                           Foreground="#8A94A6"
-                                           FontSize="12"
-                                           Margin="0,0,6,0"/>
-
-                                <TextBlock Text="Speed"
-                                           Style="{StaticResource CardTitle}"/>
-
-                            </StackPanel>
-
-                            <!-- 数值行 -->
-                            <Grid Grid.Row="1"
-                                  Margin="0,6,0,0">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock x:Name="SpeedValueText"
-                                           Grid.Column="0"
-                                           Text="0.00"
-                                           Foreground="#C8A34A"
-                                           FontSize="38"
-                                           FontWeight="SemiBold"
-                                           FontFamily="Consolas"
-                                           VerticalAlignment="Center"/>
-
-                                <StackPanel Grid.Column="1"
-                                            VerticalAlignment="Bottom"
-                                            Margin="0,0,0,6">
-
-                                    <TextBlock x:Name="SpeedUnitText"
-                                               Text="km/h"
-                                               Style="{StaticResource CardUnit}"/>
-
-                                </StackPanel>
-
-                            </Grid>
-
-                            <!-- 占位趋势图 -->
-                            <Border Grid.Row="2"
-                                    Height="18"
-                                    Margin="0,4,0,0"
-                                    ClipToBounds="True">
-
-                                <Polyline Points="0,16 20,13 40,14 60,10 80,12 100,7 120,9 140,5 160,6 180,3 200,4"
-                                          Stroke="#6E5A2A"
-                                          StrokeThickness="1"
-                                          Stretch="Fill"/>
-
-                            </Border>
-
-                        </Grid>
-
-                    </Border>
-
-                    <!-- ============ Yaw Rate ============ -->
-                    <Border Grid.Row="1"
-                            Grid.Column="0"
-                            Style="{StaticResource CardBorder}"
-                            Margin="0,0,4,8"
-                            MinHeight="86">
-
-                        <Grid>
-
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-
-                            <StackPanel Grid.Row="0"
-                                        Orientation="Horizontal">
-
-                                <TextBlock Text="⟳"
-                                           Foreground="#8A94A6"
-                                           FontSize="11"
-                                           Margin="0,0,6,0"/>
-
-                                <TextBlock Text="Yaw Rate"
-                                           Style="{StaticResource CardTitle}"/>
-
-                            </StackPanel>
-
-                            <Grid Grid.Row="1"
-                                  Margin="0,4,0,0">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock x:Name="YawRateValueText"
-                                           Grid.Column="0"
-                                           Text="0.00"
-                                           Foreground="#E6EAF0"
-                                           FontSize="22"
-                                           FontWeight="SemiBold"
-                                           FontFamily="Consolas"/>
-
-                                <TextBlock Grid.Column="1"
-                                           Text="deg/s"
-                                           Style="{StaticResource CardUnit}"
-                                           VerticalAlignment="Bottom"
-                                           Margin="0,0,0,3"/>
-
-                            </Grid>
-
-                            <Border Grid.Row="2"
-                                    Height="14"
-                                    Margin="0,4,0,0"
-                                    ClipToBounds="True">
-
-                                <Polyline Points="0,12 20,9 40,11 60,7 80,9 100,5 120,7 140,3 160,4"
-                                          Stroke="#6E5A2A"
-                                          StrokeThickness="1"
-                                          Stretch="Fill"/>
-
-                            </Border>
-
-                        </Grid>
-
-                    </Border>
-
-                    <!-- ============ Lateral Accel ============ -->
-                    <Border Grid.Row="1"
-                            Grid.Column="1"
-                            Style="{StaticResource CardBorder}"
-                            Margin="4,0,0,8"
-                            MinHeight="86">
-
-                        <Grid>
-
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-
-                            <StackPanel Grid.Row="0"
-                                        Orientation="Horizontal">
-
-                                <TextBlock Text="⇄"
-                                           Foreground="#8A94A6"
-                                           FontSize="11"
-                                           Margin="0,0,6,0"/>
-
-                                <TextBlock Text="Lateral Accel."
-                                           Style="{StaticResource CardTitle}"/>
-
-                            </StackPanel>
-
-                            <Grid Grid.Row="1"
-                                  Margin="0,4,0,0">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock x:Name="LateralAccelerationValueText"
-                                           Grid.Column="0"
-                                           Text="0.00"
-                                           Foreground="#E6EAF0"
-                                           FontSize="22"
-                                           FontWeight="SemiBold"
-                                           FontFamily="Consolas"/>
-
-                                <TextBlock Grid.Column="1"
-                                           Text="m/s²"
-                                           Style="{StaticResource CardUnit}"
-                                           VerticalAlignment="Bottom"
-                                           Margin="0,0,0,3"/>
-
-                            </Grid>
-
-                            <Border Grid.Row="2"
-                                    Height="14"
-                                    Margin="0,4,0,0"
-                                    ClipToBounds="True">
-
-                                <Polyline Points="0,7 20,10 40,6 60,9 80,4 100,8 120,3 140,6 160,2"
-                                          Stroke="#6E5A2A"
-                                          StrokeThickness="1"
-                                          Stretch="Fill"/>
-
-                            </Border>
-
-                        </Grid>
-
-                    </Border>
-
-                    <!-- ============ Longitudinal Accel ============ -->
-                    <Border Grid.Row="2"
-                            Grid.Column="0"
-                            Style="{StaticResource CardBorder}"
-                            Margin="0,0,4,0"
-                            MinHeight="86">
-
-                        <Grid>
-
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-
-                            <StackPanel Grid.Row="0"
-                                        Orientation="Horizontal">
-
-                                <TextBlock Text="⇅"
-                                           Foreground="#8A94A6"
-                                           FontSize="11"
-                                           Margin="0,0,6,0"/>
-
-                                <TextBlock Text="Longitudinal Acc."
-                                           Style="{StaticResource CardTitle}"/>
-
-                            </StackPanel>
-
-                            <Grid Grid.Row="1"
-                                  Margin="0,4,0,0">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock x:Name="LongitudinalAccelerationValueText"
-                                           Grid.Column="0"
-                                           Text="0.00"
-                                           Foreground="#E6EAF0"
-                                           FontSize="22"
-                                           FontWeight="SemiBold"
-                                           FontFamily="Consolas"/>
-
-                                <TextBlock Grid.Column="1"
-                                           Text="m/s²"
-                                           Style="{StaticResource CardUnit}"
-                                           VerticalAlignment="Bottom"
-                                           Margin="0,0,0,3"/>
-
-                            </Grid>
-
-                            <Border Grid.Row="2"
-                                    Height="14"
-                                    Margin="0,4,0,0"
-                                    ClipToBounds="True">
-
-                                <Polyline Points="0,4 20,7 40,5 60,9 80,6 100,10 120,7 140,11 160,8"
-                                          Stroke="#6E5A2A"
-                                          StrokeThickness="1"
-                                          Stretch="Fill"/>
-
-                            </Border>
-
-                        </Grid>
-
-                    </Border>
-
-                    <!-- ============ Steering Angle ============ -->
-                    <Border Grid.Row="2"
-                            Grid.Column="1"
-                            Style="{StaticResource CardBorder}"
-                            Margin="4,0,0,0"
-                            MinHeight="86">
-
-                        <Grid>
-
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
-                            </Grid.RowDefinitions>
-
-                            <StackPanel Grid.Row="0"
-                                        Orientation="Horizontal">
-
-                                <TextBlock Text="◐"
-                                           Foreground="#8A94A6"
-                                           FontSize="11"
-                                           Margin="0,0,6,0"/>
-
-                                <TextBlock Text="Steering Angle"
-                                           Style="{StaticResource CardTitle}"/>
-
-                            </StackPanel>
-
-                            <Grid Grid.Row="1"
-                                  Margin="0,4,0,0">
-
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-
-                                <TextBlock x:Name="SteeringAngleValueText"
-                                           Grid.Column="0"
-                                           Text="0.0"
-                                           Foreground="#E6EAF0"
-                                           FontSize="22"
-                                           FontWeight="SemiBold"
-                                           FontFamily="Consolas"/>
-
-                                <TextBlock Grid.Column="1"
-                                           Text="deg"
-                                           Style="{StaticResource CardUnit}"
-                                           VerticalAlignment="Bottom"
-                                           Margin="0,0,0,3"/>
-
-                            </Grid>
-
-                            <Border Grid.Row="2"
-                                    Height="14"
-                                    Margin="0,4,0,0"
-                                    ClipToBounds="True">
-
-                                <Polyline Points="0,8 20,6 40,9 60,5 80,8 100,4 120,7 140,3 160,6"
-                                          Stroke="#6E5A2A"
-                                          StrokeThickness="1"
-                                          Stretch="Fill"/>
-
-                            </Border>
-
-                        </Grid>
-
-                    </Border>
-
-                </Grid>
-
-            </ScrollViewer>
-
+            <!-- Free-form gauge canvas -->
+            <Border Grid.Row="2"
+                    Background="#0A0E14"
+                    BorderBrush="#1E2530"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    ClipToBounds="True">
+                <Canvas x:Name="GaugeCanvas"
+                        Background="Transparent"
+                        ClipToBounds="True"
+                        SizeChanged="GaugeCanvas_SizeChanged"/>
+            </Border>
         </Grid>
-
     </Border>
-
 </UserControl>

@@ -6,13 +6,36 @@
 
 ---
 
-## 最近更新（2026-10-09）
+## 最近更新（2026-10-10）
 
-- **可替换数据源**：`IDataSource` 抽象；支持本机 **UDP / Simulator** 与 **GSpot WebSocket**（房间号 + 密码）。
-- **曲线交互**：横轴北京时间；左键光标、中键平移、右键缩放；`X Auto Scale` 勾选才自动缩放；Esc 清除光标。
-- **光标联动**：曲线光标 / Track Map 点击 / Dashboard 冻结读数互相同步。
-- **通道注册表**：按 `ChannelRegistry.Available` 显示下拉；启动为核心通道，打开 VBO 后切为文件列（切回实时源暂不自动复位）。
-- **VBO 记录 / 回放**：Racelogic 兼容文本格式，可用 VBOX Test Suite 打开。
+### 外壳与工作区
+- **顶部栏（VBTS 风格）**：`Layout` 分区示意菜单可单独开关 Dashboard / Test Results / Map / Chart（**无 Video**），并带 Reset；`Load` 打开 VBO；`Online` / `Offline` 切换线上线下；`Clear` 清空已打开文件；Files 芯片**始终展开**不折叠。
+- **已删除**顶部 Dashboard / Data / Analysis / Replay / Settings 导航行（无实际用途）。
+- **会话记忆**：启动自动恢复上次未关闭的 VBO、已导入 `.vbts` 门点、Test Results 条件设置、Maths 通道。
+
+### Dashboard（可定制）
+- 可 **Add Gauge / Reset**；表盘可拖动、缩放、删除；点标题选 **Live 通道** 或 **Test Results**（含 Pass 实测值）。
+- 数值随外框自动放大（无字号上限）、居中；缩小主分区时**布局不重排**，可向右/下溢出并裁切，避免挤叠。
+
+### 多文件曲线 / 对比
+- 打开多个 VBO 时底部曲线 **始终叠加**（芯片色 + 图例）；点文件芯片只 **focus 加粗**，不整图切换。
+- Test Results **Compute 扫全部已打开文件**；结果表有 **Source** 列与行复选框（单击勾选 + 表头全选）。
+- 勾选 ≥2 行进入 **compare overlay**：X = 各 run 起点起的秒，曲线叠画；对比模式下可中键平移、右键/滚轮缩放；图例在曲线区外侧不挡数据。
+- Compute 后曲线彩色区间 + Track Map 加粗高亮轨迹段；点结果行两边联动。
+
+### Test Results（P0 + Gate）
+- **Accel / Decel / Custom / Gate**；条件区可上下拖调高度，一键 Hide/Show。
+- Gate：Start When / End When + 多条 Pass（Channel + Min/Max + At 门）；结果表 **Pass values** 列高亮实测值（绿=范围内 / 红=超限）；CSV 导出含该列。
+- **Session** 按钮编辑 Driver / Vehicle / Track…，新录制写入 VBO `[SessionData]`。
+
+### Track Map / Gate / `.vbts`
+- 底轨加粗；每扇门独立颜色，**左上角 Gates 图例**（与右上角轨迹图例分离）。
+- 工具栏 Add / 下拉切换 / 改宽度 / Rename / Delete；地图可点选门段。
+- **Import** 可从 VBTS 工程 `.vbts` 导入门（分→度、航向校正）；Export `.spl` 仍为占位。
+
+### Maths / Measure
+- **Maths Channels…** 对话框：增删、公式编辑（Channels / fx 插入）、名称与单位；通道可供曲线 / Custom / Dashboard 使用（基础四则；累计/积分未做）。
+- 曲线拖选 X 区间 → 左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除。
 
 ---
 
@@ -47,17 +70,19 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
      VboRecorder        ScottPlot 曲线      Dashboard / Track Map
-     (可选录制)         + 光标 / 选区         + 通道注册表
+     (可选录制)         + 光标 / Measure     + Test Results / Gate
 
-离线：VboReader ──► _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
+离线：VboReader ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
+分析：Analysis（SpeedToSpeed / GateRun / Maths）──► Test Results 表 + 区间标注
 ```
 
 要点（与代码一致）：
 
-- 生产者实现 `IDataSource`，经构造注入的 `DataBus.TryPublish` 写入；UI / Recorder 只读总线与 `_sampleHistory`。  
+- 生产者实现 `IDataSource`，经构造注入的 `DataBus.TryPublish` 写入；UI / Recorder 只读总线与历史缓冲。  
 - `DataBus`：`BoundedChannel` 容量 2000，`DropOldest`，允许多写多读。  
 - `VehicleSample`：typed 核心物理量 + `Channels` 字典；`GetChannel` 优先字典、核心 Id 有 typed 回退。  
-- GSpot：HTTP token → properties（按 `pos`）→ subscribe → WebSocket；多车过滤 / 断线指数退避；Lost/OOO 恒为 0。
+- GSpot：HTTP token → properties（按 `pos`）→ subscribe → WebSocket；多车过滤 / 断线指数退避；Lost/OOO 恒为 0。  
+- `SessionMemoryStore`：本地 JSON 持久化打开文件、门、试验条件、Maths。
 
 ---
 
@@ -65,22 +90,21 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
-│ CMTS   ● Online/Offline   [● Start] [■ Stop]   Elapsed / 时钟         │  顶部栏
-├───────────────────────────────────────────────────────────────────────┤
-│ ⊞ Dashboard │ ▤ Data │ ⌁ Analysis │ ▷ Replay │ ⚙ Settings            │  导航栏
+│ CMTS  Layout│Load│Online│Offline│Clear   [● Start][■ Stop]  Elapsed   │  顶部栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
 │ Dashboard        │ Test Results        │ Track Map                    │
-│ 实时 / 光标冻结  │ （占位）            │ GPS 轨迹；点击同步光标       │
+│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS 轨迹 · Gate · .vbts 导入 │
+│ Live / Test 绑定 │ Gate · Maths · CSV  │ run 高亮 · 左上 Gates 图例   │
 ├──────────────────┴─────────────────────┴──────────────────────────────┤
-│ [X Axis] [X Auto Scale] [+ Add Plot] [Reset View]                     │
-│ [Simulator] [GSpot…] [UDP]                    Rx / Lost / OOO         │
-│ Plot：Channel 下拉（仅显示当前可用通道）+ 曲线交互                    │
+│ [X Axis] [X Auto Scale] [+ Add Plot] [Reset]   Files 芯片（常显）     │
+│ Online 工具：[Simulator] [GSpot…] [UDP] [Stop]      Rx / Lost / OOO   │
+│ Plot：多文件叠加 · 光标/Measure · 对比模式叠图                        │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
-- **顶部栏**：网络状态、录制、已录时长、系统时钟。  
-- **导航**：`Dashboard` / `Replay` 可用；`Data` / `Analysis` / `Settings` 暂禁用。  
-- **数据源按钮**：`GSpot…` / `UDP` 在曲线工具栏（Settings 完善前的快捷入口）。
+- **顶部栏**：Layout 分区开关、Load、Online/Offline、Clear、录制、已录时长、系统时钟。  
+- **无**旧版 Dashboard/Data/Analysis/Replay/Settings 导航行。  
+- **Online 工具**：UDP / GSpot / Simulator 在 Online 模式下显示（Settings 正式页尚未做）。
 
 ---
 
@@ -89,16 +113,26 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 ```text
 Chassis Master Test Suite/
 ├─ Core/
-│   ├─ VehicleSample.cs / DataBus.cs
-│   └─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
+│   ├─ VehicleSample.cs / DataBus.cs / SampleHistoryBuffer.cs
+│   ├─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
+│   ├─ DashboardGaugeModels.cs / SessionMemoryStore.cs
+│   └─ PlotDownsampler.cs / SampleEnricher.cs
 ├─ Communication/
 │   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
 │   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
 │   └─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
 ├─ Recorder/    VboRecorder / VboReader / CsvRecorder（未接线）
 ├─ Simulator/   VehicleSimulator
-├─ Controls/    Dashboard / TestResults / TrackMap / TrackProjection
-├─ MainWindow.* 外壳、录制、曲线、数据源切换、光标联动
+├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / SessionMetadata
+├─ Analysis/
+│   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
+│   ├─ GateStore / GateRunEngine / GatePassCondition / VbtsGateImporter
+│   ├─ MathsChannelStore / MathsExpression / MathsEnricher
+│   └─ SelectionMeasure / SampleSource / AnnotatedTestRun
+├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel
+│               MathsChannelsDialog / GaugeBindingPickerDialog / SessionEditDialog
+├─ ChassisMasterTestSuite.Tests/   xUnit（纯逻辑，无 WPF）
+├─ MainWindow.* 外壳、Layout、录制、多文件曲线、光标联动
 ├─ SimulatorWindow.* 三维仿真
 └─ rebuild.cmd
 ```
@@ -127,7 +161,7 @@ dotnet build
 dotnet run
 ```
 
-或在 Visual Studio 中 **F5**。
+或在 Visual Studio 中 **F5**。建议日常从 `bin\Release\net10.0-windows\` 启动已发布副本，避免 Debug 被占用。
 
 ### 一键重建 `rebuild.cmd`
 
@@ -136,6 +170,12 @@ dotnet run
 - VS XAML 误报大量 `CS0103`  
 - `MSB3021` / `MSB3027` 文件被占用  
 
+```bash
+dotnet test "Chassis Master Test Suite.sln" -c Release
+```
+
+质量备注见 `CHANGELOG-quality.md`。
+
 ---
 
 ## 软件操作指南
@@ -143,11 +183,12 @@ dotnet run
 ### 1. 启动与默认数据源
 
 启动后默认走 **UDP**（`127.0.0.1:50000`），**不会自动录制**。  
+若有会话记忆，会尝试重新打开上次的 VBO / 门 / 试验设置。  
 若端口被占用，会提示错误而不是闪退；请结束残留 CMTS 进程后再开。
 
-### 2. UDP + Simulator（本机仿真）
+### 2. Online：UDP + Simulator（本机仿真）
 
-1. 确认工具栏为 **UDP**（或点一次 **UDP**）。  
+1. 顶部切到 **Online**，确认工具为 **UDP**（或点一次 **UDP**）。  
 2. 点 **Simulator**，用 WASD / Space / R 驾驶：
 
 | 按键 | 功能 |
@@ -157,17 +198,16 @@ dotnet run
 | `Space` | 紧急制动 |
 | `R` | 复位 |
 
-3. 主窗口顶部 **Rx** 应上涨，Dashboard、曲线、Track Map 同步更新。
+3. 主窗口 **Rx** 应上涨，Dashboard、曲线、Track Map 同步更新。
 
-### 3. GSpot 连接（实车 / 设备房间）
+### 3. Online：GSpot 连接（实车 / 设备房间）
 
 1. 点 **GSpot…**。  
 2. 填写 **房间号**、**密码**；**Filter cNum 建议先留空**（填错会滤掉全部车辆）。  
 3. 也可预先设环境变量 `CMTS_GSPOT_ROOM` / `CMTS_GSPOT_PASSWORD` / `CMTS_GSPOT_CNUM`（选车过滤，可选）。  
 4. 只有 WebSocket **真正连上**才会切源并提示成功；密码错误会报错并保持原数据源。  
-5. 连上后：按钮可显示 `GSpot●`，顶部状态为 **Online**（连接中为 Connecting… / 断线重试为 Reconnecting… / 失败为 Faulted）；有车上报时 Rx 上涨。  
-6. 空房间也能连接成功，但可能长期 Rx=0（正常）。  
-7. 切回本机仿真：点 **UDP**。
+5. 连上后顶部为 **Online**；有车上报时 Rx 上涨。空房间可能长期 Rx=0（正常）。  
+6. 切回本机仿真：点 **UDP**；停止当前源：点 **Stop**。
 
 > GSpot 的 Lost/OOO 无 UDP 语义，通常显示为 0。acc/gyro 映射仍待实车标定。
 
@@ -185,47 +225,60 @@ dotnet run
 bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 ```
 
-### 5. Replay：打开 VBO
+### 5. Offline / Load：打开 VBO
 
-1. 导航到 **Replay** → **📂 Open VBO…**  
-2. 选择录制文件或外部 VBO（如 `ons shot 7.vbo`）  
-3. 加载成功后回到 Dashboard；状态栏显示样本数与通道数  
-4. 曲线 / Track Map / Dashboard 使用同一套 `_sampleHistory`  
-5. **注意**：打开 VBO 会清空并替换历史缓冲，但**不会停止**当前 UDP/GSpot 数据源；若实时源仍在推流，新样本可能继续追加进历史  
+1. 点顶部 **Load**（或切到 **Offline** 后在离线页打开）。  
+2. 可打开多个 VBO；Files 芯片常显，曲线默认全部叠加。  
+3. 曲线 / Track Map / Dashboard 共用历史缓冲；点芯片 focus 某一文件。  
+4. **Clear** 清空已打开文件。  
+5. **注意**：打开 VBO 会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
 
 ### 6. 曲线交互
 
 | 操作 | 行为 |
 |---|---|
-| 横轴标签 | **北京时间**（`HH:mm:ss`），轴标题含 Time (Beijing) |
-| **左键** 点击 / 拖动 | 竖向光标；左上角读数；Dashboard 冻结为该点 |
-| **中键** 拖动 | 平移视野（会取消 Auto） |
-| **右键** / 滚轮 | 缩放（会取消 Auto） |
-| **X Auto Scale** 勾选 | 仅勾选时随数据自动缩放；人手操作后自动取消勾选并锁定视野 |
-| **Esc** | 清除光标与选区，Dashboard 恢复实时 |
-| Shift+左键拖拽 | 横向选区高亮（辅助查看） |
+| 横轴标签 | 同会话约 2h 内用**北京时间**；跨度更大时用各文件相对 **Elapsed (s)** |
+| **左键** 点击 / 拖动 | 竖向光标；Dashboard 冻结为该点 |
+| **中键** 拖动 | 平移视野（取消 Auto；对比模式同样可用） |
+| **右键** / 滚轮 | 缩放（取消 Auto） |
+| **拖选 X 区间** | Measure：左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除 |
+| **X Auto Scale** | 勾选时随数据自动缩放；人手操作后取消勾选 |
 | Reset View | 恢复自动缩放视野 |
 
-### 7. Track Map
+### 7. Track Map 与 Gate
 
-- 网格在轨迹下方，随缩放更新比例尺。  
-- **点击轨迹上某点**：车辆标记跳到该点，并同步曲线光标与 Dashboard。  
-- 手动缩放/平移地图后视野锁定，不会被刷新强行弹回（换数据集或显式复位除外）。
+- 点击轨迹同步曲线光标与 Dashboard。  
+- **Add Gate** → 点轨迹放置；下拉切换、改宽度、Rename、Delete；地图点选高亮。  
+- **Import**：选择 `.vbts` 导入门（会确认是否替换现有门）。  
+- Compute 后的 run 段以加粗彩色轨迹显示；右上角为轨迹/文件图例，左上角为 Gates 图例。
 
-### 8. Dashboard 光标冻结
+### 8. Dashboard
 
-- 无光标：显示最新实时值。  
-- 有光标（来自曲线或 Track Map）：标题进入 Cursor 模式，数值为选中样本。  
-- Esc 或清除光标后恢复实时。
+- **Add Gauge**：添加数字表盘；拖动移动，边角缩放；`×` 删除。  
+- 点标题打开绑定选择器：Live 通道或 Test Results / Pass 值。  
+- 无光标显示最新实时值；有光标（曲线或地图）冻结为选中样本。  
+- 缩小 Dashboard 分区时表盘位置/大小不变，可溢出裁切。
 
-### 9. 通道选择（Channel Registry）
+### 9. Test Results
 
-- 下拉**只列出当前 `ChannelRegistry.Available` 中的通道**，没有的不显示。  
-- **启动时 / 实时核心**：`SetLiveCore()` 注册约 9 个核心通道（`velocity`、`Longacc`、`Latacc`、`Z_Accel`、`Yaw_Rate`、`heading`、`lat`、`long`、`height`），外加合成 X 轴 `Time`。  
-- **打开 VBO 后**：`SetFromVboColumns([column names])`，下拉变为文件实际列（例如完整 Racelogic 导出约 50+）。  
-- **切回实时源**：点 **UDP** / **GSpot…** 成功切换后会调用 `SetLiveCore()`，通道下拉恢复为核心集，并退出 Replay 离线模式。
+1. 打开含加减速的 VBO（可多文件），或 Online 积累历史。  
+2. 选 **Accel**（默认 0→100）、**Decel**（100→0）、**Custom** 或 **Gate**。  
+3. Gate：配置 Start/End When 与 Pass（可多条）；条件区可拖高或 Hide。  
+4. **Compute** → 结果含 Source、时长、ΔV、距离、Pass/Fail、**Pass values**。  
+5. 勾选多行 → 底部进入对比叠图；**Export CSV** 导出（UTF-8 BOM）。  
+6. **Maths Channels…** 编辑计算通道；**Session** 编辑会话元数据。
 
-### 10. 多 Plot
+距离优先用 DistanceTraveled，否则速度积分，再否则起终点 Haversine。
+
+### 10. 通道选择（Channel Registry）
+
+- 下拉只列当前 `ChannelRegistry.Available` 中的通道。  
+- 实时：`SetLiveCore()` 约 9 个核心通道 + 合成 `Time`。  
+- 打开 VBO：`SetFromVboColumns`，下拉为文件实际列。  
+- Maths 通道注册后进入可用列表。  
+- 切回 UDP/GSpot 成功后恢复 `SetLiveCore()`。
+
+### 11. 多 Plot
 
 - `+ Add Plot` 增加图；每图可改名、`Auto Y`、`+ Channel`、`Remove Plot`。  
 - `X Axis` 可选横轴信号（默认时间）。
@@ -256,21 +309,44 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 ---
 
-## 开发路线
+## 已完成功能（对照代码）
 
 - [x] UDP + DataBus + Simulator  
-- [x] 多 Plot / 通道曲线  
-- [x] UI 外壳与深色金色主题  
-- [x] VBO 录制与回放  
-- [x] Track Map  
-- [x] `IDataSource` + GSpot  
-- [x] 北京时间轴 / 光标 / Auto 缩放策略  
+- [x] `IDataSource` + GSpot（WebSocket）  
+- [x] VBO 录制（Start/Pause/Stop）与多文件回放（Load）  
+- [x] 多 Plot / 通道曲线 / 北京时间轴 / 光标联动 / Auto 缩放  
+- [x] 多文件曲线始终叠加 + Test Results 勾选对比叠图  
+- [x] Track Map（轨迹、光标同步、run 高亮）  
+- [x] Layout 分区开关（Dashboard / Test Results / Map / Chart，无 Video）  
+- [x] Online / Offline / Load / Clear  
+- [x] 可定制 Dashboard（增删/拖动/缩放、Live + Test Results 绑定）  
+- [x] Test Results：Accel / Decel / Custom / Gate + CSV  
+- [x] Gate 管理（颜色、宽度、重命名、地图点选）+ `.vbts` 门导入  
+- [x] Pass Condition + Pass values 高亮  
+- [x] Maths Channels 对话框（基础表达式）  
+- [x] Chart Measure（min/max/avg）  
+- [x] Session 元数据写入 VBO `[SessionData]`  
+- [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）  
 - [x] 通道注册表（实时 vs 文件）  
+- [x] UI 深色金色主题  
+
+---
+
+## 开发路线（剩余）
+
+与当前规划一致的待办；已完成或已取消的旧项已从路线图移除（例如独立 Data/Analysis 导航页）。
+
 - [ ] GSpot 轴向 / 单位实车标定  
-- [ ] 自动测试评价（Test Results）  
-- [ ] Settings 正式页（替代 GSpot/UDP 快捷按钮）  
+- [ ] Settings 正式页（替代 Online 工具栏快捷按钮）  
 - [ ] 在线地图底图  
-- [ ] 测试项目 / 报告  
+- [ ] 同步视频（明确不做顶栏 Video 入口前，本项保持延后）  
+- [ ] 正式报告导出（PDF / XLSX / DOCX；目前仅 CSV）  
+- [ ] `.vbts` 整包导入（试验条件 / Pass / Maths / Dashboard 布局；目前主要导入 Gate）  
+- [ ] Gate Export（`.spl`）  
+- [ ] Maths 高级函数（累计 / 积分等）  
+- [ ] 法规 / 场景试验插件包（Accel/Decel/Custom/Gate 之外的 VBTS 插件对标）  
+- [ ] 原生 VBOX 硬件 Online 链路  
+- [ ] `CsvRecorder` 接线  
 
 ---
 
@@ -281,12 +357,11 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - 曲线按可见窗口 + min-max 降采样绘制（上限约 12,000 点）；全量历史仍在内存缓冲。  
 - 内存历史缓冲上限约 **1,000,000** 条样本（环形丢最旧，线程安全快照）。  
 - Track Map 显示上限约 50,000 点（抽稀）。  
-- 切回 UDP/GSpot 会 `SetLiveCore()` 并退出 Replay 离线模式；打开 VBO 期间实时样本不再写入历史。  
 - 录制路径若 `TryWrite` 失败会在 Lost 区显示 `+R{n}`（仍建议长跑时关注磁盘与队列）。  
-- Test Results / Data / Analysis / Settings 未完整启用。  
-- Steering Angle 无 `VehicleSample` 字段，Dashboard 固定显示 0。  
 - `CsvRecorder` 保留但未接线。  
-- GSpot 密码仍走 HTTP GET query（待与供应商确认 POST/Header）。
+- GSpot 密码仍走 HTTP GET query（待与供应商确认 POST/Header）。  
+- Dashboard 目前为 Default 数字表盘；VBTS 式 Angular / Chart / Level 表盘未做。  
+- `.vbts` Import 仅解析门点，不导入完整 CustomTest 条件（条件需在 Test Results 里手动或后续整包导入）。
 
 ---
 
@@ -297,13 +372,12 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 ## Tests / quality
 
-Minimal xUnit project: `ChassisMasterTestSuite.Tests` (`net10.0`, stock xUnit).
+Minimal xUnit project: `ChassisMasterTestSuite.Tests`（`net10.0`，stock xUnit）。
 
-Covers pure logic via **linked** production sources (history buffer, DataBus, plot downsampler, UDP serializer, VBO longitude round-trip, GSpot property `pos` mapping) — no WPF / no live network.
+覆盖纯逻辑（经 linked 生产源）：历史缓冲、DataBus、降采样、UDP 序列化、VBO 经度往返、GSpot `pos`、Maths、Gate/`.vbts` 导入、SessionMemory 等——无 WPF / 无实网。
 
 ```bash
 dotnet test "Chassis Master Test Suite.sln" -c Release
 ```
 
 Quality notes: see `CHANGELOG-quality.md`.
-

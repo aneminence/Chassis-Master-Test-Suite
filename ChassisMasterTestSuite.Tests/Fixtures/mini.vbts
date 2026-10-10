@@ -1,0 +1,6 @@
+<?xml version="1.0"?>
+<PersistenceObject xmlns="http://schemas.datacontract.org/2004/07/VBOXTestSuite.Persistence">
+<pluginsInformation xmlns:a="http://schemas.microsoft.com/2003/10/Serialization/Arrays">
+<a:string>&lt;Dockable&gt;&lt;d3p1:gates xmlns:d3p1="http://schemas.datacontract.org/2004/07/Racelogic.VBOXTestSuite.PluginBase.Settings"&gt;&lt;d3p1:GateSettings&gt;&lt;d3p1:caption&gt;开始&lt;/d3p1:caption&gt;&lt;d3p1:gateWidth&gt;10&lt;/d3p1:gateWidth&gt;&lt;d3p1:latiudeMinutes1&gt;1995.171897131743&lt;/d3p1:latiudeMinutes1&gt;&lt;d3p1:latiudeMinutes2&gt;1995.1719565587491&lt;/d3p1:latiudeMinutes2&gt;&lt;d3p1:longitudeMinutes1&gt;7238.7590545553458&lt;/d3p1:longitudeMinutes1&gt;&lt;d3p1:longitudeMinutes2&gt;7238.7596777576618&lt;/d3p1:longitudeMinutes2&gt;&lt;/d3p1:GateSettings&gt;&lt;/d3p1:gates&gt;&lt;/Dockable&gt;</a:string>
+</pluginsInformation>
+</PersistenceObject>

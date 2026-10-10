@@ -5,8 +5,10 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 
+using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Communication;
 using Chassis_Master_Test_Suite.Communication.GSpot;
+using Chassis_Master_Test_Suite.Controls;
 using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Recorder;
 using Chassis_Master_Test_Suite.Simulator;
@@ -58,6 +60,51 @@ public partial class MainWindow : Window
     /// <summary>true = 线下模式（VBO）；false = 线上模式。</summary>
     private bool _isOfflineMode;
 
+    // Layout panel visibility (saved GridLengths restored when shown again)
+    private bool _layoutShowDashboard = true;
+    private bool _layoutShowTestResults = true;
+    private bool _layoutShowMap = true;
+    private bool _layoutShowChart = true;
+    private GridLength? _layoutDashboardWidth;
+    private GridLength? _layoutTestResultsWidth;
+    private GridLength? _layoutMapWidth;
+    private GridLength? _layoutCurvesHeight;
+    private double _layoutDashboardMin = 280;
+    private double _layoutTestResultsMin = 260;
+    private double _layoutMapMin = 300;
+    private double _layoutCurvesMin = 240;
+
+    private static readonly GridLength LayoutDefaultDashboardWidth =
+        new(1.2, GridUnitType.Star);
+    private static readonly GridLength LayoutDefaultTestResultsWidth =
+        new(1.0, GridUnitType.Star);
+    private static readonly GridLength LayoutDefaultMapWidth =
+        new(1.6, GridUnitType.Star);
+    private static readonly GridLength LayoutDefaultCurvesHeight =
+        new(1.0, GridUnitType.Star);
+    private static readonly GridLength LayoutDefaultTopPanelsHeight =
+        new(1.0, GridUnitType.Star);
+
+    private static readonly SolidColorBrush LayoutRegionActiveBg =
+        MakeFrozenBrush(0x1E, 0x28, 0x34);
+    private static readonly SolidColorBrush LayoutRegionActiveBorder =
+        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
+    private static readonly SolidColorBrush LayoutRegionActiveFg =
+        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
+    private static readonly SolidColorBrush LayoutRegionInactiveBg =
+        MakeFrozenBrush(0x12, 0x17, 0x1E);
+    private static readonly SolidColorBrush LayoutRegionInactiveBorder =
+        MakeFrozenBrush(0x3A, 0x45, 0x54);
+    private static readonly SolidColorBrush LayoutRegionInactiveFg =
+        MakeFrozenBrush(0x7A, 0x84, 0x94);
+
+    private static SolidColorBrush MakeFrozenBrush(byte r, byte g, byte b)
+    {
+        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
+        brush.Freeze();
+        return brush;
+    }
+
     /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
     private readonly OfflineFileSet _offlineFiles = new();
 
@@ -90,6 +137,11 @@ public partial class MainWindow : Window
     /// Escape 清除光标后恢复实时。
     /// </summary>
     private PlotDefinition? _cursorSourcePlot;
+
+    /// <summary>Test Results 标注：最近一次 Compute 的 run 与对应样本。</summary>
+    private IReadOnlyList<AnnotatedTestRun> _annotatedRuns = Array.Empty<AnnotatedTestRun>();
+    private IReadOnlyList<AnnotatedTestRun> _compareRuns = Array.Empty<AnnotatedTestRun>();
+    private int? _selectedAnnotatedRun;
 
     /// <summary>
     /// 中键平移 / 右键缩放进行中：跳过 RefreshPlot，避免 10 Hz Clear 把手势锁死。
@@ -143,6 +195,15 @@ public partial class MainWindow : Window
 
         InitializeComponent();
 
+        // P0 Test Results：注入历史快照提供者（Replay / 实时缓冲）
+        TestResultsPanelControl.GetSamples = GetHistorySnapshotForAnalysis;
+        TestResultsPanelControl.GetSampleSources = GetTestSampleSources;
+        TestResultsPanelControl.ResultsAnnotated += OnTestResultsAnnotated;
+        TestResultsPanelControl.SelectedRunChanged += OnTestResultRunSelected;
+        TestResultsPanelControl.CheckedRunsChanged += OnTestResultCheckedRunsChanged;
+        TestResultsPanelControl.SessionEditRequested += OnSessionEditRequested;
+        TestResultsPanelControl.MathsChanged += OnMathsChanged;
+
         ApplyModeUi();
 
         InitializeAxisSelector();
@@ -162,6 +223,17 @@ public partial class MainWindow : Window
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
         DashboardPanelControl.VehicleSummaryClicked += OnVehicleSummaryClicked;
+
+        GateStore.Instance.Changed += (_, _) => ScheduleSessionMemorySave();
+        MathsChannelStore.Instance.Changed += (_, _) =>
+        {
+            // Persist maths immediately (not only debounced) so restart keeps formulas
+            // even if the process is killed before the 800ms timer fires.
+            if (!_restoringSession)
+                SaveSessionMemory();
+            else
+                ScheduleSessionMemorySave();
+        };
 
         _uiTimer = new DispatcherTimer
         {
@@ -354,6 +426,12 @@ public partial class MainWindow : Window
             if (raw.Count == 0)
                 return 0;
 
+            if (reader.SessionData.Count > 0)
+            {
+                SessionMetadata.Current = SessionMetadata.FromVboLines(reader.SessionData);
+                TestResultsPanelControl.RefreshSessionSummary();
+            }
+
             var samples = SampleEnricher.EnrichAll(raw);
 
             var columnNames = reader.Columns.Count > 0
@@ -366,6 +444,7 @@ public partial class MainWindow : Window
             _lastLoadedChannelCount =
                 ChannelRegistry.Instance.AvailablePlotChannels.Count;
 
+            SaveSessionMemory();
             return samples.Count;
         }
         catch (Exception ex)
@@ -394,6 +473,7 @@ public partial class MainWindow : Window
             _sampleHistory.Clear();
             _latestSample = null;
             ChannelRegistry.Instance.SetLiveCore();
+            RemergeMathsChannels();
             RefreshChannelSelectorsFromRegistry();
             RebuildOfflineFileChips();
             RefreshAllPlots(force: true);
@@ -403,6 +483,7 @@ public partial class MainWindow : Window
 
         var columns = _offlineFiles.UnionColumns();
         ChannelRegistry.Instance.SetFromVboColumns(columns);
+        RemergeMathsChannels();
         RefreshChannelSelectorsFromRegistry();
 
         // 主历史 = 当前选中文件（芯片点击切换；默认最新打开）
@@ -444,7 +525,7 @@ public partial class MainWindow : Window
                 Tag = file.Id,
                 ToolTip = isSelected
                     ? $"Selected: {file.FilePath}"
-                    : $"Click to switch Dashboard to: {file.DisplayName}"
+                    : $"Click to focus Dashboard / cursor on: {file.DisplayName} (all files stay overlaid)"
             };
 
             chip.MouseLeftButtonUp += OfflineFileChip_Click;
@@ -520,7 +601,7 @@ public partial class MainWindow : Window
 
 
     /// <summary>
-    /// Switch selected offline VBO while keeping plot cursor X (time/distance).
+    /// Focus an offline VBO (Dashboard / cursor / map). Curves stay multi-file overlay.
     /// Dashboard / Track Map / readouts update to the new file at the same cursor.
     /// </summary>
     private void SelectOfflineFileKeepingCursor(Guid id)
@@ -597,6 +678,7 @@ public partial class MainWindow : Window
 
         _offlineFiles.Remove(id);
         ApplyOfflineDataset();
+        SaveSessionMemory();
     }
 
 
@@ -633,17 +715,6 @@ public partial class MainWindow : Window
                 ? Visibility.Collapsed
                 : Visibility.Visible;
 
-        DashboardNavButton.Style =
-            (Style)FindResource(
-                dashboard
-                    ? "NavButtonActiveStyle"
-                    : "NavButtonStyle");
-
-        ReplayNavButton.Style =
-            (Style)FindResource(
-                dashboard
-                    ? "NavButtonStyle"
-                    : "NavButtonActiveStyle");
     }
 
 
@@ -711,6 +782,7 @@ public partial class MainWindow : Window
         _offlineFiles.Clear();
         ApplyOfflineDataset();
         UpdateOfflineFileStatusLabels();
+        SaveSessionMemory();
     }
 
 
@@ -862,7 +934,7 @@ public partial class MainWindow : Window
         if (OnlineModeButton is null || OfflineModeButton is null)
             return;
 
-        // 互斥视觉：选中高亮，另一个灰色样式（仍可点切换）
+        // Mutual exclusive highlight; file chips stay visible in both modes.
         if (_isOfflineMode)
         {
             OnlineModeButton.Style = (Style)FindResource("NavButtonStyle");
@@ -872,8 +944,6 @@ public partial class MainWindow : Window
 
             if (OnlineToolsPanel is not null)
                 OnlineToolsPanel.Visibility = Visibility.Collapsed;
-            if (OfflineToolsPanel is not null)
-                OfflineToolsPanel.Visibility = Visibility.Visible;
         }
         else
         {
@@ -884,10 +954,273 @@ public partial class MainWindow : Window
 
             if (OnlineToolsPanel is not null)
                 OnlineToolsPanel.Visibility = Visibility.Visible;
-            if (OfflineToolsPanel is not null)
-                OfflineToolsPanel.Visibility = Visibility.Collapsed;
         }
     }
+
+    // ============================================================
+    // Layout: VBTS-style panel map (Dashboard / Chart / Test Results / Map)
+    // ============================================================
+
+    private void LayoutRegion_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not string tag)
+            return;
+
+        e.Handled = true;
+
+        switch (tag)
+        {
+            case "Dashboard":
+                _layoutShowDashboard = !_layoutShowDashboard;
+                break;
+            case "TestResults":
+                _layoutShowTestResults = !_layoutShowTestResults;
+                break;
+            case "Map":
+                _layoutShowMap = !_layoutShowMap;
+                break;
+            case "Chart":
+                _layoutShowChart = !_layoutShowChart;
+                break;
+            default:
+                return;
+        }
+
+        // Keep at least one top panel visible.
+        if (!_layoutShowDashboard && !_layoutShowTestResults && !_layoutShowMap)
+        {
+            switch (tag)
+            {
+                case "Dashboard":
+                    _layoutShowDashboard = true;
+                    break;
+                case "TestResults":
+                    _layoutShowTestResults = true;
+                    break;
+                case "Map":
+                    _layoutShowMap = true;
+                    break;
+            }
+        }
+
+        ApplyLayoutVisibility();
+        SyncLayoutMapVisuals();
+    }
+
+
+    private void LayoutReset_Click(object sender, MouseButtonEventArgs e)
+    {
+        e.Handled = true;
+
+        _layoutShowDashboard = true;
+        _layoutShowTestResults = true;
+        _layoutShowMap = true;
+        _layoutShowChart = true;
+
+        _layoutDashboardWidth = LayoutDefaultDashboardWidth;
+        _layoutTestResultsWidth = LayoutDefaultTestResultsWidth;
+        _layoutMapWidth = LayoutDefaultMapWidth;
+        _layoutCurvesHeight = LayoutDefaultCurvesHeight;
+        _layoutDashboardMin = 280;
+        _layoutTestResultsMin = 260;
+        _layoutMapMin = 300;
+        _layoutCurvesMin = 240;
+
+        if (DashboardColumn is not null)
+        {
+            DashboardColumn.Width = LayoutDefaultDashboardWidth;
+            DashboardColumn.MinWidth = 280;
+        }
+
+        if (TestResultsColumn is not null)
+        {
+            TestResultsColumn.Width = LayoutDefaultTestResultsWidth;
+            TestResultsColumn.MinWidth = 260;
+        }
+
+        if (MapColumn is not null)
+        {
+            MapColumn.Width = LayoutDefaultMapWidth;
+            MapColumn.MinWidth = 300;
+        }
+
+        if (CurvesRow is not null)
+        {
+            CurvesRow.Height = LayoutDefaultCurvesHeight;
+            CurvesRow.MinHeight = 240;
+        }
+
+        if (TopPanelsRow is not null)
+            TopPanelsRow.Height = LayoutDefaultTopPanelsHeight;
+
+        ApplyLayoutVisibility();
+        SyncLayoutMapVisuals();
+    }
+
+
+    private void ApplyLayoutVisibility()
+    {
+        var dash = _layoutShowDashboard;
+        var test = _layoutShowTestResults;
+        var map = _layoutShowMap;
+        var chart = _layoutShowChart;
+
+        SetColumnPanelVisible(
+            DashboardColumn,
+            DashboardPanelControl,
+            dash,
+            ref _layoutDashboardWidth,
+            ref _layoutDashboardMin,
+            fallbackWidth: LayoutDefaultDashboardWidth,
+            fallbackMin: 280);
+
+        SetColumnPanelVisible(
+            TestResultsColumn,
+            TestResultsPanelControl,
+            test,
+            ref _layoutTestResultsWidth,
+            ref _layoutTestResultsMin,
+            fallbackWidth: LayoutDefaultTestResultsWidth,
+            fallbackMin: 260);
+
+        SetColumnPanelVisible(
+            MapColumn,
+            TrackMapPanelControl,
+            map,
+            ref _layoutMapWidth,
+            ref _layoutMapMin,
+            fallbackWidth: LayoutDefaultMapWidth,
+            fallbackMin: 300);
+
+        if (DashboardSplitter is not null)
+        {
+            DashboardSplitter.Visibility =
+                dash && (test || map)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        if (MapSplitter is not null)
+        {
+            MapSplitter.Visibility =
+                map && (test || dash)
+                    ? Visibility.Visible
+                    : Visibility.Collapsed;
+        }
+
+        // Chart (curves row)
+        if (CurvesPanelBorder is not null)
+            CurvesPanelBorder.Visibility =
+                chart ? Visibility.Visible : Visibility.Collapsed;
+
+        if (CurvesRowSplitter is not null)
+            CurvesRowSplitter.Visibility =
+                chart ? Visibility.Visible : Visibility.Collapsed;
+
+        if (CurvesRow is not null)
+        {
+            if (chart)
+            {
+                if (_layoutCurvesHeight is GridLength h)
+                    CurvesRow.Height = h;
+                else
+                    CurvesRow.Height = LayoutDefaultCurvesHeight;
+                CurvesRow.MinHeight = _layoutCurvesMin > 0 ? _layoutCurvesMin : 240;
+            }
+            else
+            {
+                if (CurvesRow.Height.Value > 0 || CurvesRow.Height.IsStar)
+                    _layoutCurvesHeight = CurvesRow.Height;
+                if (CurvesRow.MinHeight > 0)
+                    _layoutCurvesMin = CurvesRow.MinHeight;
+                CurvesRow.MinHeight = 0;
+                CurvesRow.Height = new GridLength(0);
+            }
+        }
+
+        if (TopPanelsRow is not null)
+        {
+            if (!chart)
+                TopPanelsRow.Height = LayoutDefaultTopPanelsHeight;
+            else if (TopPanelsRow.Height.Value <= 0 && !TopPanelsRow.Height.IsStar)
+                TopPanelsRow.Height = LayoutDefaultTopPanelsHeight;
+        }
+    }
+
+
+    private void SyncLayoutMapVisuals()
+    {
+        SetLayoutRegionVisual(LayoutCellDashboard, _layoutShowDashboard);
+        SetLayoutRegionVisual(LayoutCellTestResults, _layoutShowTestResults);
+        SetLayoutRegionVisual(LayoutCellMap, _layoutShowMap);
+        SetLayoutRegionVisual(LayoutCellChart, _layoutShowChart);
+    }
+
+
+    private static void SetLayoutRegionVisual(Border? cell, bool active)
+    {
+        if (cell is null)
+            return;
+
+        if (active)
+        {
+            cell.Background = LayoutRegionActiveBg;
+            cell.BorderBrush = LayoutRegionActiveBorder;
+            cell.BorderThickness = new Thickness(1.5);
+            cell.Opacity = 1.0;
+        }
+        else
+        {
+            cell.Background = LayoutRegionInactiveBg;
+            cell.BorderBrush = LayoutRegionInactiveBorder;
+            cell.BorderThickness = new Thickness(1);
+            cell.Opacity = 0.72;
+        }
+
+        if (cell.Child is TextBlock label)
+        {
+            label.Foreground = active
+                ? LayoutRegionActiveFg
+                : LayoutRegionInactiveFg;
+            label.FontWeight = active
+                ? FontWeights.SemiBold
+                : FontWeights.Normal;
+        }
+    }
+
+
+    private static void SetColumnPanelVisible(
+        ColumnDefinition? column,
+        UIElement? panel,
+        bool visible,
+        ref GridLength? savedWidth,
+        ref double savedMin,
+        GridLength fallbackWidth,
+        double fallbackMin)
+    {
+        if (panel is not null)
+            panel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+
+        if (column is null)
+            return;
+
+        if (visible)
+        {
+            column.Width = savedWidth ?? fallbackWidth;
+            column.MinWidth = savedMin > 0 ? savedMin : fallbackMin;
+        }
+        else
+        {
+            if (column.Width.Value > 0 || column.Width.IsStar)
+                savedWidth = column.Width;
+            if (column.MinWidth > 0)
+                savedMin = column.MinWidth;
+            column.MinWidth = 0;
+            column.Width = new GridLength(0);
+        }
+    }
+
+
 
 
 
@@ -1869,11 +2202,17 @@ public partial class MainWindow : Window
                     f.Samples))
                 .ToList();
             TrackMapPanelControl.SetTracks(layers);
+            TrackMapPanelControl.SetRunHighlights(
+                _annotatedRuns,
+                _selectedAnnotatedRun);
             return;
         }
 
         TrackMapPanelControl.SetTrack(
             liveSnapshot ?? _sampleHistory.Snapshot());
+        TrackMapPanelControl.SetRunHighlights(
+            _annotatedRuns,
+            _selectedAnnotatedRun);
     }
 
 
@@ -1930,6 +2269,18 @@ public partial class MainWindow : Window
         // 数据不足
         // ========================================================
 
+
+        // Multi-run compare: X = seconds from each run start (checked rows).
+        if (IsCompareModeActive)
+        {
+            DrawCompareOverlay(plot, scottPlot, selectedChannels, previousLimits);
+            plot.WpfPlot.Refresh();
+            return;
+        }
+
+        // Leaving / not in compare: drop any edge legend panels from a prior compare view.
+        ClearCompareEdgeLegend(scottPlot);
+
         if (history.Count < 2)
         {
             ApplyDarkPlotStyle(plot.WpfPlot);
@@ -1961,6 +2312,8 @@ public partial class MainWindow : Window
             plot.WpfPlot.Refresh();
             return;
         }
+
+
 
 
         // ========================================================
@@ -2015,7 +2368,7 @@ public partial class MainWindow : Window
                 sample => GetAxisValue(sample, selectedXSignal));
 
 
-        // ========================================================
+
         // Channel 曲线
         // ========================================================
 
@@ -2027,8 +2380,33 @@ public partial class MainWindow : Window
 
 
         // 线下多文件：同一通道叠多条曲线（按文件着色）
+        // Offline multi-file: ALWAYS overlay every open file (chip click = focus, not hide).
+        // X policy: if all files' time windows overlap within 2h, use absolute Beijing time;
+        // otherwise use elapsed seconds from each file's first sample so curves superimpose.
         if (_isOfflineMode && _offlineFiles.Count > 1)
         {
+            var focusId = _offlineFiles.Selected?.Id;
+            var useElapsedTime = false;
+            var isTimeAxis = string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+            if (isTimeAxis)
+            {
+                long globalMin = long.MaxValue, globalMax = long.MinValue;
+                foreach (var file in _offlineFiles.Files)
+                {
+                    if (file.Samples.Count < 2) continue;
+                    var t0 = file.Samples[0].Timestamp;
+                    var t1 = file.Samples[^1].Timestamp;
+                    if (t0 > t1) (t0, t1) = (t1, t0);
+                    if (t0 < globalMin) globalMin = t0;
+                    if (t1 > globalMax) globalMax = t1;
+                }
+                // Different days / far-apart sessions → elapsed overlay
+                useElapsedTime = globalMax > globalMin && (globalMax - globalMin) > 2L * 60 * 60 * 1000;
+            }
+
+            double minX = double.MaxValue, maxX = double.MinValue;
+            var allXsForLimits = new List<double>();
+
             foreach (var channel in selectedChannels)
             {
                 foreach (var file in _offlineFiles.Files)
@@ -2036,40 +2414,85 @@ public partial class MainWindow : Window
                     if (file.Samples.Count < 2)
                         continue;
 
-                    var fileXs = new double[file.Samples.Count];
-                    var fileYs = new double[file.Samples.Count];
+                    var n = file.Samples.Count;
+                    var fileXs = new double[n];
+                    var fileYs = new double[n];
+                    var tOrigin = file.Samples[0].Timestamp;
 
-                    for (var i = 0; i < file.Samples.Count; i++)
+                    for (var i = 0; i < n; i++)
                     {
-                        fileXs[i] = GetAxisValue(file.Samples[i], selectedXSignal);
+                        if (useElapsedTime)
+                            fileXs[i] = (file.Samples[i].Timestamp - tOrigin) / 1000.0;
+                        else
+                            fileXs[i] = GetAxisValue(file.Samples[i], selectedXSignal);
+
                         var value = GetSignalValue(file.Samples[i], channel.ChannelId);
                         fileYs[i] = value;
-                        if (value < minY) minY = value;
-                        if (value > maxY) maxY = value;
+                        if (!double.IsNaN(value) && !double.IsInfinity(value))
+                        {
+                            if (value < minY) minY = value;
+                            if (value > maxY) maxY = value;
+                        }
+                        if (fileXs[i] < minX) minX = fileXs[i];
+                        if (fileXs[i] > maxX) maxX = fileXs[i];
+                        allXsForLimits.Add(fileXs[i]);
                     }
 
+                    var focused = focusId is Guid fid && file.Id == fid;
                     var scatter = scottPlot.Add.Scatter(fileXs, fileYs);
                     scatter.Color = ScottPlot.Color.FromHex(file.ColorHex);
                     scatter.LegendText =
                         $"{GetSignalDisplayName(channel.ChannelId)} · {file.DisplayName}";
-                    scatter.LineWidth = 1.5f;
+                    scatter.LineWidth = focused ? 2.8f : 1.2f;
                     scatter.MarkerSize = 0;
+                    if (!focused)
+                        scatter.Color = ScottPlot.Color.FromHex(file.ColorHex).WithAlpha(0.55);
                 }
             }
 
-            // 光标 / Dashboard 对齐主文件（当前选中），与降采样后的 LastXs 一致
-            plot.LastXs = xs;
-            plot.LastSamples =
-                PlotDownsampler.ExtractSamples(history, indices);
+            // Cursor / Dashboard track focused file; X matches what was plotted.
+            if (useElapsedTime && history.Count >= 2)
+            {
+                var t0 = history[0].Timestamp;
+                plot.LastXs = new double[indices.Length];
+                for (var ii = 0; ii < indices.Length; ii++)
+                    plot.LastXs[ii] = (history[indices[ii]].Timestamp - t0) / 1000.0;
+            }
+            else
+            {
+                plot.LastXs = xs;
+            }
+            plot.LastSamples = PlotDownsampler.ExtractSamples(history, indices);
             plot.LastChannelSeries.Clear();
             foreach (var channel in selectedChannels)
             {
-                var ys =
-                    PlotDownsampler.ExtractYs(
-                        history,
-                        indices,
-                        sample => GetSignalValue(sample, channel.ChannelId));
+                var ys = PlotDownsampler.ExtractYs(
+                    history, indices, sample => GetSignalValue(sample, channel.ChannelId));
                 plot.LastChannelSeries.Add((channel.ChannelId, ys));
+            }
+
+            // Axis label + datetime ticks
+            if (useElapsedTime)
+            {
+                plot.IsTimeAxis = false;
+                scottPlot.Title(plot.Name);
+                scottPlot.XLabel("Elapsed (s) — multi-file overlay");
+                scottPlot.YLabel("Value");
+                scottPlot.Legend.IsVisible = true;
+                ApplyDarkPlotStyle(plot.WpfPlot);
+                // No DateTime axis when using elapsed overlay
+                var limitXs = allXsForLimits.Count > 0 ? allXsForLimits.ToArray() : xs;
+                ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot.Refresh();
+                return;
+            }
+            else
+            {
+                // Absolute time: limits must span ALL files, not just primary xs
+                var limitXs = allXsForLimits.Count > 0 ? allXsForLimits.ToArray() : xs;
+                // Fall through to shared title/limits below using limitXs — stash on plot via local replace of xs
+                xs = limitXs;
             }
         }
         else
@@ -2340,6 +2763,8 @@ public partial class MainWindow : Window
                 plot.SelectionX2 = null;
             }
 
+
+            UpdateSelectionMeasure(plot);
             // 松手后把光标放到选区终点（或点击位置）
             if (plot.SelectionX2 is double endX)
             {
@@ -2372,12 +2797,21 @@ public partial class MainWindow : Window
 
         wpfPlot.KeyDown += (_, e) =>
         {
+            if (e.Key == Key.C &&
+                Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+            {
+                CopyMeasureToClipboard();
+                e.Handled = true;
+                return;
+            }
+
             if (e.Key != Key.Escape)
                 return;
 
             plot.CursorX = null;
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
+            _lastMeasureText = null;
             plot.IsSelectingRange = false;
             plot.IsDraggingCursor = false;
             if (ReferenceEquals(_cursorSourcePlot, plot))
@@ -2754,6 +3188,280 @@ public partial class MainWindow : Window
     }
 
 
+    private static readonly string[] RunAnnotationPalette =
+    {
+        "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
+        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
+    };
+
+    private void OnTestResultsAnnotated(IReadOnlyList<AnnotatedTestRun> runs)
+    {
+        _annotatedRuns = runs ?? Array.Empty<AnnotatedTestRun>();
+        _selectedAnnotatedRun = _annotatedRuns.Count > 0 ? _annotatedRuns[0].RunNumber : null;
+        DashboardPanelControl.ApplyTestResults(_annotatedRuns, _selectedAnnotatedRun);
+        // Fresh compute clears compare checks until user re-checks.
+        if (_compareRuns.Count > 0 && _compareRuns.All(c => _annotatedRuns.Any(a => a.RunNumber == c.RunNumber)))
+        {
+            // keep compare if still present
+        }
+        else
+        {
+            _compareRuns = Array.Empty<AnnotatedTestRun>();
+        }
+        ApplyRunAnnotationsToUi();
+        RefreshAllPlotsForCompareMode();
+    }
+
+    private void OnTestResultRunSelected(int? runNumber)
+    {
+        _selectedAnnotatedRun = runNumber;
+        DashboardPanelControl.ApplyTestResults(_annotatedRuns, _selectedAnnotatedRun);
+        ApplyRunAnnotationsToUi();
+    }
+
+    private void OnTestResultCheckedRunsChanged(IReadOnlyList<AnnotatedTestRun> checkedRuns)
+    {
+        var wasCompare = _compareRuns.Count >= 2;
+        _compareRuns = checkedRuns ?? Array.Empty<AnnotatedTestRun>();
+        var nowCompare = _compareRuns.Count >= 2;
+
+        // Compare uses run-relative seconds; normal mode uses absolute/elapsed axes.
+        // Drop locked limits whenever compare mode toggles so the first view can autofit.
+        if (wasCompare != nowCompare)
+        {
+            foreach (var plot in _plots)
+            {
+                plot.LockedLimits = null;
+                if (!nowCompare && plot.WpfPlot is not null)
+                    ClearCompareEdgeLegend(plot.WpfPlot.Plot);
+            }
+        }
+
+        RefreshAllPlotsForCompareMode();
+        ApplyRunAnnotationsToUi();
+    }
+
+    private void RefreshAllPlotsForCompareMode()
+    {
+        _forcePlotRebuild = true;
+        foreach (var plot in _plots)
+            RefreshPlot(plot, GetHistorySnapshot());
+    }
+
+    private bool IsCompareModeActive => _compareRuns.Count >= 2;
+
+    private void ApplyRunAnnotationsToUi()
+    {
+        foreach (var plot in _plots)
+        {
+            ApplyPlotOverlays(plot);
+            plot.WpfPlot?.Refresh();
+        }
+
+        // Map: when comparing, highlight checked runs; else all annotated with focus.
+        var mapRuns = IsCompareModeActive ? _compareRuns : _annotatedRuns;
+        TrackMapPanelControl.SetRunHighlights(mapRuns, _selectedAnnotatedRun);
+    }
+
+    private void DrawCompareOverlay(
+        PlotDefinition plot,
+        ScottPlot.Plot scottPlot,
+        List<ChannelDefinition> selectedChannels,
+        ScottPlot.AxisLimits previousLimits)
+    {
+        if (plot.WpfPlot is null) return;
+        ApplyDarkPlotStyle(plot.WpfPlot);
+        scottPlot.Title(plot.Name + " — Compare");
+        scottPlot.XLabel("Run time (s)");
+        scottPlot.YLabel("Value");
+
+        double minY = double.MaxValue;
+        double maxY = double.MinValue;
+        double maxX = 0;
+
+        var channels = selectedChannels.Count > 0
+            ? selectedChannels
+            : new List<ChannelDefinition>
+            {
+                new ChannelDefinition { ChannelId = ChannelIds.Velocity }
+            };
+
+        foreach (var annotated in _compareRuns)
+        {
+            var run = annotated.Result;
+            var samples = annotated.Samples;
+            if (samples.Count < 2)
+                continue;
+
+            var i0 = Math.Clamp(run.StartSampleIndex, 0, samples.Count - 1);
+            var i1 = Math.Clamp(run.EndSampleIndex, 0, samples.Count - 1);
+            if (i1 < i0)
+                (i0, i1) = (i1, i0);
+
+            var t0 = samples[i0].Timestamp;
+            var colorHex = string.IsNullOrWhiteSpace(annotated.ColorHex)
+                ? RunAnnotationPalette[(run.RunNumber - 1) % RunAnnotationPalette.Length]
+                : annotated.ColorHex;
+
+            foreach (var channel in channels)
+            {
+                var xs = new List<double>();
+                var ys = new List<double>();
+                for (var i = i0; i <= i1; i++)
+                {
+                    var x = (samples[i].Timestamp - t0) / 1000.0;
+                    var y = GetSignalValue(samples[i], channel.ChannelId);
+                    if (double.IsNaN(y) || double.IsInfinity(y))
+                        continue;
+                    xs.Add(x);
+                    ys.Add(y);
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                    if (x > maxX) maxX = x;
+                }
+
+                if (xs.Count < 2)
+                    continue;
+
+                var scatter = scottPlot.Add.Scatter(xs.ToArray(), ys.ToArray());
+                scatter.Color = ScottPlot.Color.FromHex(colorHex);
+                scatter.LineWidth = 2f;
+                scatter.MarkerSize = 0;
+                var chName = GetSignalDisplayName(channel.ChannelId);
+                var src = string.IsNullOrWhiteSpace(annotated.SourceLabel) ? "file" : annotated.SourceLabel;
+                scatter.LegendText = $"{src} · Run {run.RunNumber} · {chName}";
+            }
+        }
+
+        if (minY > maxY)
+        {
+            minY = 0;
+            maxY = 1;
+        }
+
+        // Legend outside the data area (right edge) so it never covers traces.
+        // Remove prior LegendPanels — Clear() does not, and rebuilds would stack them.
+        ApplyCompareEdgeLegend(scottPlot);
+
+        // Respect Auto X/Y + LockedLimits (same as normal mode). Never force-fit every frame.
+        var limitXs = new[] { 0.0, Math.Max(maxX, 0.1) };
+        ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
+
+        plot.LastXs = Array.Empty<double>();
+        plot.LastSamples = Array.Empty<VehicleSample>();
+        plot.LastChannelSeries.Clear();
+    }
+
+    /// <summary>
+    /// Place compare legend on the figure's right edge (outside data area).
+    /// </summary>
+    private static void ApplyCompareEdgeLegend(ScottPlot.Plot scottPlot)
+    {
+        foreach (var panel in scottPlot.Axes.GetPanels())
+        {
+            if (panel is ScottPlot.Panels.LegendPanel legendPanel)
+                scottPlot.Axes.Remove(legendPanel);
+        }
+
+        scottPlot.HideLegend();
+        var legend = scottPlot.ShowLegend(ScottPlot.Edge.Right);
+        legend.Legend.FontSize = 10;
+        legend.Legend.FontColor = ScottPlot.Color.FromHex("#C3CBD8");
+        legend.Legend.BackgroundColor = ScottPlot.Color.FromHex("#12171E").WithAlpha(0.88);
+        legend.Legend.OutlineColor = ScottPlot.Color.FromHex("#1E2530");
+        legend.Legend.ShadowColor = ScottPlot.Colors.Transparent;
+    }
+
+    /// <summary>
+    /// Drop edge legend panels when leaving compare so normal in-plot legend returns.
+    /// </summary>
+    private static void ClearCompareEdgeLegend(ScottPlot.Plot scottPlot)
+    {
+        foreach (var panel in scottPlot.Axes.GetPanels())
+        {
+            if (panel is ScottPlot.Panels.LegendPanel legendPanel)
+                scottPlot.Axes.Remove(legendPanel);
+        }
+    }
+
+    private void DrawRunAnnotationsOnPlot(PlotDefinition plot, ScottPlot.Plot scottPlot)
+    {
+        if (IsCompareModeActive)
+            return; // compare mode draws normalized overlays in RefreshPlot
+
+        if (_annotatedRuns.Count == 0)
+            return;
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+
+        foreach (var annotated in _annotatedRuns)
+        {
+            var run = annotated.Result;
+            if (!TryGetRunAxisRange(annotated, xSignal, out var left, out var right))
+                continue;
+
+            var colorHex = string.IsNullOrWhiteSpace(annotated.ColorHex)
+                ? RunAnnotationPalette[(run.RunNumber - 1) % RunAnnotationPalette.Length]
+                : annotated.ColorHex;
+            var selected = _selectedAnnotatedRun is int sel && sel == run.RunNumber;
+            var dim = _selectedAnnotatedRun is not null && !selected;
+            var fillAlpha = selected ? 0.28 : (dim ? 0.08 : 0.16);
+            var lineAlpha = selected ? 0.95 : (dim ? 0.35 : 0.65);
+
+            var span = scottPlot.Add.HorizontalSpan(left, right);
+            span.FillColor = ScottPlot.Color.FromHex(colorHex).WithAlpha(fillAlpha);
+            span.LineColor = ScottPlot.Color.FromHex(colorHex).WithAlpha(lineAlpha);
+            span.LineWidth = selected ? 2 : 1;
+
+            if (!selected)
+                continue;
+
+            var v1 = scottPlot.Add.VerticalLine(left);
+            v1.LineColor = ScottPlot.Color.FromHex(colorHex);
+            v1.LineWidth = 1.5f;
+            v1.LinePattern = ScottPlot.LinePattern.DenselyDashed;
+
+            var v2 = scottPlot.Add.VerticalLine(right);
+            v2.LineColor = ScottPlot.Color.FromHex(colorHex);
+            v2.LineWidth = 1.5f;
+            v2.LinePattern = ScottPlot.LinePattern.DenselyDashed;
+
+            var labelText = string.IsNullOrWhiteSpace(annotated.SourceLabel)
+                ? $"Run {run.RunNumber}"
+                : $"{annotated.SourceLabel} · Run {run.RunNumber}";
+            var label = scottPlot.Add.Annotation(labelText, ScottPlot.Alignment.UpperRight);
+            label.LabelFontSize = 14;
+            label.LabelFontColor = ScottPlot.Color.FromHex(colorHex);
+            label.LabelBackgroundColor = ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.7);
+            label.LabelBorderColor = ScottPlot.Color.FromHex(colorHex);
+            label.OffsetX = 10;
+            label.OffsetY = 8;
+        }
+    }
+
+    private bool TryGetRunAxisRange(
+        AnnotatedTestRun annotated,
+        string xSignal,
+        out double left,
+        out double right)
+    {
+        left = 0;
+        right = 0;
+        var samples = annotated.Samples;
+        var n = samples.Count;
+        if (n == 0)
+            return false;
+
+        var run = annotated.Result;
+        var i0 = Math.Clamp(run.StartSampleIndex, 0, n - 1);
+        var i1 = Math.Clamp(run.EndSampleIndex, 0, n - 1);
+        left = GetAxisValue(samples[i0], xSignal);
+        right = GetAxisValue(samples[i1], xSignal);
+        if (right < left)
+            (left, right) = (right, left);
+        return Math.Abs(right - left) > 1e-12;
+    }
+
     private void ApplyPlotOverlays(PlotDefinition plot)
     {
         if (plot.WpfPlot is null)
@@ -2765,6 +3473,8 @@ public partial class MainWindow : Window
         // 这里在 Clear 之后调用时图上还没有 overlay）
         // 若被 Mouse 事件单独调用，需先移除旧 overlay。
         RemovePlotOverlays(scottPlot);
+
+        DrawRunAnnotationsOnPlot(plot, scottPlot);
 
         // 横向选区高亮（X 方向）
         if (plot.SelectionX1 is double sx1 &&
@@ -2779,6 +3489,20 @@ public partial class MainWindow : Window
             span.LineColor =
                 ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.55);
             span.LineWidth = 1;
+
+            if (!string.IsNullOrEmpty(_lastMeasureText))
+            {
+                var manno = scottPlot.Add.Annotation(
+                    _lastMeasureText,
+                    ScottPlot.Alignment.LowerLeft);
+                manno.LabelFontSize = 13;
+                manno.LabelFontColor = ScottPlot.Color.FromHex("#C8A34A");
+                manno.LabelBackgroundColor =
+                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.78);
+                manno.LabelBorderColor = ScottPlot.Color.FromHex("#1E2530");
+                manno.OffsetX = 10;
+                manno.OffsetY = 10;
+            }
         }
 
         // 竖向光标
@@ -2954,10 +3678,122 @@ public partial class MainWindow : Window
     // 获取历史数据
     // ============================================================
 
+
+    private string? _lastMeasureText;
+
+    private IReadOnlyList<VehicleSample> GetHistorySnapshotForAnalysis()
+    {
+        var snap = GetHistorySnapshot();
+        return MathsEnricher.Apply(snap, MathsChannelStore.Instance.Definitions);
+    }
+
+    private void RemergeMathsChannels()
+    {
+        var maths = MathsChannelStore.Instance.Definitions
+            .Select(d => (
+                d.Id,
+                string.IsNullOrWhiteSpace(d.DisplayName) ? d.Id : d.DisplayName,
+                d.Unit ?? ""))
+            .ToList();
+        ChannelRegistry.Instance.SyncMathsChannels(maths);
+    }
+
+    private void OnSessionEditRequested()
+    {
+        var meta = SessionMetadata.Current.Clone();
+        if (SessionEditDialog.Show(this, meta) == true)
+        {
+            SessionMetadata.Current = meta;
+            TestResultsPanelControl.RefreshSessionSummary();
+        }
+    }
+
+    private void OnMathsChanged()
+    {
+        RemergeMathsChannels();
+        RefreshChannelSelectorsFromRegistry();
+        RefreshAllPlots(force: true);
+    }
+
+    private void UpdateSelectionMeasure(PlotDefinition plot)
+    {
+        if (plot.SelectionX1 is not double x1 || plot.SelectionX2 is not double x2 ||
+            Math.Abs(x2 - x1) < 1e-12)
+        {
+            _lastMeasureText = null;
+            return;
+        }
+
+        var history = GetHistorySnapshotForAnalysis();
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var channelIds = plot.Channels.Select(c => c.ChannelId).Distinct().ToList();
+        if (channelIds.Count == 0)
+        {
+            _lastMeasureText = null;
+            return;
+        }
+
+        var measure = SelectionMeasure.Compute(
+            history,
+            s => GetAxisValue(s, xSignal),
+            x1,
+            x2,
+            channelIds);
+        if (measure is null)
+        {
+            _lastMeasureText = null;
+            return;
+        }
+
+        _lastMeasureText = SelectionMeasure.Format(
+            measure,
+            id => ChannelRegistry.Instance.GetDisplayName(id));
+    }
+
+    private void CopyMeasureToClipboard()
+    {
+        if (string.IsNullOrEmpty(_lastMeasureText))
+            return;
+        try { Clipboard.SetText(_lastMeasureText); }
+        catch { /* ignore clipboard races */ }
+    }
+
     private IReadOnlyList<VehicleSample> GetHistorySnapshot()
     {
         return _sampleHistory.Snapshot();
     }
+
+    private IReadOnlyList<SampleSource> GetTestSampleSources()
+    {
+        if (_isOfflineMode && _offlineFiles.Count > 0)
+        {
+            var defs = MathsChannelStore.Instance.Definitions;
+            return _offlineFiles.Files
+                .Select(f => new SampleSource
+                {
+                    Id = f.Id,
+                    Label = f.DisplayName,
+                    ColorHex = f.ColorHex,
+                    Samples = MathsEnricher.Apply(f.Samples, defs)
+                })
+                .ToList();
+        }
+
+        var live = _sampleHistory.Snapshot();
+        if (live.Count == 0)
+            return Array.Empty<SampleSource>();
+
+        return new[]
+        {
+            new SampleSource
+            {
+                Label = "Live",
+                ColorHex = "#C8A34A",
+                Samples = MathsEnricher.Apply(live, MathsChannelStore.Instance.Definitions)
+            }
+        };
+    }
+
 
 
     // ============================================================
@@ -2970,6 +3806,22 @@ public partial class MainWindow : Window
     {
         if (string.Equals(channelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
             return sample.Timestamp / 1000.0;
+
+        if (sample.Channels.ContainsKey(channelId))
+            return sample.Channels[channelId];
+
+        foreach (var def in MathsChannelStore.Instance.Definitions)
+        {
+            if (!string.Equals(def.Id, channelId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (MathsExpression.TryEvaluate(
+                    def.Expression,
+                    name => sample.GetChannel(name),
+                    out var value,
+                    out _))
+                return value;
+            break;
+        }
 
         return sample.GetChannel(channelId);
     }
@@ -3483,12 +4335,11 @@ public partial class MainWindow : Window
         // 也没有对应的 UDP 数据字段，所以方向盘角度暂时显示 0。
         // ------------------------------------------------------------
 
-        DashboardPanelControl.SetValues(
-            speedKph: sample.SpeedKph,
-            longitudinalAcceleration: sample.LongitudinalAcceleration,
-            lateralAcceleration: sample.LateralAcceleration,
-            yawRate: sample.YawRate,
-            steeringAngleDeg: 0.0,
+        var enriched = MathsEnricher.ApplyOne(
+            sample,
+            MathsChannelStore.Instance.Definitions);
+        DashboardPanelControl.ApplyLiveSample(
+            enriched,
             cursorFrozen: cursorSample is not null);
 
         // 多车摘要（线下多文件）；点选芯片后 Primary 对应当前文件
@@ -3798,6 +4649,8 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        SyncLayoutMapVisuals();
+
         _cancellationTokenSource =
             new CancellationTokenSource();
 
@@ -3874,6 +4727,16 @@ public partial class MainWindow : Window
         // ========================================================
 
         _uiTimer.Start();
+
+        // Restore last session (VBOs / gates / Test Results / maths) when files still exist.
+        try
+        {
+            await RestoreSessionMemoryAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine("Session restore failed: " + ex);
+        }
     }
 
 
@@ -3885,6 +4748,8 @@ public partial class MainWindow : Window
         object? sender,
         EventArgs e)
     {
+        try { SaveSessionMemory(); } catch { /* best-effort */ }
+
         _uiTimer.Stop();
 
 
@@ -3991,7 +4856,6 @@ public partial class MainWindow : Window
         public bool IsTimeAxis { get; set; }
     }
 
-
     // ============================================================
     // Channel 数据结构
     // ============================================================
@@ -4001,4 +4865,167 @@ public partial class MainWindow : Window
         /// <summary>通道 Id（见 ChannelIds / ChannelRegistry）。</summary>
         public string ChannelId { get; set; } = ChannelIds.Velocity;
     }
+
+
+    // ============================================================
+    // Session memory (%LocalAppData%\CMTS\session-memory.json)
+    // ============================================================
+
+    private DispatcherTimer? _sessionSaveTimer;
+    private bool _restoringSession;
+
+    private void ScheduleSessionMemorySave()
+    {
+        if (_restoringSession)
+        {
+            // Drop any pending save queued before restore started (would write empty maths).
+            _sessionSaveTimer?.Stop();
+            return;
+        }
+        if (!Dispatcher.CheckAccess())
+        {
+            Dispatcher.BeginInvoke(ScheduleSessionMemorySave);
+            return;
+        }
+
+        _sessionSaveTimer ??= new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(800) };
+        _sessionSaveTimer.Tick -= SessionSaveTimer_Tick;
+        _sessionSaveTimer.Tick += SessionSaveTimer_Tick;
+        _sessionSaveTimer.Stop();
+        _sessionSaveTimer.Start();
+    }
+
+    private void SessionSaveTimer_Tick(object? sender, EventArgs e)
+    {
+        _sessionSaveTimer?.Stop();
+        SaveSessionMemory();
+    }
+
+    private void SaveSessionMemory()
+    {
+        if (_restoringSession)
+            return;
+
+        var snap = new SessionMemorySnapshot
+        {
+            IsOfflineMode = _isOfflineMode,
+            ActiveVboPath = _offlineFiles.Selected?.FilePath,
+            LastVbtsPath = SessionMemoryStore.LastImportedVbtsPath,
+            SelectedGateId = GateStore.Instance.SelectedId,
+            AnalysisStartGateId = GateStore.Instance.AnalysisStartId,
+            AnalysisEndGateId = GateStore.Instance.AnalysisEndId,
+            TestResults = TestResultsPanelControl?.CaptureSettings(),
+        };
+
+        foreach (var f in _offlineFiles.Files)
+            snap.VboFiles.Add(f.FilePath);
+
+        foreach (var g in GateStore.Instance.Gates)
+            snap.Gates.Add(SessionMemoryStore.FromGate(g));
+
+        foreach (var m in MathsChannelStore.Instance.Definitions)
+            snap.MathsChannels.Add(SessionMemoryStore.FromMaths(m));
+
+        SessionMemoryStore.Save(snap);
+    }
+
+    private async Task RestoreSessionMemoryAsync()
+    {
+        var snap = SessionMemoryStore.Load();
+        if (snap is null)
+            return;
+
+        _sessionSaveTimer?.Stop();
+        _restoringSession = true;
+        try
+        {
+            if (snap.MathsChannels.Count > 0)
+            {
+                var defs = snap.MathsChannels
+                    .Where(m => !string.IsNullOrWhiteSpace(m.Id) && !string.IsNullOrWhiteSpace(m.Expression))
+                    .Select(SessionMemoryStore.ToMaths)
+                    .ToList();
+                if (defs.Count > 0)
+                {
+                    if (!MathsChannelStore.Instance.TryReplaceAll(defs, out var mathsError))
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            "Session maths restore failed: " + mathsError);
+                    }
+                    else
+                    {
+                        RemergeMathsChannels();
+                        RefreshChannelSelectorsFromRegistry();
+                    }
+                }
+            }
+
+            if (snap.Gates.Count > 0)
+            {
+                var gates = snap.Gates.Select(SessionMemoryStore.ToGate).ToList();
+                GateStore.Instance.ReplaceAll(
+                    gates,
+                    selectedId: snap.SelectedGateId,
+                    analysisStartId: snap.AnalysisStartGateId,
+                    analysisEndId: snap.AnalysisEndGateId);
+            }
+            else if (!string.IsNullOrWhiteSpace(snap.LastVbtsPath) &&
+                     File.Exists(snap.LastVbtsPath))
+            {
+                try
+                {
+                    var imported = VbtsGateImporter.ImportFile(snap.LastVbtsPath);
+                    GateStore.Instance.Clear();
+                    foreach (var g in imported)
+                        GateStore.Instance.Add(g);
+                    SessionMemoryStore.LastImportedVbtsPath = snap.LastVbtsPath;
+                }
+                catch
+                {
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(snap.LastVbtsPath))
+                SessionMemoryStore.LastImportedVbtsPath = snap.LastVbtsPath;
+
+            var existing = snap.VboFiles
+                .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (existing.Count > 0)
+            {
+                await EnterOfflineModeAsync(stopOnline: true);
+                foreach (var path in existing)
+                    LoadVboFile(path);
+
+                if (!string.IsNullOrWhiteSpace(snap.ActiveVboPath))
+                {
+                    var hit = _offlineFiles.Files.FirstOrDefault(f =>
+                        string.Equals(f.FilePath, snap.ActiveVboPath, StringComparison.OrdinalIgnoreCase));
+                    if (hit is not null && _offlineFiles.Selected?.Id != hit.Id)
+                        SelectOfflineFileKeepingCursor(hit.Id);
+                }
+
+                UpdateOfflineFileStatusLabels();
+                ShowPage(dashboard: true);
+            }
+
+            if (snap.TestResults is not null)
+                TestResultsPanelControl.ApplySettings(snap.TestResults);
+
+            // VBO load rebuilds ChannelRegistry; re-merge maths so selectors / plots see them.
+            if (MathsChannelStore.Instance.Definitions.Count > 0)
+            {
+                RemergeMathsChannels();
+                RefreshChannelSelectorsFromRegistry();
+            }
+        }
+        finally
+        {
+            _sessionSaveTimer?.Stop();
+            _restoringSession = false;
+        }
+    }
+
 }

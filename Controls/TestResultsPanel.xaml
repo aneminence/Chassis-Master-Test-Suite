@@ -3,22 +3,85 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              Background="#12171E">
 
+    <UserControl.Resources>
+        <Style x:Key="ResultsDataGridStyle" TargetType="DataGrid">
+            <Setter Property="Background" Value="#0E131A"/>
+            <Setter Property="Foreground" Value="#E6EAF0"/>
+            <Setter Property="BorderBrush" Value="#1E2530"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="RowBackground" Value="#0E131A"/>
+            <Setter Property="AlternatingRowBackground" Value="#12171E"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="#1E2530"/>
+            <Setter Property="VerticalGridLinesBrush" Value="#1E2530"/>
+            <Setter Property="HeadersVisibility" Value="Column"/>
+            <Setter Property="GridLinesVisibility" Value="Horizontal"/>
+            <Setter Property="AutoGenerateColumns" Value="False"/>
+            <Setter Property="CanUserAddRows" Value="False"/>
+            <Setter Property="CanUserDeleteRows" Value="False"/>
+            <Setter Property="IsReadOnly" Value="False"/>
+            <Setter Property="SelectionMode" Value="Single"/>
+            <Setter Property="RowHeaderWidth" Value="0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontFamily" Value="Consolas"/>
+        </Style>
+
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#1A222D"/>
+            <Setter Property="Foreground" Value="#8A94A6"/>
+            <Setter Property="BorderBrush" Value="#1E2530"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+        </Style>
+
+        <Style TargetType="DataGridCell">
+            <Setter Property="Padding" Value="6,3"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Padding="{TemplateBinding Padding}"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#243040"/>
+                    <Setter Property="Foreground" Value="#C8A34A"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="ParamLabelStyle" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="#8A94A6"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Margin" Value="0,0,6,0"/>
+        </Style>
+    </UserControl.Resources>
+
     <Border BorderBrush="#1E2530"
             BorderThickness="1"
             CornerRadius="6"
             Padding="14">
 
         <Grid>
-
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
+                <RowDefinition x:Name="ConditionsRowDef" Height="200" MinHeight="0"/>
+                <RowDefinition x:Name="SplitterRowDef" Height="6"/>
+                <RowDefinition Height="*" MinHeight="80"/>
+                <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <!-- 标题栏 -->
-            <Grid Grid.Row="0"
-                  Margin="0,0,0,10">
-
+            <Grid Grid.Row="0" Margin="0,0,0,10">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -27,62 +90,307 @@
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
-
-                    <TextBlock Text="▤"
-                               Foreground="#8A94A6"
-                               FontSize="14"
-                               Margin="0,0,8,0"
-                               VerticalAlignment="Center"/>
-
                     <TextBlock Text="Test Results"
                                Foreground="#E6EAF0"
                                FontSize="14"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
-
+                    <Button x:Name="ToggleConditionsButton"
+                            Content="Hide conditions"
+                            Style="{StaticResource HeaderButtonStyle}"
+                            Margin="12,0,0,0"
+                            Padding="10,2"
+                            Click="ToggleConditionsButton_Click"
+                            ToolTip="Collapse / expand the conditions area above the results table"/>
                 </StackPanel>
 
                 <Button Grid.Column="1"
-                        Content="Customize"
+                        Content="Session"
                         Style="{StaticResource HeaderButtonStyle}"
-                        IsEnabled="False"/>
-
+                        Click="SessionButton_Click"
+                        ToolTip="Edit session metadata written to VBO [SessionData]"/>
             </Grid>
 
-            <!-- 内容区（未开发） -->
-            <Border Grid.Row="1"
+            <ScrollViewer x:Name="ConditionsScroll"
+                          Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+            <Border
                     Background="#0E131A"
                     BorderBrush="#1E2530"
                     BorderThickness="1"
-                    CornerRadius="4">
+                    CornerRadius="4"
+                    Padding="10,8"
+                    Margin="0">
+                <StackPanel>
+                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="Type"
+                                   Style="{StaticResource ParamLabelStyle}"/>
+                        <ComboBox x:Name="TestTypeCombo"
+                                  Width="110"
+                                  Height="28"
+                                  Margin="0,0,14,4"
+                                  Style="{StaticResource DarkComboBoxStyle}"
+                                  SelectionChanged="TestTypeCombo_SelectionChanged">
+                            <ComboBoxItem Content="Accel" IsSelected="True" Tag="Accel"/>
+                            <ComboBoxItem Content="Decel" Tag="Decel"/>
+                            <ComboBoxItem Content="Custom" Tag="Custom"/>
+                            <ComboBoxItem Content="Gate" Tag="Gate"/>
+                        </ComboBox>
 
-                <StackPanel HorizontalAlignment="Center"
-                            VerticalAlignment="Center">
+                        <TextBlock x:Name="ChannelLabel"
+                                   Text="Channel"
+                                   Style="{StaticResource ParamLabelStyle}"
+                                   Visibility="Collapsed"/>
+                        <ComboBox x:Name="ChannelCombo"
+                                  Width="120"
+                                  Height="28"
+                                  Margin="0,0,14,4"
+                                  Style="{StaticResource DarkComboBoxStyle}"
+                                  Visibility="Collapsed"/>
+                    </WrapPanel>
 
-                    <TextBlock Text="Test Results"
-                               Foreground="#4A5568"
-                               FontSize="18"
-                               FontWeight="SemiBold"
-                               HorizontalAlignment="Center"/>
+                    
+                                        <StackPanel x:Name="GatePickPanel" Margin="0,0,0,6" Visibility="Collapsed">
+                        <TextBlock Text="Start Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="Start When" Style="{StaticResource ParamLabelStyle}"/>
+                            <ComboBox x:Name="GateStartCombo" Width="160" Height="28" Margin="0,0,14,4"
+                                      Style="{StaticResource DarkComboBoxStyle}"
+                                      SelectionChanged="GateStartCombo_SelectionChanged"
+                                      ToolTip="Start When: named gate"/>
+                        </WrapPanel>
 
-                    <TextBlock Text="Automatic calculation with user-defined boundary conditions"
-                               Foreground="#39424F"
+                        <TextBlock Text="End Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <TextBlock Text="End When" Style="{StaticResource ParamLabelStyle}"/>
+                            <ComboBox x:Name="GateEndCombo" Width="160" Height="28" Margin="0,0,14,4"
+                                      Style="{StaticResource DarkComboBoxStyle}"
+                                      SelectionChanged="GateEndCombo_SelectionChanged"
+                                      ToolTip="End When: named gate"/>
+                        </WrapPanel>
+
+                        <Grid Margin="0,0,0,4">
+                            <TextBlock Text="Pass Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold"
+                                       VerticalAlignment="Center"/>
+                            <Button Content="+ Add Pass" Style="{StaticResource HeaderButtonStyle}"
+                                    HorizontalAlignment="Right" Click="AddPassCondition_Click"
+                                    ToolTip="Add Pass Condition: Channel Min–Max At gate"/>
+                        </Grid>
+                                                <ItemsControl x:Name="PassConditionsHost">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <WrapPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="Channel" Style="{StaticResource ParamLabelStyle}"/>
+                                        <ComboBox Width="120" Height="28" Margin="0,0,8,4"
+                                                  Style="{StaticResource DarkComboBoxStyle}"
+                                                  ItemsSource="{Binding ChannelOptions}"
+                                                  SelectedItem="{Binding ChannelId, Mode=TwoWay}"/>
+                                        <TextBlock Text="Min" Style="{StaticResource ParamLabelStyle}"/>
+                                        <TextBox Width="56" Height="28" Margin="0,0,8,4"
+                                                 Text="{Binding MinText, UpdateSourceTrigger=PropertyChanged}"
+                                                 Style="{StaticResource DarkTextBoxStyle}"
+                                                 VerticalContentAlignment="Center"/>
+                                        <TextBlock Text="Max" Style="{StaticResource ParamLabelStyle}"/>
+                                        <TextBox Width="56" Height="28" Margin="0,0,8,4"
+                                                 Text="{Binding MaxText, UpdateSourceTrigger=PropertyChanged}"
+                                                 Style="{StaticResource DarkTextBoxStyle}"
+                                                 VerticalContentAlignment="Center"/>
+                                        <TextBlock Text="At" Style="{StaticResource ParamLabelStyle}"/>
+                                        <ComboBox Width="140" Height="28" Margin="0,0,8,4"
+                                                  Style="{StaticResource DarkComboBoxStyle}"
+                                                  ItemsSource="{Binding GateChoices}"
+                                                  SelectedValuePath="Id"
+                                                  SelectedValue="{Binding AtGateId, Mode=TwoWay}"/>
+                                        <Button Content="Remove" Style="{StaticResource HeaderButtonStyle}"
+                                                Margin="0,0,0,4" Padding="8,2"
+                                                Click="RemovePassCondition_Click"/>
+                                    </WrapPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+<WrapPanel Orientation="Horizontal">
+                        <TextBlock x:Name="StartLabel"
+                                   Text="Start"
+                                   Style="{StaticResource ParamLabelStyle}"/>
+                        <TextBox x:Name="StartThresholdBox"
+                                 Width="72"
+                                 Height="28"
+                                 Margin="0,0,4,4"
+                                 Text="0"
+                                 Style="{StaticResource DarkTextBoxStyle}"
+                                 VerticalContentAlignment="Center"/>
+                        <TextBlock Text="km/h"
+                                   Foreground="#4A5568"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,14,4"/>
+
+                        <TextBlock x:Name="EndLabel"
+                                   Text="End"
+                                   Style="{StaticResource ParamLabelStyle}"/>
+                        <TextBox x:Name="EndThresholdBox"
+                                 Width="72"
+                                 Height="28"
+                                 Margin="0,0,4,4"
+                                 Text="100"
+                                 Style="{StaticResource DarkTextBoxStyle}"
+                                 VerticalContentAlignment="Center"/>
+                        <TextBlock Text="km/h"
+                                   Foreground="#4A5568"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,14,4"/>
+
+                        <Button x:Name="ComputeButton"
+                                Content="Compute"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,8,4"
+                                Padding="14,4"
+                                Click="ComputeButton_Click"
+                                ToolTip="Compute across ALL open VBO files / live history"/>
+
+                        <Button x:Name="ExportCsvButton"
+                                Content="Export CSV"
+                                Style="{StaticResource HeaderButtonStyle}"
+                                Margin="0,0,0,4"
+                                Click="ExportCsvButton_Click"
+                                IsEnabled="False"
+                                ToolTip="Export current results to CSV"/>
+                    </WrapPanel>
+
+
+                    <Button x:Name="MathsChannelsButton"
+                            Content="Maths Channels..."
+                            Style="{StaticResource HeaderButtonStyle}"
+                            HorizontalAlignment="Left"
+                            Margin="0,8,0,0"
+                            Click="MathsChannelsButton_Click"
+                            ToolTip="Define calculated channels (VBTS-style editor)"/>
+                    <TextBlock x:Name="StatusText"
+                               Foreground="#8A94A6"
                                FontSize="11"
-                               Margin="0,8,0,0"
-                               HorizontalAlignment="Center"/>
-
-                    <TextBlock Text="Not implemented yet"
-                               Foreground="#C8A34A"
-                               FontSize="11"
-                               Margin="0,14,0,0"
-                               HorizontalAlignment="Center"/>
-
+                               Margin="0,4,0,0"
+                               Text="Compute scans every open VBO. Check rows to overlay-compare on charts."/>
                 </StackPanel>
-
             </Border>
+            </ScrollViewer>
 
+            <GridSplitter x:Name="ConditionsSplitter"
+                          Grid.Row="2"
+                          Height="6"
+                          HorizontalAlignment="Stretch"
+                          VerticalAlignment="Center"
+                          Background="#1E2530"
+                          ResizeDirection="Rows"
+                          ResizeBehavior="PreviousAndNext"
+                          ShowsPreview="True"
+                          ToolTip="Drag to resize conditions / results"/>
+
+
+            <DataGrid x:Name="ResultsGrid"
+                      Grid.Row="3"
+                      Style="{StaticResource ResultsDataGridStyle}">
+                <DataGrid.Columns>
+                    <DataGridTemplateColumn Width="44" CanUserResize="False">
+                        <DataGridTemplateColumn.Header>
+                            <CheckBox x:Name="SelectAllCheckBox"
+                                      HorizontalAlignment="Center"
+                                      VerticalAlignment="Center"
+                                      IsThreeState="True"
+                                      Focusable="False"
+                                      ToolTip="Select all / clear"
+                                      PreviewMouseLeftButtonDown="SelectAllCheckBox_PreviewMouseLeftButtonDown"/>
+                        </DataGridTemplateColumn.Header>
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          Focusable="False"
+                                          PreviewMouseLeftButtonDown="RowCheckBox_PreviewMouseLeftButtonDown"/>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                    <DataGridTextColumn Header="#"
+                                        Binding="{Binding RunNumber}"
+                                        IsReadOnly="True"
+                                        Width="36"/>
+                    <DataGridTextColumn Header="Source"
+                                        Binding="{Binding SourceText}"
+                                        IsReadOnly="True"
+                                        Width="140"/>
+                    <DataGridTextColumn Header="Start"
+                                        Binding="{Binding StartTimeText}"
+                                        IsReadOnly="True"
+                                        Width="90"/>
+                    <DataGridTextColumn Header="End"
+                                        Binding="{Binding EndTimeText}"
+                                        IsReadOnly="True"
+                                        Width="90"/>
+                    <DataGridTextColumn Header="Duration s"
+                                        Binding="{Binding DurationText}"
+                                        IsReadOnly="True"
+                                        Width="80"/>
+                    <DataGridTextColumn Header="dV km/h"
+                                        Binding="{Binding DeltaVText}"
+                                        IsReadOnly="True"
+                                        Width="72"/>
+                    <DataGridTextColumn Header="Dist m"
+                                        Binding="{Binding DistanceText}"
+                                        IsReadOnly="True"
+                                        Width="72"/>
+                    <DataGridTextColumn Header="Pass"
+                                        Binding="{Binding PassText}"
+                                        IsReadOnly="True"
+                                        Width="56"/>
+                    <DataGridTemplateColumn Header="Pass values"
+                                            Width="SizeToCells"
+                                            MinWidth="120"
+                                            IsReadOnly="True">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <ItemsControl ItemsSource="{Binding PassValues}">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <WrapPanel Orientation="Horizontal"/>
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="3"
+                                                    Padding="6,2"
+                                                    Margin="0,1,6,1"
+                                                    Background="{Binding ChipBackground}"
+                                                    ToolTip="{Binding ToolTip}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="{Binding Label}"
+                                                               Foreground="#8A94A6"
+                                                               FontSize="10"
+                                                               Margin="0,0,4,0"
+                                                               VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding ValueText}"
+                                                               Foreground="{Binding ValueBrush}"
+                                                               FontWeight="SemiBold"
+                                                               FontSize="11"
+                                                               VerticalAlignment="Center"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+
+            <TextBlock Grid.Row="4"
+                       Margin="0,8,0,0"
+                       Foreground="#39424F"
+                       FontSize="10"
+                       Text="Multi-file Compute + checkbox compare (X = seconds from each run start). Single row focus keeps span annotation."/>
         </Grid>
-
     </Border>
-
 </UserControl>

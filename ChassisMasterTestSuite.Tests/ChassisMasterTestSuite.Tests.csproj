@@ -22,7 +22,7 @@
     </PackageReference>
   </ItemGroup>
 
-  <!-- Link pure (non-UI) production sources — avoids WPF ProjectReference on Linux.
+  <!-- Link pure (non-UI) production sources 鈥?avoids WPF ProjectReference on Linux.
        Keep in sync with main tree; do not edit copies. -->
   <ItemGroup>
     <Compile Include="..\Core\ChannelIds.cs" Link="Linked\Core\ChannelIds.cs" />
@@ -32,11 +32,40 @@
     <Compile Include="..\Core\PlotDownsampler.cs" Link="Linked\Core\PlotDownsampler.cs" />
     <Compile Include="..\Core\SampleHistoryBuffer.cs" Link="Linked\Core\SampleHistoryBuffer.cs" />
     <Compile Include="..\Core\VehicleSample.cs" Link="Linked\Core\VehicleSample.cs" />
+    <Compile Include="..\Core\SampleEnricher.cs" Link="Linked\Core\SampleEnricher.cs" />
+    <Compile Include="..\Core\DashboardGaugeModels.cs" Link="Linked\Core\DashboardGaugeModels.cs" />
+    <Compile Include="..\Core\SessionMemoryStore.cs" Link="Linked\Core\SessionMemoryStore.cs" />
+    <Compile Include="..\Analysis\TestType.cs" Link="Linked\Analysis\TestType.cs" />
+    <Compile Include="..\Analysis\CrossingDirection.cs" Link="Linked\Analysis\CrossingDirection.cs" />
+    <Compile Include="..\Analysis\ThresholdCondition.cs" Link="Linked\Analysis\ThresholdCondition.cs" />
+    <Compile Include="..\Analysis\TestDefinition.cs" Link="Linked\Analysis\TestDefinition.cs" />
+    <Compile Include="..\Analysis\TestRunResult.cs" Link="Linked\Analysis\TestRunResult.cs" />
+    <Compile Include="..\Analysis\SpeedToSpeedEngine.cs" Link="Linked\Analysis\SpeedToSpeedEngine.cs" />
+    <Compile Include="..\Session\SessionMetadata.cs" Link="Linked\Session\SessionMetadata.cs" />
+    <Compile Include="..\Analysis\SampleSource.cs" Link="Linked\Analysis\SampleSource.cs" />
+    <Compile Include="..\Analysis\AnnotatedTestRun.cs" Link="Linked\Analysis\AnnotatedTestRun.cs" />
+    <Compile Include="..\Analysis\SelectionMeasure.cs" Link="Linked\Analysis\SelectionMeasure.cs" />
+    <Compile Include="..\Analysis\GateStore.cs" Link="Linked\Analysis\GateStore.cs" />
+    <Compile Include="..\Analysis\GateRunEngine.cs" Link="Linked\Analysis\GateRunEngine.cs" />
+    <Compile Include="..\Analysis\GateCrossing.cs" Link="Linked\Analysis\GateCrossing.cs" />
+    <Compile Include="..\Analysis\GateDefinition.cs" Link="Linked\Analysis\GateDefinition.cs" />
+    <Compile Include="..\Analysis\VbtsGateImporter.cs" Link="Linked\Analysis\VbtsGateImporter.cs" />
+    <Compile Include="..\Analysis\GatePassCondition.cs" Link="Linked\Analysis\GatePassCondition.cs" />
+    <Compile Include="..\Analysis\PassConditionMeasurement.cs" Link="Linked\Analysis\PassConditionMeasurement.cs" />
+    <Compile Include="..\Analysis\MathsEnricher.cs" Link="Linked\Analysis\MathsEnricher.cs" />
+    <Compile Include="..\Analysis\MathsChannelStore.cs" Link="Linked\Analysis\MathsChannelStore.cs" />
+    <Compile Include="..\Analysis\MathsChannelDefinition.cs" Link="Linked\Analysis\MathsChannelDefinition.cs" />
+    <Compile Include="..\Analysis\MathsExpression.cs" Link="Linked\Analysis\MathsExpression.cs" />
+    <Compile Include="..\Analysis\TestResultsCsvExporter.cs" Link="Linked\Analysis\TestResultsCsvExporter.cs" />
     <Compile Include="..\Communication\UdpPacket.cs" Link="Linked\Communication\UdpPacket.cs" />
     <Compile Include="..\Communication\UdpPacketSerializer.cs" Link="Linked\Communication\UdpPacketSerializer.cs" />
     <Compile Include="..\Communication\GSpot\GSpotParser.cs" Link="Linked\Communication\GSpot\GSpotParser.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
   </ItemGroup>
-
+  <ItemGroup>
+    <None Update="Fixtures\mini.vbts">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
 </Project>

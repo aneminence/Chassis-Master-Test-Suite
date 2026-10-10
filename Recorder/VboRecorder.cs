@@ -5,6 +5,8 @@ using System.IO;
 using System.Text;
 using System.Threading.Channels;
 
+using Chassis_Master_Test_Suite.Session;
+
 namespace Chassis_Master_Test_Suite.Recorder;
 
 /// <summary>
@@ -103,9 +105,12 @@ public sealed class VboRecorder : IDisposable
     /// </summary>
     private long _firstTimestampMilliseconds;
 
-    public VboRecorder(string filePath)
+    private readonly SessionMetadata _session;
+
+    public VboRecorder(string filePath, SessionMetadata? session = null)
     {
         FilePath = filePath;
+        _session = session ?? SessionMetadata.Current.Clone();
 
         var directory = Path.GetDirectoryName(filePath);
 
@@ -220,17 +225,9 @@ public sealed class VboRecorder : IDisposable
 
         // 段 4：[SessionData] 会话元数据
         _writer.WriteLine("[SessionData]");
-        _writer.WriteLine($"timeZone:{TimeZoneInfo.Local.Id}");
-        _writer.WriteLine("TestTrack:");
-        _writer.WriteLine("TestFacility:");
-        _writer.WriteLine("Comments:");
-        _writer.WriteLine("DriverName:");
-        _writer.WriteLine("VehicleNumber:");
-        _writer.WriteLine("VehicleModel:");
-        _writer.WriteLine("Weather:");
-        _writer.WriteLine("Temperature:");
-        _writer.WriteLine("WindSpeed:");
-        _writer.WriteLine();
+        foreach (var line in _session.ToVboLines())
+            _writer.WriteLine(line);
+_writer.WriteLine();
 
         // 段 5：[column names] 列短名，解析时以此为准
         //

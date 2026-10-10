@@ -294,4 +294,51 @@ public sealed class ChannelRegistry
 
         return "";
     }
+
+    private readonly HashSet<string> _syncedMathsIds = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Merge maths channels into Available (does not replace existing).</summary>
+    public void MergeMathsChannels(IEnumerable<(string Id, string Display, string Unit)> maths)
+    {
+        SyncMathsChannels(maths);
+    }
+
+    /// <summary>
+    /// Replace previously synced maths channels on Available with the current set
+    /// (add / update / remove). Safe to call with an empty list.
+    /// </summary>
+    public void SyncMathsChannels(IEnumerable<(string Id, string Display, string Unit)> maths)
+    {
+        var mathsList = maths.ToList();
+        var mathsIds = new HashSet<string>(
+            mathsList.Select(m => m.Id),
+            StringComparer.OrdinalIgnoreCase);
+
+        var list = _available
+            .Where(ch =>
+                !_syncedMathsIds.Contains(ch.Id) ||
+                mathsIds.Contains(ch.Id))
+            .ToList();
+
+        foreach (var (id, display, unit) in mathsList)
+        {
+            var info = new ChannelInfo(id, display, unit);
+            _catalog[id] = info;
+
+            var idx = list.FindIndex(ch =>
+                string.Equals(ch.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0)
+                list[idx] = info;
+            else
+                list.Add(info);
+        }
+
+        _syncedMathsIds.Clear();
+        foreach (var id in mathsIds)
+            _syncedMathsIds.Add(id);
+
+        _available = list;
+        AvailableChanged?.Invoke(this, EventArgs.Empty);
+    }
+
 }
