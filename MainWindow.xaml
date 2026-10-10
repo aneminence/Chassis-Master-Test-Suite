@@ -639,13 +639,13 @@
                         CornerRadius="4"
                         ClipToBounds="True">
 
+                    <!-- Plots stack with pixel heights and overflow; wheel/scrollbar to scroll -->
                     <ScrollViewer x:Name="PlotScrollViewer"
                                   VerticalScrollBarVisibility="Auto"
                                   HorizontalScrollBarVisibility="Disabled"
-                                  Padding="6">
-
-                        <StackPanel x:Name="PlotContainer"/>
-
+                                  Focusable="False"
+                                  PanningMode="VerticalOnly">
+                        <Grid x:Name="PlotContainer" Margin="6"/>
                     </ScrollViewer>
 
                 </Border>

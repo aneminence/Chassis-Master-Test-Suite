@@ -73,6 +73,7 @@ public partial class MainWindow : Window
     private double _layoutTestResultsMin = 260;
     private double _layoutMapMin = 300;
     private double _layoutCurvesMin = 240;
+    private double _layoutTopPanelsMin = 200;
 
     private static readonly GridLength LayoutDefaultDashboardWidth =
         new(1.2, GridUnitType.Star);
@@ -129,6 +130,15 @@ public partial class MainWindow : Window
     private readonly List<PlotDefinition> _plots = new();
 
     private int _nextPlotNumber = 1;
+
+    private const double PlotMinHeightPx = 120;
+
+    /// <summary>Last known curves viewport height (ScrollViewer.ViewportHeight).</summary>
+    private double _curvesViewportHeight = 280;
+
+    /// <summary>When true and only one plot, keep that plot height = curves viewport.</summary>
+    private bool _singlePlotFillsViewport = true;
+
 
     private bool _isRefreshingPlots;
 
@@ -628,21 +638,14 @@ public partial class MainWindow : Window
 
         if (cursorX is double keepX)
         {
-            PlotDefinition? source = null;
             foreach (var plot in _plots)
             {
-                plot.CursorX = keepX;
                 plot.SelectionX1 = sel1;
                 plot.SelectionX2 = sel2;
-                source ??= plot;
-                if (plot.WpfPlot is not null)
-                {
-                    ApplyPlotOverlays(plot);
-                    plot.WpfPlot.Refresh();
-                }
             }
 
-            _cursorSourcePlot = source;
+            var source = _plots.Count > 0 ? _plots[0] : null;
+            SetSharedCursor(keepX, source);
             UpdateNumericDisplay();
         }
     }
@@ -986,23 +989,6 @@ public partial class MainWindow : Window
                 return;
         }
 
-        // Keep at least one top panel visible.
-        if (!_layoutShowDashboard && !_layoutShowTestResults && !_layoutShowMap)
-        {
-            switch (tag)
-            {
-                case "Dashboard":
-                    _layoutShowDashboard = true;
-                    break;
-                case "TestResults":
-                    _layoutShowTestResults = true;
-                    break;
-                case "Map":
-                    _layoutShowMap = true;
-                    break;
-            }
-        }
-
         ApplyLayoutVisibility();
         SyncLayoutMapVisuals();
     }
@@ -1025,6 +1011,7 @@ public partial class MainWindow : Window
         _layoutTestResultsMin = 260;
         _layoutMapMin = 300;
         _layoutCurvesMin = 240;
+        _layoutTopPanelsMin = 200;
 
         if (DashboardColumn is not null)
         {
@@ -1113,9 +1100,11 @@ public partial class MainWindow : Window
             CurvesPanelBorder.Visibility =
                 chart ? Visibility.Visible : Visibility.Collapsed;
 
+        var anyTop = dash || test || map;
+
         if (CurvesRowSplitter is not null)
             CurvesRowSplitter.Visibility =
-                chart ? Visibility.Visible : Visibility.Collapsed;
+                chart && anyTop ? Visibility.Visible : Visibility.Collapsed;
 
         if (CurvesRow is not null)
         {
@@ -1138,12 +1127,21 @@ public partial class MainWindow : Window
             }
         }
 
+        // Allow all top panels closed so Chart can fill the workspace alone.
         if (TopPanelsRow is not null)
         {
-            if (!chart)
+            if (!anyTop)
+            {
+                if (TopPanelsRow.MinHeight > 0)
+                    _layoutTopPanelsMin = TopPanelsRow.MinHeight;
+                TopPanelsRow.MinHeight = 0;
+                TopPanelsRow.Height = new GridLength(0);
+            }
+            else
+            {
+                TopPanelsRow.MinHeight = _layoutTopPanelsMin > 0 ? _layoutTopPanelsMin : 200;
                 TopPanelsRow.Height = LayoutDefaultTopPanelsHeight;
-            else if (TopPanelsRow.Height.Value <= 0 && !TopPanelsRow.Height.IsStar)
-                TopPanelsRow.Height = LayoutDefaultTopPanelsHeight;
+            }
         }
     }
 
@@ -1233,6 +1231,11 @@ public partial class MainWindow : Window
     /// </summary>
     private void SanitizePlotChannelSelections()
     {
+        // Online switches ChannelRegistry to live-core (narrower set), but opened VBOs stay in _offlineFiles.
+        // Do not clobber VBO-only plot channel picks to Speed; Offline restore must keep them.
+        if (_offlineFiles.Count > 0 && !_isOfflineMode)
+            return;
+
         var fallback = ChannelRegistry.Instance.DefaultPlotChannelId;
 
         foreach (var plot in _plots)
@@ -1287,6 +1290,7 @@ public partial class MainWindow : Window
             return;
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -1302,6 +1306,7 @@ public partial class MainWindow : Window
             CaptureLockedLimitsFromPlots();
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -1311,7 +1316,67 @@ public partial class MainWindow : Window
 
     private void InitializePlotSystem()
     {
+        if (PlotScrollViewer is not null)
+            PlotScrollViewer.SizeChanged += PlotScrollViewer_SizeChanged;
+
         AddPlot();
+    }
+
+    private void PlotScrollViewer_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (PlotScrollViewer is null)
+            return;
+
+        if (PlotScrollViewer.ViewportHeight > 50)
+            _curvesViewportHeight = PlotScrollViewer.ViewportHeight;
+
+        if (_restoringSession)
+            return;
+
+        if (_plots.Count == 1 && _singlePlotFillsViewport)
+            ApplySinglePlotFillHeight(rebuild: false);
+    }
+
+    private double GetViewportFillHeight()
+    {
+        var h = PlotScrollViewer?.ViewportHeight ?? 0;
+        if (h < 50)
+            h = _curvesViewportHeight;
+        if (h < 50)
+            h = 280;
+        // Margin (6*2) + bottom resize thumb (~6)
+        return Math.Max(PlotMinHeightPx, h - 18);
+    }
+
+    private void ApplySinglePlotFillHeight(bool rebuild)
+    {
+        if (_plots.Count != 1)
+            return;
+
+        var target = GetViewportFillHeight();
+        if (Math.Abs(_plots[0].HeightPx - target) < 1.5)
+            return;
+
+        _plots[0].HeightPx = target;
+        if (rebuild)
+            RefreshPlotContainer();
+        else
+            ApplyPlotHeightsToRows();
+    }
+
+    private void ApplyPlotHeightsToRows()
+    {
+        if (PlotContainer.RowDefinitions.Count == 0 || _plots.Count == 0)
+            return;
+
+        for (var i = 0; i < _plots.Count; i++)
+        {
+            var row = i * 2;
+            if (row >= PlotContainer.RowDefinitions.Count)
+                break;
+            PlotContainer.RowDefinitions[row].Height =
+                new GridLength(Math.Max(PlotMinHeightPx, _plots[i].HeightPx));
+        }
     }
 
 
@@ -1329,10 +1394,19 @@ public partial class MainWindow : Window
 
     private void AddPlot()
     {
+        var isFirst = _plots.Count == 0;
+        var height = isFirst
+            ? GetViewportFillHeight()
+            : Math.Max(PlotMinHeightPx, Math.Min(360, GetViewportFillHeight() * 0.55));
+
+        if (!isFirst)
+            _singlePlotFillsViewport = false;
+
         var plot = new PlotDefinition
         {
             Name = $"Plot {_nextPlotNumber++}",
-            AutoScaleY = true
+            AutoScaleY = true,
+            HeightPx = height
         };
 
         plot.Channels.Add(
@@ -1346,6 +1420,7 @@ public partial class MainWindow : Window
         RefreshPlotContainer();
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -1367,9 +1442,13 @@ public partial class MainWindow : Window
             UpdateNumericDisplay();
         }
 
+        if (_plots.Count == 1)
+            _singlePlotFillsViewport = false;
+
         RefreshPlotContainer();
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -1450,15 +1529,121 @@ public partial class MainWindow : Window
 
     private void RefreshPlotContainer()
     {
+        // Keep HeightPx as source of truth; sync from live rows if user dragged.
+        CapturePlotRowHeightsFromContainer();
+
         PlotContainer.Children.Clear();
+        PlotContainer.RowDefinitions.Clear();
+        PlotContainer.ColumnDefinitions.Clear();
 
-        foreach (var plot in _plots)
+        if (_plots.Count == 0)
+            return;
+
+        if (_plots.Count == 1 && _singlePlotFillsViewport)
+            _plots[0].HeightPx = GetViewportFillHeight();
+
+        for (var i = 0; i < _plots.Count; i++)
         {
-            var plotControl =
-                CreatePlotControl(plot);
+            var heightPx = Math.Max(PlotMinHeightPx, _plots[i].HeightPx);
+            _plots[i].HeightPx = heightPx;
 
-            PlotContainer.Children.Add(
-                plotControl);
+            PlotContainer.RowDefinitions.Add(
+                new RowDefinition
+                {
+                    Height = new GridLength(heightPx),
+                    MinHeight = PlotMinHeightPx
+                });
+
+            var plotControl = CreatePlotControl(_plots[i]);
+            Grid.SetRow(plotControl, PlotContainer.RowDefinitions.Count - 1);
+            PlotContainer.Children.Add(plotControl);
+
+            // Resize thumb under every plot (including the last) — grows/shrinks that plot only.
+            PlotContainer.RowDefinitions.Add(
+                new RowDefinition { Height = GridLength.Auto });
+
+            var thumb = CreatePlotHeightThumb(_plots[i]);
+            Grid.SetRow(thumb, PlotContainer.RowDefinitions.Count - 1);
+            PlotContainer.Children.Add(thumb);
+        }
+    }
+
+    private FrameworkElement CreatePlotHeightThumb(PlotDefinition plot)
+    {
+        var thumb = new Border
+        {
+            Height = 6,
+            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x40)),
+            Cursor = Cursors.SizeNS,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            Margin = new Thickness(0, 2, 0, 2),
+            ToolTip = "Drag to resize plot height"
+        };
+
+        double startY = 0;
+        double startH = 0;
+        var dragging = false;
+
+        thumb.MouseLeftButtonDown += (_, e) =>
+        {
+            startY = e.GetPosition(PlotContainer).Y;
+            startH = plot.HeightPx;
+            dragging = true;
+            thumb.CaptureMouse();
+            e.Handled = true;
+        };
+
+        thumb.MouseMove += (_, e) =>
+        {
+            if (!dragging || !thumb.IsMouseCaptured)
+                return;
+
+            var dy = e.GetPosition(PlotContainer).Y - startY;
+            var next = Math.Max(PlotMinHeightPx, startH + dy);
+            if (Math.Abs(next - plot.HeightPx) < 0.5)
+                return;
+
+            plot.HeightPx = next;
+            _singlePlotFillsViewport = false;
+            ApplyPlotHeightsToRows();
+        };
+
+        thumb.MouseLeftButtonUp += (_, e) =>
+        {
+            if (!dragging)
+                return;
+            dragging = false;
+            if (thumb.IsMouseCaptured)
+                thumb.ReleaseMouseCapture();
+            ScheduleSessionMemorySave();
+            e.Handled = true;
+        };
+
+        thumb.LostMouseCapture += (_, _) => { dragging = false; };
+
+        return thumb;
+    }
+
+    /// <summary>
+    /// Persist each plot row height from the live Grid before rebuild.
+    /// Layout: plot0, thumb, plot1, thumb, ... => plot i at row i*2.
+    /// </summary>
+    private void CapturePlotRowHeightsFromContainer()
+    {
+        if (PlotContainer.RowDefinitions.Count == 0 || _plots.Count == 0)
+            return;
+
+        for (var i = 0; i < _plots.Count; i++)
+        {
+            var row = i * 2;
+            if (row >= PlotContainer.RowDefinitions.Count)
+                break;
+
+            var def = PlotContainer.RowDefinitions[row];
+            if (def.ActualHeight > 1)
+                _plots[i].HeightPx = def.ActualHeight;
+            else if (def.Height.IsAbsolute && def.Height.Value > 0)
+                _plots[i].HeightPx = def.Height.Value;
         }
     }
 
@@ -1493,10 +1678,14 @@ public partial class MainWindow : Window
                 new CornerRadius(4),
 
             Margin =
-                new Thickness(0, 0, 0, 10),
+                new Thickness(0, 0, 0, 0),
 
             Padding =
-                new Thickness(8)
+                new Thickness(8),
+
+            // Stretch within fixed-pixel plot row (height set by outer Grid + drag thumb).
+            VerticalAlignment = VerticalAlignment.Stretch,
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
 
 
@@ -1514,316 +1703,116 @@ public partial class MainWindow : Window
         root.RowDefinitions.Add(
             new RowDefinition
             {
-                Height =
-                    GridLength.Auto
-            });
-
-
-        root.RowDefinitions.Add(
-            new RowDefinition
-            {
-                Height =
-                    new GridLength(350)
+                // Stretch with parent plot row height.
+                Height = new GridLength(1, GridUnitType.Star),
+                MinHeight = 80
             });
 
 
         // ========================================================
-        // Plot Header
+        // Plot Header: name / Auto Y / + Channel / channels (wrap) / Remove
         // ========================================================
 
-        var header = new Grid();
-
-        header.Margin =
-            new Thickness(0, 0, 0, 8);
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    GridLength.Auto
-            });
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    new GridLength(220)
-            });
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    GridLength.Auto
-            });
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    GridLength.Auto
-            });
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    new GridLength(
-                        1,
-                        GridUnitType.Star)
-            });
-
-
-        header.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    GridLength.Auto
-            });
-
-
-        // ========================================================
-        // Plot 名称
-        // ========================================================
-
-        var nameLabel = new TextBlock
+        var header = new DockPanel
         {
-            Text = "Plot Name",
-
-            Foreground =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x8A,
-                        0x94,
-                        0xA6)),
-
-            FontSize = 11,
-
-            FontWeight =
-                FontWeights.Bold,
-
-            VerticalAlignment =
-                VerticalAlignment.Center,
-
-            Margin =
-                new Thickness(0, 0, 8, 0)
+            LastChildFill = true,
+            Margin = new Thickness(0, 0, 0, 6)
         };
-
-        Grid.SetColumn(
-            nameLabel,
-            0);
-
-        header.Children.Add(
-            nameLabel);
-
-
-        var nameTextBox = new TextBox
-        {
-            Text = plot.Name,
-
-            Height = 28,
-
-            VerticalContentAlignment =
-                VerticalAlignment.Center
-        };
-
-
-        // 深色样式（App.xaml 提供）
-        nameTextBox.SetResourceReference(
-            FrameworkElement.StyleProperty,
-            "DarkTextBoxStyle");
-
-
-        nameTextBox.TextChanged +=
-            (_, _) =>
-            {
-                plot.Name =
-                    nameTextBox.Text;
-
-                RefreshPlotTitle(plot);
-            };
-
-
-        Grid.SetColumn(
-            nameTextBox,
-            1);
-
-        header.Children.Add(
-            nameTextBox);
-
-
-        // ========================================================
-        // Y Auto Scale
-        // ========================================================
-
-        var autoScaleCheckBox = new CheckBox
-        {
-            Content = "Auto Y",
-
-            IsChecked =
-                plot.AutoScaleY,
-
-            VerticalAlignment =
-                VerticalAlignment.Center,
-
-            Margin =
-                new Thickness(15, 0, 15, 0)
-        };
-
-        plot.AutoScaleYCheckBox = autoScaleCheckBox;
-
-
-        autoScaleCheckBox.Checked +=
-            (_, _) =>
-            {
-                plot.AutoScaleY = true;
-
-                if (!_suppressAutoScaleCheckboxRefresh)
-                    RefreshPlot(plot);
-            };
-
-
-        autoScaleCheckBox.Unchecked +=
-            (_, _) =>
-            {
-                plot.AutoScaleY = false;
-                if (plot.WpfPlot is not null)
-                    plot.LockedLimits = plot.WpfPlot.Plot.Axes.GetLimits();
-            };
-
-
-        Grid.SetColumn(
-            autoScaleCheckBox,
-            2);
-
-        header.Children.Add(
-            autoScaleCheckBox);
-
-
-        // ========================================================
-        // Add Channel
-        // ========================================================
-
-        var addChannelButton = new Button
-        {
-            Content = "+ Channel",
-
-            Height = 26,
-
-            Margin =
-                new Thickness(0, 0, 8, 0)
-        };
-
-
-        // 深色样式（App.xaml 提供）
-        addChannelButton.SetResourceReference(
-            FrameworkElement.StyleProperty,
-            "ToolButtonStyle");
-
-
-        addChannelButton.Click +=
-            (_, _) =>
-            {
-                AddChannel(plot);
-            };
-
-
-        Grid.SetColumn(
-            addChannelButton,
-            3);
-
-        header.Children.Add(
-            addChannelButton);
-
-
-        // ========================================================
-        // Remove Plot
-        // ========================================================
 
         var removePlotButton = new Button
         {
             Content = "Remove Plot",
-
-            Height = 26
+            Height = 26,
+            Margin = new Thickness(8, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Top
         };
-
-
-        // 深色样式 + 危险操作配色（App.xaml 提供）
         removePlotButton.SetResourceReference(
             FrameworkElement.StyleProperty,
             "DangerButtonStyle");
+        removePlotButton.Click += (_, _) => RemovePlot(plot);
+        DockPanel.SetDock(removePlotButton, Dock.Right);
+        header.Children.Add(removePlotButton);
 
-
-        removePlotButton.Click +=
-            (_, _) =>
-            {
-                RemovePlot(plot);
-            };
-
-
-        Grid.SetColumn(
-            removePlotButton,
-            5);
-
-        header.Children.Add(
-            removePlotButton);
-
-
-        root.Children.Add(header);
-
-
-        // ========================================================
-        // Channel 区域
-        // ========================================================
-
-        var channelPanel = new StackPanel
+        // Wrap: Plot Name | name box | Auto Y | + Channel | channel chips...
+        var chrome = new WrapPanel
         {
-            Orientation =
-                Orientation.Vertical,
-
-            Margin =
-                new Thickness(0, 0, 0, 8)
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center
         };
 
+        var nameLabel = new TextBlock
+        {
+            Text = "Plot Name",
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            FontSize = 11,
+            FontWeight = FontWeights.Bold,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 4)
+        };
+        chrome.Children.Add(nameLabel);
+
+        var nameTextBox = new TextBox
+        {
+            Text = plot.Name,
+            Width = 160,
+            Height = 28,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 4)
+        };
+        nameTextBox.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "DarkTextBoxStyle");
+        nameTextBox.TextChanged += (_, _) =>
+        {
+            plot.Name = nameTextBox.Text;
+            RefreshPlotTitle(plot);
+            ScheduleSessionMemorySave();
+        };
+        chrome.Children.Add(nameTextBox);
+
+        var autoScaleCheckBox = new CheckBox
+        {
+            Content = "Auto Y",
+            IsChecked = plot.AutoScaleY,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 4)
+        };
+        plot.AutoScaleYCheckBox = autoScaleCheckBox;
+        autoScaleCheckBox.Checked += (_, _) =>
+        {
+            plot.AutoScaleY = true;
+            if (!_suppressAutoScaleCheckboxRefresh)
+                RefreshPlot(plot);
+            ScheduleSessionMemorySave();
+        };
+        autoScaleCheckBox.Unchecked += (_, _) =>
+        {
+            plot.AutoScaleY = false;
+            if (plot.WpfPlot is not null)
+                plot.LockedLimits = plot.WpfPlot.Plot.Axes.GetLimits();
+            ScheduleSessionMemorySave();
+        };
+        chrome.Children.Add(autoScaleCheckBox);
+
+        var addChannelButton = new Button
+        {
+            Content = "+ Channel",
+            Height = 26,
+            Margin = new Thickness(0, 0, 8, 4)
+        };
+        addChannelButton.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "ToolButtonStyle");
+        addChannelButton.Click += (_, _) => AddChannel(plot);
+        chrome.Children.Add(addChannelButton);
 
         foreach (var channel in plot.Channels)
-        {
-            var channelControl =
-                CreateChannelControl(
-                    plot,
-                    channel);
+            chrome.Children.Add(CreateChannelControl(plot, channel));
 
-            channelPanel.Children.Add(
-                channelControl);
-        }
+        header.Children.Add(chrome);
 
-
-        var channelScrollViewer =
-            new ScrollViewer
-            {
-                Content = channelPanel,
-
-                VerticalScrollBarVisibility =
-                    ScrollBarVisibility.Auto,
-
-                HorizontalScrollBarVisibility =
-                    ScrollBarVisibility.Disabled,
-
-                MaxHeight = 110
-            };
-
-
-        Grid.SetRow(
-            channelScrollViewer,
-            1);
-
-        root.Children.Add(
-            channelScrollViewer);
+        Grid.SetRow(header, 0);
+        root.Children.Add(header);
 
 
         // ========================================================
@@ -1833,7 +1822,10 @@ public partial class MainWindow : Window
         var wpfPlot =
             new ScottPlot.WPF.WpfPlot();
 
-        wpfPlot.Height = 350;
+        // Fill the plot row; height comes from outer Grid + drag thumb.
+        wpfPlot.MinHeight = 80;
+        wpfPlot.VerticalAlignment = VerticalAlignment.Stretch;
+        wpfPlot.HorizontalAlignment = HorizontalAlignment.Stretch;
 
         ApplyDarkPlotStyle(wpfPlot);
 
@@ -1845,7 +1837,7 @@ public partial class MainWindow : Window
 
         Grid.SetRow(
             wpfPlot,
-            2);
+            1);
 
         root.Children.Add(
             wpfPlot);
@@ -1865,211 +1857,87 @@ public partial class MainWindow : Window
         PlotDefinition plot,
         ChannelDefinition channel)
     {
-        var grid = new Grid
+        var chip = new StackPanel
         {
-            Height = 30,
-
-            Margin =
-                new Thickness(0, 2, 0, 2)
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 8, 4)
         };
-
-
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    new GridLength(90)
-            });
-
-
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    new GridLength(220)
-            });
-
-
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    new GridLength(100)
-            });
-
-
-        grid.ColumnDefinitions.Add(
-            new ColumnDefinition
-            {
-                Width =
-                    GridLength.Auto
-            });
-
-
-        // Channel 标签
-
-        var channelLabel = new TextBlock
-        {
-            Text = "Channel",
-
-            Foreground =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x8A,
-                        0x94,
-                        0xA6)),
-
-            FontSize = 11,
-
-            VerticalAlignment =
-                VerticalAlignment.Center
-        };
-
-
-        Grid.SetColumn(
-            channelLabel,
-            0);
-
-        grid.Children.Add(
-            channelLabel);
-
-
-        // Signal ComboBox
 
         var comboBox = new ComboBox
         {
             DisplayMemberPath = nameof(ChannelInfo.DisplayName),
             SelectedValuePath = nameof(ChannelInfo.Id),
-            ItemsSource =
-                ChannelRegistry.Instance.AvailablePlotChannels,
-
-            SelectedValue =
-                channel.ChannelId,
-
+            ItemsSource = ChannelRegistry.Instance.AvailablePlotChannels,
+            SelectedValue = channel.ChannelId,
+            Width = 170,
             Height = 28,
-
-            VerticalContentAlignment =
-                System.Windows.VerticalAlignment.Center
+            VerticalContentAlignment = System.Windows.VerticalAlignment.Center
         };
 
-        // 若当前通道不在可用列表，回退到默认。
         if (comboBox.SelectedValue is null)
         {
-            channel.ChannelId =
-                ChannelRegistry.Instance.DefaultPlotChannelId;
-            comboBox.SelectedValue = channel.ChannelId;
-        }
-
-        comboBox.SelectionChanged +=
-            (_, _) =>
+            // Channel not in current ItemsSource (e.g. Online live-core while VBO picks preserved).
+            // Keep the model ChannelId and temporarily inject the orphan so the combo can display it.
+            if (!string.IsNullOrWhiteSpace(channel.ChannelId) &&
+                ChannelRegistry.Instance.TryGet(channel.ChannelId, out var orphanInfo))
             {
-                if (comboBox.SelectedValue is string channelId)
-                {
-                    channel.ChannelId = channelId;
-                    RefreshPlot(plot);
-                }
-            };
-
-
-        Grid.SetColumn(
-            comboBox,
-            1);
-
-        grid.Children.Add(
-            comboBox);
-
-
-        // 单位
+                var list = ChannelRegistry.Instance.AvailablePlotChannels.ToList();
+                if (!list.Any(c => string.Equals(c.Id, orphanInfo.Id, StringComparison.OrdinalIgnoreCase)))
+                    list.Insert(0, orphanInfo);
+                comboBox.ItemsSource = list;
+                comboBox.SelectedValue = channel.ChannelId;
+            }
+            else
+            {
+                channel.ChannelId = ChannelRegistry.Instance.DefaultPlotChannelId;
+                comboBox.SelectedValue = channel.ChannelId;
+            }
+        }
 
         var unitText = new TextBlock
         {
-            Text =
-                GetSignalUnit(
-                    channel.ChannelId),
-
-            Foreground =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x8A,
-                        0x94,
-                        0xA6)),
-
+            Text = GetSignalUnit(channel.ChannelId),
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
             FontSize = 11,
-
-            VerticalAlignment =
-                VerticalAlignment.Center,
-
-            Margin =
-                new Thickness(10, 0, 0, 0)
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(6, 0, 4, 0),
+            MinWidth = 36
         };
 
-
-        comboBox.SelectionChanged +=
-            (_, _) =>
+        comboBox.SelectionChanged += (_, _) =>
+        {
+            if (comboBox.SelectedValue is string channelId)
             {
-                if (comboBox.SelectedValue
-                    is string channelId)
-                {
-                    unitText.Text =
-                        GetSignalUnit(channelId);
-                }
-            };
+                channel.ChannelId = channelId;
+                unitText.Text = GetSignalUnit(channelId);
+                RefreshPlot(plot);
+                ScheduleSessionMemorySave();
+            }
+        };
 
-
-        Grid.SetColumn(
-            unitText,
-            2);
-
-        grid.Children.Add(
-            unitText);
-
-
-        // 删除 Channel
+        chip.Children.Add(comboBox);
+        chip.Children.Add(unitText);
 
         var removeButton = new Button
         {
-            Content = "×",
-
-            Width = 30,
-
+            Content = "x",
+            Width = 26,
             Height = 26,
-
-            FontSize = 13,
-
-            Padding =
-                new Thickness(0)
+            FontSize = 12,
+            Padding = new Thickness(0),
+            ToolTip = "Remove channel"
         };
-
-
-        // 深色样式 + 危险操作配色（App.xaml 提供）
         removeButton.SetResourceReference(
             FrameworkElement.StyleProperty,
             "DangerButtonStyle");
+        removeButton.Click += (_, _) => RemoveChannel(plot, channel);
+        chip.Children.Add(removeButton);
 
-
-        removeButton.Click +=
-            (_, _) =>
-            {
-                RemoveChannel(
-                    plot,
-                    channel);
-            };
-
-
-        Grid.SetColumn(
-            removeButton,
-            3);
-
-        grid.Children.Add(
-            removeButton);
-
-
-        return grid;
+        return chip;
     }
 
 
-    // ============================================================
-    // 添加 Channel
     // ============================================================
 
     private void AddChannel(
@@ -2085,6 +1953,7 @@ public partial class MainWindow : Window
         RefreshPlotContainer();
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -2104,6 +1973,7 @@ public partial class MainWindow : Window
         RefreshPlotContainer();
 
         RefreshAllPlots(force: true);
+        ScheduleSessionMemorySave();
     }
 
 
@@ -2607,41 +2477,89 @@ public partial class MainWindow : Window
     // 曲线交互：北京时间轴 / 光标 / 横向选区 / 左上角读数
     // ============================================================
 
+    /// <summary>
+    /// Keep the yellow scrubber on the same X across every plot.
+    /// Clicking / dragging on one plot updates CursorX + overlays on all.
+    /// </summary>
+    private void SetSharedCursor(
+        double? cursorX,
+        PlotDefinition? source,
+        bool refreshOverlays = true)
+    {
+        _cursorSourcePlot = cursorX is null ? null : source;
+
+        foreach (var plot in _plots)
+        {
+            plot.CursorX = cursorX;
+
+            if (!refreshOverlays || plot.WpfPlot is null)
+                continue;
+
+            ApplyPlotOverlays(plot);
+            plot.WpfPlot.Refresh();
+        }
+    }
+
+
     private void AttachPlotInteraction(
         PlotDefinition plot,
         ScottPlot.WPF.WpfPlot wpfPlot)
     {
         ConfigurePlotMouseBindings(wpfPlot);
 
-        wpfPlot.PreviewMouseWheel += (_, _) =>
+        wpfPlot.PreviewMouseWheel += (_, e) =>
         {
-            // 滚轮缩放也算手动操作：立刻退出自动缩放
+            // Default: scroll the plot list. Zoom only after the plot is clicked/focused.
+            if (!wpfPlot.IsKeyboardFocused)
+            {
+                if (PlotScrollViewer is not null)
+                {
+                    var next = PlotScrollViewer.VerticalOffset - e.Delta;
+                    if (next < 0)
+                        next = 0;
+                    else if (next > PlotScrollViewer.ScrollableHeight)
+                        next = PlotScrollViewer.ScrollableHeight;
+
+                    PlotScrollViewer.ScrollToVerticalOffset(next);
+                }
+
+                e.Handled = true;
+                return;
+            }
+
+            // Focused plot: apply ScottPlot-style wheel zoom around the cursor.
             SuspendAutoScaleForUserInteraction(plot);
 
-            // ScottPlot 在 Input 阶段改轴；下一拍再锁定，避免锁到缩放前的范围
-            Dispatcher.BeginInvoke(
-                () =>
-                {
-                    if (plot.WpfPlot is null)
-                        return;
+            var pixel = wpfPlot.GetPlotPixelPosition(e);
+            const double zoomFraction = 0.15;
+            var zoomIn = 1 + zoomFraction;
+            var zoomOut = 1 / zoomIn;
+            var frac = e.Delta > 0 ? zoomIn : zoomOut;
+            ScottPlot.Interactivity.MouseAxisManipulation.MouseWheelZoom(
+                wpfPlot.Plot,
+                frac,
+                frac,
+                pixel,
+                ChangeOpposingAxesTogether: false);
 
-                    var limits = plot.WpfPlot.Plot.Axes.GetLimits();
-                    if (double.IsInfinity(limits.Left) ||
-                        double.IsInfinity(limits.Right) ||
-                        double.IsNaN(limits.Left) ||
-                        double.IsNaN(limits.Right) ||
-                        limits.Right <= limits.Left)
-                    {
-                        return;
-                    }
+            var limits = wpfPlot.Plot.Axes.GetLimits();
+            if (!double.IsInfinity(limits.Left) &&
+                !double.IsInfinity(limits.Right) &&
+                !double.IsNaN(limits.Left) &&
+                !double.IsNaN(limits.Right) &&
+                limits.Right > limits.Left)
+            {
+                plot.LockedLimits = limits;
+            }
 
-                    plot.LockedLimits = limits;
-                },
-                DispatcherPriority.Input);
+            wpfPlot.Refresh();
+            e.Handled = true;
         };
 
         wpfPlot.MouseDown += (_, e) =>
         {
+            Keyboard.Focus(wpfPlot);
+
             if (e.ChangedButton == MouseButton.Middle ||
                 e.ChangedButton == MouseButton.Right)
             {
@@ -2654,7 +2572,6 @@ public partial class MainWindow : Window
             if (e.ChangedButton != MouseButton.Left)
                 return;
 
-            Keyboard.Focus(wpfPlot);
 
             var x = GetPlotMouseX(wpfPlot, e);
             if (x is null)
@@ -2667,19 +2584,19 @@ public partial class MainWindow : Window
                 plot.SelectionX1 = x;
                 plot.SelectionX2 = x;
                 wpfPlot.UserInputProcessor.Disable();
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
                 e.Handled = true;
             }
             else
             {
                 plot.IsDraggingCursor = true;
-                plot.CursorX = x;
-                _cursorSourcePlot = plot;
+                // Shared yellow scrubber: same X on every plot.
+                SetSharedCursor(x, plot);
                 // 左键专用于光标，避免与其它左键交互抢事件
                 e.Handled = true;
             }
 
-            ApplyPlotOverlays(plot);
-            wpfPlot.Refresh();
             UpdateNumericDisplay();
         };
 
@@ -2692,10 +2609,7 @@ public partial class MainWindow : Window
                 if (cx is null)
                     return;
 
-                plot.CursorX = cx;
-                _cursorSourcePlot = plot;
-                ApplyPlotOverlays(plot);
-                wpfPlot.Refresh();
+                SetSharedCursor(cx, plot);
                 UpdateNumericDisplay();
                 e.Handled = true;
                 return;
@@ -2732,13 +2646,8 @@ public partial class MainWindow : Window
                 plot.IsDraggingCursor = false;
                 var cx = GetPlotMouseX(wpfPlot, e);
                 if (cx is not null)
-                {
-                    plot.CursorX = cx;
-                    _cursorSourcePlot = plot;
-                }
+                    SetSharedCursor(cx, plot);
 
-                ApplyPlotOverlays(plot);
-                wpfPlot.Refresh();
                 UpdateNumericDisplay();
                 e.Handled = true;
                 return;
@@ -2765,15 +2674,15 @@ public partial class MainWindow : Window
 
 
             UpdateSelectionMeasure(plot);
-            // 松手后把光标放到选区终点（或点击位置）
+            // 松手后把光标放到选区终点（或点击位置），并同步到所有 Plot
             if (plot.SelectionX2 is double endX)
+                SetSharedCursor(endX, plot);
+            else
             {
-                plot.CursorX = endX;
-                _cursorSourcePlot = plot;
+                ApplyPlotOverlays(plot);
+                wpfPlot.Refresh();
             }
 
-            ApplyPlotOverlays(plot);
-            wpfPlot.Refresh();
             UpdateNumericDisplay();
         };
 
@@ -2808,17 +2717,13 @@ public partial class MainWindow : Window
             if (e.Key != Key.Escape)
                 return;
 
-            plot.CursorX = null;
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
             _lastMeasureText = null;
             plot.IsSelectingRange = false;
             plot.IsDraggingCursor = false;
-            if (ReferenceEquals(_cursorSourcePlot, plot))
-                _cursorSourcePlot = null;
             wpfPlot.UserInputProcessor.Enable();
-            ApplyPlotOverlays(plot);
-            wpfPlot.Refresh();
+            SetSharedCursor(null, null);
             UpdateNumericDisplay();
         };
     }
@@ -2839,6 +2744,8 @@ public partial class MainWindow : Window
         // 中键默认：单击 Autoscale、拖拽 ZoomRectangle —— 正是「缩放被锁定」的来源
         processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.MouseDragZoomRectangle>();
         processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
+        // Wheel zoom is handled manually only when the plot has keyboard focus
+        processor.RemoveAll<ScottPlot.Interactivity.UserActionResponses.MouseWheelZoom>();
         processor.DoubleLeftClickBenchmark(false);
 
         // 中键拖拽 = 平移
@@ -2966,20 +2873,8 @@ public partial class MainWindow : Window
 
         var cursorX = GetAxisValue(sample, selectedXSignal);
 
-        PlotDefinition? source = null;
-        foreach (var plot in _plots)
-        {
-            plot.CursorX = cursorX;
-            source ??= plot;
-
-            if (plot.WpfPlot is null)
-                continue;
-
-            ApplyPlotOverlays(plot);
-            plot.WpfPlot.Refresh();
-        }
-
-        _cursorSourcePlot = source;
+        var source = _plots.Count > 0 ? _plots[0] : null;
+        SetSharedCursor(cursorX, source);
 
         // 立刻刷新 Dashboard + 地图标记（不等下一帧 UI 定时器）
         DashboardPanelControl.SetValues(
@@ -4823,6 +4718,10 @@ public partial class MainWindow : Window
 
         public ScottPlot.WPF.WpfPlot? WpfPlot { get; set; }
 
+        /// <summary>Plot panel height in pixels (stacked; may overflow curves viewport).</summary>
+        public double HeightPx { get; set; } = 280;
+
+
         /// <summary>光标 X（与当前轴同一单位；Time 轴为 OADate）。</summary>
         public double? CursorX { get; set; }
 
@@ -4906,6 +4805,8 @@ public partial class MainWindow : Window
         if (_restoringSession)
             return;
 
+        CapturePlotRowHeightsFromContainer();
+
         var snap = new SessionMemorySnapshot
         {
             IsOfflineMode = _isOfflineMode,
@@ -4915,6 +4816,7 @@ public partial class MainWindow : Window
             AnalysisStartGateId = GateStore.Instance.AnalysisStartId,
             AnalysisEndGateId = GateStore.Instance.AnalysisEndId,
             TestResults = TestResultsPanelControl?.CaptureSettings(),
+            Curves = CaptureCurvesSettings(),
         };
 
         foreach (var f in _offlineFiles.Files)
@@ -5020,11 +4922,112 @@ public partial class MainWindow : Window
                 RemergeMathsChannels();
                 RefreshChannelSelectorsFromRegistry();
             }
+
+            ApplyCurvesSettings(snap.Curves);
         }
         finally
         {
             _sessionSaveTimer?.Stop();
             _restoringSession = false;
+        }
+    }
+
+    private CurvesSettingsDto CaptureCurvesSettings()
+    {
+        var dto = new CurvesSettingsDto
+        {
+            XAxisChannelId = XAxisSelector.SelectedValue as string,
+            XAutoScale = XAxisAutoScaleCheckBox.IsChecked == true,
+            SinglePlotFillsViewport = _singlePlotFillsViewport && _plots.Count <= 1
+        };
+
+        foreach (var plot in _plots)
+        {
+            dto.Plots.Add(new PlotSettingsDto
+            {
+                Name = plot.Name,
+                AutoScaleY = plot.AutoScaleY,
+                HeightPx = plot.HeightPx > 0 ? plot.HeightPx : GetViewportFillHeight(),
+                ChannelIds = plot.Channels
+                    .Select(c => c.ChannelId)
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .ToList()
+            });
+        }
+
+        return dto;
+    }
+
+    private void ApplyCurvesSettings(CurvesSettingsDto? curves)
+    {
+        if (curves is null || curves.Plots is null || curves.Plots.Count == 0)
+        {
+            // Keep the default single plot created at init; fill viewport once laid out.
+            _singlePlotFillsViewport = true;
+            Dispatcher.BeginInvoke(
+                () => ApplySinglePlotFillHeight(rebuild: false),
+                System.Windows.Threading.DispatcherPriority.Loaded);
+            return;
+        }
+
+        _plots.Clear();
+        _nextPlotNumber = 1;
+        _singlePlotFillsViewport = curves.SinglePlotFillsViewport && curves.Plots.Count == 1;
+
+        foreach (var p in curves.Plots)
+        {
+            var plot = new PlotDefinition
+            {
+                Name = string.IsNullOrWhiteSpace(p.Name)
+                    ? $"Plot {_nextPlotNumber}"
+                    : p.Name,
+                AutoScaleY = p.AutoScaleY,
+                HeightPx = p.HeightPx >= PlotMinHeightPx
+                    ? p.HeightPx
+                    : GetViewportFillHeight()
+            };
+
+            if (plot.Name.StartsWith("Plot ", StringComparison.Ordinal) &&
+                int.TryParse(plot.Name.AsSpan("Plot ".Length), out var n) &&
+                n >= _nextPlotNumber)
+            {
+                _nextPlotNumber = n + 1;
+            }
+
+            var ids = p.ChannelIds ?? new List<string>();
+            foreach (var id in ids.Where(x => !string.IsNullOrWhiteSpace(x)))
+                plot.Channels.Add(new ChannelDefinition { ChannelId = id });
+
+            if (plot.Channels.Count == 0)
+            {
+                plot.Channels.Add(new ChannelDefinition
+                {
+                    ChannelId = ChannelRegistry.Instance.DefaultPlotChannelId
+                });
+            }
+
+            _plots.Add(plot);
+        }
+
+        if (_nextPlotNumber <= _plots.Count)
+            _nextPlotNumber = _plots.Count + 1;
+
+        if (!string.IsNullOrWhiteSpace(curves.XAxisChannelId))
+        {
+            try { XAxisSelector.SelectedValue = curves.XAxisChannelId; }
+            catch { /* channel may not exist yet */ }
+        }
+
+        XAxisAutoScaleCheckBox.IsChecked = curves.XAutoScale;
+
+        RefreshPlotContainer();
+        RefreshAllPlots(force: true);
+
+        if (_singlePlotFillsViewport)
+        {
+            Dispatcher.BeginInvoke(
+                () => ApplySinglePlotFillHeight(rebuild: false),
+                System.Windows.Threading.DispatcherPriority.Loaded);
         }
     }
 

@@ -78,6 +78,29 @@ public class SessionMemoryStoreTests
                         DisplayName = "Speed",
                         Unit = "km/h"
                     }
+                },
+                Curves = new CurvesSettingsDto
+                {
+                    XAxisChannelId = "axis_time",
+                    XAutoScale = true,
+                    SinglePlotFillsViewport = false,
+                    Plots =
+                    {
+                        new PlotSettingsDto
+                        {
+                            Name = "Plot 1",
+                            AutoScaleY = true,
+                            HeightPx = 320,
+                            ChannelIds = { "velocity", "long_acc" }
+                        },
+                        new PlotSettingsDto
+                        {
+                            Name = "Plot 2",
+                            AutoScaleY = false,
+                            HeightPx = 200,
+                            ChannelIds = { "lat_acc" }
+                        }
+                    }
                 }
             };
 
@@ -107,6 +130,11 @@ public class SessionMemoryStoreTests
             Assert.Equal("78", loaded.TestResults.PassConditions[0].MinText);
             Assert.Single(loaded.MathsChannels);
             Assert.Equal("velocity * 1.16", loaded.MathsChannels[0].Expression);
+            Assert.NotNull(loaded.Curves);
+            Assert.Equal(2, loaded.Curves!.Plots.Count);
+            Assert.Equal(320, loaded.Curves.Plots[0].HeightPx);
+            Assert.Equal(2, loaded.Curves.Plots[0].ChannelIds.Count);
+            Assert.Equal("lat_acc", loaded.Curves.Plots[1].ChannelIds[0]);
         }
         finally
         {

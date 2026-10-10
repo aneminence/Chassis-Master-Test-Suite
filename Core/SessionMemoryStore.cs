@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -33,6 +33,8 @@ public sealed class SessionMemorySnapshot
     public TestResultsSettingsDto? TestResults { get; set; }
 
     public List<SessionMathsDto> MathsChannels { get; set; } = new();
+
+    public CurvesSettingsDto? Curves { get; set; }
 }
 
 public sealed class SessionGateDto
@@ -79,6 +81,29 @@ public sealed class TestResultsSettingsDto
     public List<PassConditionSettingsDto> PassConditions { get; set; } = new();
 }
 
+
+public sealed class CurvesSettingsDto
+{
+    public string? XAxisChannelId { get; set; }
+
+    public bool XAutoScale { get; set; } = true;
+
+    /// <summary>When true and only one plot, keep height synced to curves viewport.</summary>
+    public bool SinglePlotFillsViewport { get; set; } = true;
+
+    public List<PlotSettingsDto> Plots { get; set; } = new();
+}
+
+public sealed class PlotSettingsDto
+{
+    public string Name { get; set; } = "";
+
+    public bool AutoScaleY { get; set; } = true;
+
+    public double HeightPx { get; set; }
+
+    public List<string> ChannelIds { get; set; } = new();
+}
 public sealed class PassConditionSettingsDto
 {
     public string ChannelId { get; set; } = "velocity";

@@ -73,14 +73,34 @@ public partial class TestResultsPanel : UserControl
         ResultsGrid.ItemsSource = _rows;
         ResultsGrid.SelectionChanged += ResultsGrid_SelectionChanged;
         PopulateChannelCombo();
+        RefreshPassRowChannelOptions();
         MathsChannelStore.Instance.Changed += (_, _) =>
         {
+            void Refresh()
+            {
+                PopulateChannelCombo();
+                RefreshPassRowChannelOptions();
+            }
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(PopulateChannelCombo);
+                Dispatcher.Invoke(Refresh);
                 return;
             }
-            PopulateChannelCombo();
+            Refresh();
+        };
+        ChannelRegistry.Instance.AvailableChanged += (_, _) =>
+        {
+            void Refresh()
+            {
+                PopulateChannelCombo();
+                RefreshPassRowChannelOptions();
+            }
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(Refresh);
+                return;
+            }
+            Refresh();
         };
         GateStore.Instance.Changed += (_, _) =>
         {
@@ -95,27 +115,19 @@ public partial class TestResultsPanel : UserControl
 
     private void PopulateChannelCombo()
     {
+        if (ChannelCombo is null)
+            return;
+
         var prev = (ChannelCombo.SelectedItem as ComboBoxItem)?.Tag as string;
 
         ChannelCombo.Items.Clear();
-        void Add(string id, string label)
+        foreach (var (id, label) in BuildAvailableChannelChoices())
         {
             ChannelCombo.Items.Add(new ComboBoxItem
             {
                 Content = label,
                 Tag = id
             });
-        }
-
-        Add(ChannelIds.Velocity, "velocity (km/h)");
-        Add(ChannelIds.Longacc, "Longacc (m/s2)");
-        Add(ChannelIds.Latacc, "Latacc (m/s2)");
-
-        foreach (var d in MathsChannelStore.Instance.Definitions)
-        {
-            var name = string.IsNullOrWhiteSpace(d.DisplayName) ? d.Id : d.DisplayName;
-            var unit = string.IsNullOrWhiteSpace(d.Unit) ? "" : $" ({d.Unit})";
-            Add(d.Id, $"{name}{unit}  [maths]");
         }
 
         ComboBoxItem? match = null;
@@ -128,7 +140,118 @@ public partial class TestResultsPanel : UserControl
                 break;
             }
         }
+
+        if (match is null && !string.IsNullOrWhiteSpace(prev))
+        {
+            // Keep previously saved channel visible even if not in current data yet.
+            ChannelCombo.Items.Insert(0, new ComboBoxItem
+            {
+                Content = FormatChannelLabel(prev),
+                Tag = prev
+            });
+            match = (ComboBoxItem)ChannelCombo.Items[0];
+        }
+
         ChannelCombo.SelectedItem = match ?? (ChannelCombo.Items.Count > 0 ? ChannelCombo.Items[0] : null);
+    }
+
+    /// <summary>
+    /// Channel ids currently available in live/VBO data (+ maths not yet merged).
+    /// </summary>
+    private static List<(string Id, string Label)> BuildAvailableChannelChoices()
+    {
+        var list = new List<(string Id, string Label)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var ch in ChannelRegistry.Instance.AvailablePlotChannels)
+        {
+            if (ch is null || string.IsNullOrWhiteSpace(ch.Id))
+                continue;
+            if (!seen.Add(ch.Id))
+                continue;
+
+            var unit = string.IsNullOrWhiteSpace(ch.Unit) ? "" : $" ({ch.Unit})";
+            list.Add((ch.Id, $"{ch.DisplayName}{unit}"));
+        }
+
+        foreach (var d in MathsChannelStore.Instance.Definitions)
+        {
+            if (string.IsNullOrWhiteSpace(d.Id) || !seen.Add(d.Id))
+                continue;
+
+            var name = string.IsNullOrWhiteSpace(d.DisplayName) ? d.Id : d.DisplayName;
+            var unit = string.IsNullOrWhiteSpace(d.Unit) ? "" : $" ({d.Unit})";
+            list.Add((d.Id, $"{name}{unit}  [maths]"));
+        }
+
+        return list;
+    }
+
+    private static string FormatChannelLabel(string channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+            return channelId;
+
+        if (ChannelRegistry.Instance.TryGet(channelId, out var info))
+        {
+            var unit = string.IsNullOrWhiteSpace(info.Unit) ? "" : $" ({info.Unit})";
+            return $"{info.DisplayName}{unit}";
+        }
+
+        foreach (var d in MathsChannelStore.Instance.Definitions)
+        {
+            if (!string.Equals(d.Id, channelId, StringComparison.OrdinalIgnoreCase))
+                continue;
+            var name = string.IsNullOrWhiteSpace(d.DisplayName) ? d.Id : d.DisplayName;
+            var unit = string.IsNullOrWhiteSpace(d.Unit) ? "" : $" ({d.Unit})";
+            return $"{name}{unit}  [maths]";
+        }
+
+        return channelId;
+    }
+
+    private void RefreshPassRowChannelOptions(PassConditionRowVm? only = null)
+    {
+        var choices = BuildAvailableChannelChoices();
+
+        void Apply(PassConditionRowVm row)
+        {
+            var prev = row.ChannelId;
+            row.ChannelOptions.Clear();
+            foreach (var (id, label) in choices)
+                row.ChannelOptions.Add(new ChannelPickItem(id, label));
+
+            if (!string.IsNullOrWhiteSpace(prev) &&
+                choices.Any(c => string.Equals(c.Id, prev, StringComparison.OrdinalIgnoreCase)))
+            {
+                row.ChannelId = prev!;
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(prev) &&
+                !choices.Any(c => string.Equals(c.Id, prev, StringComparison.OrdinalIgnoreCase)))
+            {
+                // Keep orphan selection visible until data catches up / user changes it.
+                row.ChannelOptions.Insert(0, new ChannelPickItem(prev!, FormatChannelLabel(prev!)));
+                row.ChannelId = prev!;
+                return;
+            }
+
+            var prefer = choices.FirstOrDefault(c =>
+                string.Equals(c.Id, ChannelIds.Velocity, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrEmpty(prefer.Id))
+                row.ChannelId = prefer.Id;
+            else if (choices.Count > 0)
+                row.ChannelId = choices[0].Id;
+        }
+
+        if (only is not null)
+            Apply(only);
+        else
+        {
+            foreach (var row in _passConditions)
+                Apply(row);
+        }
     }
 
     private void TestTypeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -731,6 +854,7 @@ public partial class TestResultsPanel : UserControl
             {
                 EnsureDefaultPassCondition();
             }
+            RefreshPassRowChannelOptions();
             RefreshPassRowGateItems();
 
             // Collapse state
@@ -772,6 +896,7 @@ public partial class TestResultsPanel : UserControl
                 return;
             _passConditions.Remove(r);
         };
+        RefreshPassRowChannelOptions(row);
         RefreshPassRowGateItems(row);
         return row;
     }
@@ -910,17 +1035,9 @@ public partial class TestResultsPanel : UserControl
             set { _channelId = value; OnPropertyChanged(); OnPropertyChanged(nameof(ChannelLabel)); }
         }
 
-        public string ChannelLabel =>
-            string.Equals(_channelId, ChannelIds.Velocity, StringComparison.OrdinalIgnoreCase)
-                ? "velocity (km/h)"
-                : _channelId;
+        public string ChannelLabel => FormatChannelLabel(_channelId);
 
-        public IEnumerable<string> ChannelOptions { get; } = new[]
-        {
-            ChannelIds.Velocity,
-            ChannelIds.Longacc,
-            ChannelIds.Latacc
-        };
+        public ObservableCollection<ChannelPickItem> ChannelOptions { get; } = new();
 
         public string MinText
         {
@@ -947,6 +1064,18 @@ public partial class TestResultsPanel : UserControl
 
         private void OnPropertyChanged([CallerMemberName] string? name = null) =>
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
+    private sealed class ChannelPickItem
+    {
+        public string Id { get; }
+        public string Label { get; }
+        public ChannelPickItem(string id, string label)
+        {
+            Id = id;
+            Label = label;
+        }
+        public override string ToString() => Label;
     }
 
     private sealed class GatePickItem
@@ -980,6 +1109,7 @@ public partial class TestResultsPanel : UserControl
         if (MathsChannelsDialog.Show(owner) == true)
         {
             PopulateChannelCombo();
+            RefreshPassRowChannelOptions();
             StatusText.Text = MathsChannelStore.Instance.Definitions.Count == 0
                 ? "Maths channels cleared."
                 : $"Maths channels: {MathsChannelStore.Instance.Definitions.Count} defined.";

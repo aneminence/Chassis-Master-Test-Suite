@@ -182,10 +182,12 @@
                                 <DataTemplate>
                                     <WrapPanel Orientation="Horizontal" Margin="0,0,0,4">
                                         <TextBlock Text="Channel" Style="{StaticResource ParamLabelStyle}"/>
-                                        <ComboBox Width="120" Height="28" Margin="0,0,8,4"
+                                        <ComboBox Width="180" Height="28" Margin="0,0,8,4"
                                                   Style="{StaticResource DarkComboBoxStyle}"
                                                   ItemsSource="{Binding ChannelOptions}"
-                                                  SelectedItem="{Binding ChannelId, Mode=TwoWay}"/>
+                                                  DisplayMemberPath="Label"
+                                                  SelectedValuePath="Id"
+                                                  SelectedValue="{Binding ChannelId, Mode=TwoWay}"/>
                                         <TextBlock Text="Min" Style="{StaticResource ParamLabelStyle}"/>
                                         <TextBox Width="56" Height="28" Margin="0,0,8,4"
                                                  Text="{Binding MinText, UpdateSourceTrigger=PropertyChanged}"
