@@ -472,8 +472,8 @@ public partial class MainWindow : Window
                 Cursor = Cursors.Hand,
                 Tag = file.Id,
                 ToolTip = isSelected
-                    ? $"当前选中：{file.FilePath}"
-                    : $"点击切换 Dashboard 到：{file.DisplayName}"
+                    ? $"Selected: {file.FilePath}"
+                    : $"Click to switch Dashboard to: {file.DisplayName}"
             };
 
             chip.MouseLeftButtonUp += OfflineFileChip_Click;
@@ -501,7 +501,7 @@ public partial class MainWindow : Window
                 Padding = new Thickness(0),
                 Tag = file.Id,
                 Style = TryFindResource("ToolButtonStyle") as Style,
-                ToolTip = "关闭此文件"
+                ToolTip = "Close this file"
             };
             close.Click += CloseOfflineFileChip_Click;
             row.Children.Add(close);
@@ -524,9 +524,7 @@ public partial class MainWindow : Window
         if (_offlineFiles.Selected?.Id == id)
             return;
 
-        _offlineFiles.Select(id);
-        ClearPlotCursors();
-        ApplyOfflineDataset();
+        SelectOfflineFileKeepingCursor(id);
         e.Handled = true;
     }
 
@@ -549,6 +547,54 @@ public partial class MainWindow : Window
         TrackMapPanelControl.SetCursorSample(null);
     }
 
+
+    /// <summary>
+    /// Switch selected offline VBO while keeping plot cursor X (time/distance).
+    /// Dashboard / Track Map / readouts update to the new file at the same cursor.
+    /// </summary>
+    private void SelectOfflineFileKeepingCursor(Guid id)
+    {
+        if (_offlineFiles.Selected?.Id == id)
+            return;
+
+        // Preserve absolute cursor X and selection across the file switch.
+        double? cursorX = null;
+        double? sel1 = null;
+        double? sel2 = null;
+        foreach (var plot in _plots)
+        {
+            if (cursorX is null && plot.CursorX is double cx)
+                cursorX = cx;
+            if (sel1 is null && plot.SelectionX1 is double s1)
+                sel1 = s1;
+            if (sel2 is null && plot.SelectionX2 is double s2)
+                sel2 = s2;
+        }
+
+        _offlineFiles.Select(id);
+        ApplyOfflineDataset();
+
+        if (cursorX is double keepX)
+        {
+            PlotDefinition? source = null;
+            foreach (var plot in _plots)
+            {
+                plot.CursorX = keepX;
+                plot.SelectionX1 = sel1;
+                plot.SelectionX2 = sel2;
+                source ??= plot;
+                if (plot.WpfPlot is not null)
+                {
+                    ApplyPlotOverlays(plot);
+                    plot.WpfPlot.Refresh();
+                }
+            }
+
+            _cursorSourcePlot = source;
+            UpdateNumericDisplay();
+        }
+    }
+
     private static Button? FindParentButton(DependencyObject? node)
     {
         while (node is not null)
@@ -569,9 +615,7 @@ public partial class MainWindow : Window
         if (file is null || _offlineFiles.Selected?.Id == file.Id)
             return;
 
-        _offlineFiles.Select(file.Id);
-        ClearPlotCursors();
-        ApplyOfflineDataset();
+        SelectOfflineFileKeepingCursor(file.Id);
     }
 
 
@@ -770,7 +814,7 @@ public partial class MainWindow : Window
                 MessageBox.Show(
                     this,
                     "启动 UDP 失败:\n" + ex.Message,
-                    "线上",
+                    "Online",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
             }
@@ -3512,7 +3556,7 @@ public partial class MainWindow : Window
                     _offlineFiles.Count > 0
                         ? "Offline · " + _offlineFiles.Count + " file(s)"
                         : "Offline";
-                ConnectionStatusText.ToolTip = "线下 VBO 回放";
+                ConnectionStatusText.ToolTip = "Offline VBO replay";
             }
 
             if (ConnectionDot is not null)
@@ -3533,7 +3577,7 @@ public partial class MainWindow : Window
             if (ConnectionStatusText is not null)
             {
                 ConnectionStatusText.Text = "Stopped";
-                ConnectionStatusText.ToolTip = "线上连接已停止";
+                ConnectionStatusText.ToolTip = "Online connection stopped";
             }
 
             if (ConnectionDot is not null)
