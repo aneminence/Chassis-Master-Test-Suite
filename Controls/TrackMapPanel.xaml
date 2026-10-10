@@ -1,9 +1,9 @@
 ﻿<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="#12171E">
+             Background="{DynamicResource PanelBackground}">
 
-    <Border BorderBrush="#1E2530"
+    <Border BorderBrush="{DynamicResource BorderBrushSoft}"
             BorderThickness="1"
             CornerRadius="6"
             Padding="14">
@@ -33,14 +33,30 @@
                            Margin="0,0,8,0"
                            VerticalAlignment="Center"/>
 
-                <TextBlock Grid.Column="1"
+                <TextBlock x:Name="TitleText"
+                           Grid.Column="1"
                            Text="Track Map"
-                           Foreground="#E6EAF0"
+                           Foreground="{DynamicResource TextPrimary}"
                            FontSize="14"
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
 
-                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+                    <CheckBox x:Name="BasemapCheck"
+                              Content="Basemap"
+                              Margin="0,0,8,0"
+                              VerticalAlignment="Center"
+                              Checked="BasemapCheck_Changed"
+                              Unchecked="BasemapCheck_Changed"
+                              ToolTip="Toggle online map tiles under the track"/>
+                    <ComboBox x:Name="BasemapSourceCombo"
+                              Width="140"
+                              Height="26"
+                              Margin="0,0,10,0"
+                              Style="{StaticResource DarkComboBoxStyle}"
+                              SelectionChanged="BasemapSourceCombo_SelectionChanged"
+                              ToolTip="Map tile source (Ovi-style XYZ)"/>
+                    <Border Width="1" Height="16" Background="{DynamicResource BorderBrushSoft}" Margin="0,0,10,0" VerticalAlignment="Center"/>
                     <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
                             Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
                     <ComboBox x:Name="GateCombo" Width="130" Height="26" Margin="0,0,6,0"
@@ -69,13 +85,18 @@
 
             <!-- 地图区 -->
             <Border Grid.Row="1"
-                    Background="#0A0F15"
+                    Background="{DynamicResource MapCanvasBackground}"
                     BorderBrush="#1E2530"
                     BorderThickness="1"
                     CornerRadius="4"
                     ClipToBounds="True">
 
                 <Grid x:Name="MapHost">
+
+                    <!-- 第 0 层：在线地图瓦片（轨迹 / Gate 之下） -->
+                    <Canvas x:Name="TileCanvas"
+                            IsHitTestVisible="False"
+                            ClipToBounds="True"/>
 
                     <!-- 第 1 层：比例尺网格（在轨迹下方）
                          屏幕层覆盖物：平移时不动，缩放时间距跟着变。

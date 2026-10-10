@@ -10,6 +10,8 @@ using Chassis_Master_Test_Suite.Communication;
 using Chassis_Master_Test_Suite.Communication.GSpot;
 using Chassis_Master_Test_Suite.Controls;
 using Chassis_Master_Test_Suite.Core;
+using Chassis_Master_Test_Suite.Localization;
+using Chassis_Master_Test_Suite.Themes;
 using Chassis_Master_Test_Suite.Recorder;
 using Chassis_Master_Test_Suite.Simulator;
 using Chassis_Master_Test_Suite.Session;
@@ -257,6 +259,17 @@ public partial class MainWindow : Window
         Loaded += MainWindow_Loaded;
 
         Closed += MainWindow_Closed;
+
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ApplyLocalizedToolbar);
+                return;
+            }
+            ApplyLocalizedToolbar();
+        };
+        ApplyLocalizedToolbar();
     }
 
     // ============================================================
@@ -958,6 +971,121 @@ public partial class MainWindow : Window
             if (OnlineToolsPanel is not null)
                 OnlineToolsPanel.Visibility = Visibility.Visible;
         }
+    }
+
+    // ============================================================
+    // Appearance: language + theme
+    // ============================================================
+
+    private void LangZh_Click(object sender, RoutedEventArgs e) =>
+        AppearanceService.SetLanguage(Loc.ZhCn);
+
+    private void LangEn_Click(object sender, RoutedEventArgs e) =>
+        AppearanceService.SetLanguage(Loc.En);
+
+    private void ThemeDark_Click(object sender, RoutedEventArgs e) =>
+        AppearanceService.SetTheme(AppThemeMode.Dark);
+
+    private void ThemeLight_Click(object sender, RoutedEventArgs e) =>
+        AppearanceService.SetTheme(AppThemeMode.Light);
+
+    private void ThemeCustom_Click(object sender, RoutedEventArgs e)
+    {
+        var seed = AppearanceService.Preferences.CustomColors
+                   ?? ThemeManager.CaptureCurrentAsCustom();
+        if (CustomThemeDialog.Show(this, seed, out var colors) == true)
+            AppearanceService.SetTheme(AppThemeMode.Custom, colors);
+    }
+
+    private void ApplyLocalizedToolbar()
+    {
+        Title = Loc.T("App.Title");
+
+        if (LayoutMenuRoot is not null)
+        {
+            LayoutMenuRoot.Header = Loc.T("Menu.Layout");
+            LayoutMenuRoot.ToolTip = Loc.T("Menu.LayoutTip");
+        }
+        if (AppearanceMenuRoot is not null)
+        {
+            AppearanceMenuRoot.Header = Loc.T("Menu.Appearance");
+            AppearanceMenuRoot.ToolTip = Loc.T("Menu.AppearanceTip");
+        }
+        if (LanguageMenu is not null)
+            LanguageMenu.Header = Loc.T("Menu.Language");
+        if (ThemeMenu is not null)
+            ThemeMenu.Header = Loc.T("Menu.Theme");
+        if (LangZhItem is not null)
+            LangZhItem.Header = Loc.T("Menu.Lang.Zh");
+        if (LangEnItem is not null)
+            LangEnItem.Header = Loc.T("Menu.Lang.En");
+        if (ThemeDarkItem is not null)
+            ThemeDarkItem.Header = Loc.T("Menu.Theme.Dark");
+        if (ThemeLightItem is not null)
+            ThemeLightItem.Header = Loc.T("Menu.Theme.Light");
+        if (ThemeCustomItem is not null)
+            ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");
+
+        SetText(LayoutCellDashboard, Loc.T("Layout.Dashboard"), Loc.T("Layout.ToggleDashboard"));
+        SetText(LayoutCellTestResults, Loc.T("Layout.TestResults"), Loc.T("Layout.ToggleTestResults"));
+        SetText(LayoutCellMap, Loc.T("Layout.Map"), Loc.T("Layout.ToggleMap"));
+        SetText(LayoutCellChart, Loc.T("Layout.Chart"), Loc.T("Layout.ToggleChart"));
+        SetText(LayoutCellReset, Loc.T("Layout.Reset"), Loc.T("Layout.ResetTip"));
+
+        if (LoadVboButton is not null)
+        {
+            LoadVboButton.Content = Loc.T("Toolbar.Load");
+            LoadVboButton.ToolTip = Loc.T("Toolbar.LoadTip");
+        }
+        if (OnlineModeButton is not null)
+        {
+            OnlineModeButton.Content = Loc.T("Toolbar.Online");
+            OnlineModeButton.ToolTip = Loc.T("Toolbar.OnlineTip");
+        }
+        if (OfflineModeButton is not null)
+        {
+            OfflineModeButton.Content = Loc.T("Toolbar.Offline");
+            OfflineModeButton.ToolTip = Loc.T("Toolbar.OfflineTip");
+        }
+        if (ClearOfflineButton is not null)
+        {
+            ClearOfflineButton.Content = Loc.T("Toolbar.Clear");
+            ClearOfflineButton.ToolTip = Loc.T("Toolbar.ClearTip");
+        }
+        if (UdpSourceButton is not null)
+        {
+            UdpSourceButton.Content = Loc.T("Toolbar.Udp");
+            UdpSourceButton.ToolTip = Loc.T("Toolbar.UdpTip");
+        }
+        if (GSpotButton is not null)
+        {
+            GSpotButton.Content = Loc.T("Toolbar.GSpot");
+            GSpotButton.ToolTip = Loc.T("Toolbar.GSpotTip");
+        }
+        if (SimulatorButton is not null)
+            SimulatorButton.Content = Loc.T("Toolbar.Simulator");
+        if (StopOnlineButton is not null)
+        {
+            StopOnlineButton.Content = Loc.T("Toolbar.Stop");
+            StopOnlineButton.ToolTip = Loc.T("Toolbar.StopTip");
+        }
+        if (RecordLabelText is not null && RecordButton?.IsEnabled == true)
+        {
+            // Keep Start/Pause state text owned by record state machine; only refresh Stop.
+        }
+        if (StopRecordButton is not null)
+            StopRecordButton.Content = Loc.T("Toolbar.RecordStop");
+        if (ConnectionStatusText is not null)
+            ConnectionStatusText.ToolTip = Loc.T("Status.ConnectionTip");
+    }
+
+    private static void SetText(Border? cell, string label, string tip)
+    {
+        if (cell is null)
+            return;
+        cell.ToolTip = tip;
+        if (cell.Child is TextBlock tb)
+            tb.Text = label;
     }
 
     // ============================================================

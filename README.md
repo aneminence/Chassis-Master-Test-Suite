@@ -8,6 +8,11 @@
 
 ## 最近更新（2026-10-10）
 
+### 外观 / 语言 / 在线地图（`feature/map-i18n-theme`）
+- **语言**：顶部 `Appearance` → Language，中文 / English 运行时切换并写入 `%LocalAppData%\CMTS\app-preferences.json`。
+- **主题**：暗黑 / 明亮；自定义配色（强调色 / 窗口与面板背景），持久化。
+- **在线底图**：Track Map 工具栏 `Basemap` 开关 + 图源下拉（OSM / OpenTopo / Esri 影像·街道·地形 / Carto 浅·深 / 自定义 XYZ）；瓦片画在轨迹与 Gate **之下**；磁盘缓存 `map-tiles/`。商业图源（谷歌/高德等）请用自定义 XYZ 自行填入合法地址。
+
 ### 外壳与工作区
 - **顶部栏（VBTS 风格）**：`Layout` 分区示意菜单可单独开关 Dashboard / Test Results / Map / Chart（**无 Video**），并带 Reset；`Load` 打开 VBO；`Online` / `Offline` 切换线上线下；`Clear` 清空已打开文件；Files 芯片**始终展开**不折叠。
 - **已删除**顶部 Dashboard / Data / Analysis / Replay / Settings 导航行（无实际用途）。
@@ -90,7 +95,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ```text
 ┌───────────────────────────────────────────────────────────────────────┐
-│ CMTS  Layout│Load│Online│Offline│Clear   [● Start][■ Stop]  Elapsed   │  顶部栏
+│ CMTS  Layout│Appearance│Load│Online│Offline│Clear  [●][■] Elapsed     │  顶部栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
 │ Dashboard        │ Test Results        │ Track Map                    │
 │ 可定制表盘       │ Accel/Decel/Custom/ │ GPS 轨迹 · Gate · .vbts 导入 │
@@ -115,8 +120,11 @@ Chassis Master Test Suite/
 ├─ Core/
 │   ├─ VehicleSample.cs / DataBus.cs / SampleHistoryBuffer.cs
 │   ├─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
-│   ├─ DashboardGaugeModels.cs / SessionMemoryStore.cs
+│   ├─ DashboardGaugeModels.cs / SessionMemoryStore.cs / AppPreferencesStore.cs
 │   └─ PlotDownsampler.cs / SampleEnricher.cs
+├─ Localization/   Loc.cs（中/英）
+├─ Themes/         Theme.Dark/Light.xaml · ThemeManager · AppearanceService
+├─ Map/            MapTileMath · MapTileSource · MapTileCache · MapTileLayerController
 ├─ Communication/
 │   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
 │   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
@@ -328,25 +336,29 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] Session 元数据写入 VBO `[SessionData]`  
 - [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）  
 - [x] 通道注册表（实时 vs 文件）  
-- [x] UI 深色金色主题  
+- [x] UI 主题（暗黑 / 明亮 / 自定义）+ 中英语言  
+- [x] Track Map 在线底图（可开关、多图源）  
 
 ---
 
 ## 开发路线（剩余）
 
-与当前规划一致的待办；已完成或已取消的旧项已从路线图移除（例如独立 Data/Analysis 导航页）。
+与用户确认后的规划一致（不做 / 砍掉的项已从路线图移除）。
 
-- [ ] GSpot 轴向 / 单位实车标定  
-- [ ] Settings 正式页（替代 Online 工具栏快捷按钮）  
-- [ ] 在线地图底图  
-- [ ] 同步视频（明确不做顶栏 Video 入口前，本项保持延后）  
-- [ ] 正式报告导出（PDF / XLSX / DOCX；目前仅 CSV）  
-- [ ] `.vbts` 整包导入（试验条件 / Pass / Maths / Dashboard 布局；目前主要导入 Gate）  
-- [ ] Gate Export（`.spl`）  
+**已完成（本分支）**
+- [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）  
+- [x] 界面语言中/英  
+- [x] 皮肤：暗黑 / 明亮 + 自定义配色  
+
+**延后**
+- [ ] Settings 正式页  
+- [ ] `.vbts` 整包导入（条件 / Pass / Maths / Dashboard）  
 - [ ] Maths 高级函数（累计 / 积分等）  
-- [ ] 法规 / 场景试验插件包（Accel/Decel/Custom/Gate 之外的 VBTS 插件对标）  
-- [ ] 原生 VBOX 硬件 Online 链路  
-- [ ] `CsvRecorder` 接线  
+- [ ] 法规 / 场景试验插件包  
+- [ ] Dashboard 更多表盘类型（Angular / Chart / Target / Level）与告警  
+
+**明确不做**
+- GSpot 实车标定、同步视频、正式报告 PDF/XLSX/DOCX、Gate `.spl`（用 `.vbts` 替代）、原生 VBOX Online、`CsvRecorder`
 
 ---
 

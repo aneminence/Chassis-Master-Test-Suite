@@ -8,7 +8,7 @@
         Width="1400"
         MinHeight="760"
         MinWidth="1200"
-        Background="#0B0E12"
+        Background="{DynamicResource AppBackground}"
         WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True"
         TextOptions.TextFormattingMode="Display">
@@ -46,8 +46,8 @@
              ============================================================ -->
 
         <Border Grid.Row="0"
-                Background="#12171E"
-                BorderBrush="#1E2530"
+                Background="{DynamicResource PanelBackground}"
+                BorderBrush="{DynamicResource BorderBrushSoft}"
                 BorderThickness="1"
                 CornerRadius="6"
                 Padding="14,9"
@@ -68,7 +68,7 @@
                             VerticalAlignment="Center">
 
                     <TextBlock Text="CMTS"
-                               Foreground="#C8A34A"
+                               Foreground="{DynamicResource AccentBrush}"
                                FontSize="19"
                                FontWeight="Bold"
                                FontStyle="Italic"
@@ -87,7 +87,8 @@
                           Margin="0,0,4,0"
                           VerticalAlignment="Center"
                           Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem Header="Layout ▾"
+                        <MenuItem x:Name="LayoutMenuRoot"
+                                  Header="Layout ▾"
                                   Style="{StaticResource DarkTopMenuItemStyle}"
                                   ToolTip="Show or hide workspace panels">
                             <MenuItem Style="{StaticResource LayoutMapHostMenuItemStyle}"
@@ -191,6 +192,49 @@
                                         </Grid>
                                     </Border>
                                 </MenuItem.Header>
+                            </MenuItem>
+                        </MenuItem>
+                    </Menu>
+
+                    <!-- Appearance: language + theme -->
+                    <Menu Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0"
+                          Margin="0,0,4,0"
+                          VerticalAlignment="Center"
+                          Style="{StaticResource DarkMenuStyle}">
+                        <MenuItem x:Name="AppearanceMenuRoot"
+                                  Header="Appearance ▾"
+                                  Style="{StaticResource DarkTopMenuItemStyle}"
+                                  ToolTip="Language and theme">
+                            <MenuItem x:Name="LanguageMenu"
+                                      Header="Language"
+                                      Style="{StaticResource DarkMenuItemStyle}">
+                                <MenuItem x:Name="LangZhItem"
+                                          Header="中文"
+                                          Style="{StaticResource DarkMenuItemStyle}"
+                                          Click="LangZh_Click"/>
+                                <MenuItem x:Name="LangEnItem"
+                                          Header="English"
+                                          Style="{StaticResource DarkMenuItemStyle}"
+                                          Click="LangEn_Click"/>
+                            </MenuItem>
+                            <MenuItem x:Name="ThemeMenu"
+                                      Header="Theme"
+                                      Style="{StaticResource DarkMenuItemStyle}">
+                                <MenuItem x:Name="ThemeDarkItem"
+                                          Header="Dark"
+                                          Style="{StaticResource DarkMenuItemStyle}"
+                                          Click="ThemeDark_Click"/>
+                                <MenuItem x:Name="ThemeLightItem"
+                                          Header="Light"
+                                          Style="{StaticResource DarkMenuItemStyle}"
+                                          Click="ThemeLight_Click"/>
+                                <Separator Style="{StaticResource DarkMenuSeparatorStyle}"/>
+                                <MenuItem x:Name="ThemeCustomItem"
+                                          Header="Custom colors…"
+                                          Style="{StaticResource DarkMenuItemStyle}"
+                                          Click="ThemeCustom_Click"/>
                             </MenuItem>
                         </MenuItem>
                     </Menu>

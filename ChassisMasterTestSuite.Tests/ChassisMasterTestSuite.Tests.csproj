@@ -35,6 +35,11 @@
     <Compile Include="..\Core\SampleEnricher.cs" Link="Linked\Core\SampleEnricher.cs" />
     <Compile Include="..\Core\DashboardGaugeModels.cs" Link="Linked\Core\DashboardGaugeModels.cs" />
     <Compile Include="..\Core\SessionMemoryStore.cs" Link="Linked\Core\SessionMemoryStore.cs" />
+    <Compile Include="..\Core\AppPreferencesStore.cs" Link="Linked\Core\AppPreferencesStore.cs" />
+    <Compile Include="..\Localization\Loc.cs" Link="Linked\Localization\Loc.cs" />
+    <Compile Include="..\Map\MapTileMath.cs" Link="Linked\Map\MapTileMath.cs" />
+    <Compile Include="..\Map\MapTileSource.cs" Link="Linked\Map\MapTileSource.cs" />
+    <Compile Include="..\Map\MapTileCache.cs" Link="Linked\Map\MapTileCache.cs" />
     <Compile Include="..\Analysis\TestType.cs" Link="Linked\Analysis\TestType.cs" />
     <Compile Include="..\Analysis\CrossingDirection.cs" Link="Linked\Analysis\CrossingDirection.cs" />
     <Compile Include="..\Analysis\ThresholdCondition.cs" Link="Linked\Analysis\ThresholdCondition.cs" />

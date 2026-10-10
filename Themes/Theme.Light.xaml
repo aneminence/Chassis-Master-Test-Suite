@@ -1,0 +1,33 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <SolidColorBrush x:Key="AppBackground" Color="#F3F5F8"/>
+    <SolidColorBrush x:Key="PanelBackground" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="CardBackground" Color="#F7F8FA"/>
+    <SolidColorBrush x:Key="BorderBrushSoft" Color="#D5DBE3"/>
+    <SolidColorBrush x:Key="AccentBrush" Color="#B8860B"/>
+    <SolidColorBrush x:Key="TextPrimary" Color="#1A1F27"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#5A6474"/>
+    <SolidColorBrush x:Key="TextMuted" Color="#8A94A6"/>
+
+    <SolidColorBrush x:Key="ToolButtonBackground" Color="#EEF1F5"/>
+    <SolidColorBrush x:Key="ToolButtonBorder" Color="#D5DBE3"/>
+    <SolidColorBrush x:Key="ToolButtonHoverBackground" Color="#E4E9EF"/>
+    <SolidColorBrush x:Key="NavHoverBackground" Color="#E8ECF1"/>
+    <SolidColorBrush x:Key="NavActiveBackground" Color="#E4E9EF"/>
+    <SolidColorBrush x:Key="DangerHoverBackground" Color="#F8E8E8"/>
+    <SolidColorBrush x:Key="DangerHoverBorder" Color="#C06060"/>
+    <SolidColorBrush x:Key="DangerHoverForeground" Color="#B04040"/>
+    <SolidColorBrush x:Key="SplitterBackground" Color="#D5DBE3"/>
+    <SolidColorBrush x:Key="MapCanvasBackground" Color="#E8ECF1"/>
+    <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#F0F2F5"/>
+    <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#C5CDD8"/>
+    <SolidColorBrush x:Key="ScrollBarThumbHoverBrush" Color="#A8B0BC"/>
+    <SolidColorBrush x:Key="ScrollBarThumbDragBrush" Color="#B8860B"/>
+    <SolidColorBrush x:Key="ScrollBarButtonBrush" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="ScrollBarGlyphBrush" Color="#5A6474"/>
+    <SolidColorBrush x:Key="LayoutInactiveBackground" Color="#EEF1F5"/>
+    <SolidColorBrush x:Key="LayoutInactiveBorder" Color="#C5CDD8"/>
+    <SolidColorBrush x:Key="LayoutInactiveForeground" Color="#5A6474"/>
+
+</ResourceDictionary>

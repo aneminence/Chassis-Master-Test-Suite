@@ -6,6 +6,9 @@ using System.Windows.Media;
 using System.Windows.Shapes;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
+using Chassis_Master_Test_Suite.Localization;
+using Chassis_Master_Test_Suite.Map;
+using Chassis_Master_Test_Suite.Themes;
 
 namespace Chassis_Master_Test_Suite.Controls;
 
@@ -117,6 +120,9 @@ public partial class TrackMapPanel : UserControl
     private double _drawnHeight;
     private bool _updatingGrid;
 
+    private MapTileLayerController? _tileLayer;
+    private bool _suppressBasemapSourceChanged;
+
     public TrackMapPanel()
     {
         InitializeComponent();
@@ -139,9 +145,43 @@ public partial class TrackMapPanel : UserControl
         };
 
         PlotHost.Children.Add(_wpfPlot);
-        Loaded += (_, _) => RefreshGateCombo();
+        Loaded += (_, _) =>
+        {
+            RefreshGateCombo();
+            InitBasemapUi();
+            ApplyLocalizedChrome();
+        };
 
-        GridOverlay.SizeChanged += (_, _) => UpdateGridOverlay();
+        GridOverlay.SizeChanged += (_, _) =>
+        {
+            UpdateGridOverlay();
+            _tileLayer?.Invalidate();
+        };
+        TileCanvas.SizeChanged += (_, _) => _tileLayer?.Invalidate(force: true);
+
+        _tileLayer = new MapTileLayerController(
+            TileCanvas,
+            () => _wpfPlot,
+            () => _projection);
+
+        AppearanceService.PreferencesChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ApplyBasemapFromPreferences);
+                return;
+            }
+            ApplyBasemapFromPreferences();
+        };
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(ApplyLocalizedChrome);
+                return;
+            }
+            ApplyLocalizedChrome();
+        };
     }
 
     /// <summary>
@@ -195,7 +235,11 @@ public partial class TrackMapPanel : UserControl
         _wpfPlot.UserInputProcessor.RemoveAll<
             ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
 
-        plot.RenderManager.RenderFinished += (_, _) => UpdateGridOverlay();
+        plot.RenderManager.RenderFinished += (_, _) =>
+        {
+            UpdateGridOverlay();
+            _tileLayer?.Invalidate();
+        };
 
         _wpfPlot.PreviewMouseMove += WpfPlot_PreviewMouseMove;
         _wpfPlot.PreviewMouseLeftButtonDown += WpfPlot_PreviewMouseLeftButtonDown;
@@ -1297,6 +1341,169 @@ public partial class TrackMapPanel : UserControl
         if (HoverTip is not null)
             HoverTip.Visibility = Visibility.Visible;
     }
+
+    private void InitBasemapUi()
+    {
+        if (BasemapSourceCombo is null)
+            return;
+
+        _suppressBasemapSourceChanged = true;
+        try
+        {
+            BasemapSourceCombo.Items.Clear();
+            var lang = Loc.Language;
+            foreach (var src in MapTileSources.Presets)
+            {
+                BasemapSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(lang)));
+            }
+
+            var prefs = AppearanceService.Preferences.Map;
+            var match = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
+                .FirstOrDefault(i => string.Equals(i.Id, prefs.SourceId, StringComparison.OrdinalIgnoreCase));
+            BasemapSourceCombo.SelectedItem = match ?? BasemapSourceCombo.Items[0];
+
+            if (BasemapCheck is not null)
+                BasemapCheck.IsChecked = prefs.BasemapEnabled;
+        }
+        finally
+        {
+            _suppressBasemapSourceChanged = false;
+        }
+
+        ApplyBasemapFromPreferences();
+    }
+
+    private void ApplyBasemapFromPreferences()
+    {
+        _tileLayer?.ApplyPreferences();
+        // Dim scale grid when basemap is on so tiles stay readable.
+        if (GridOverlay is not null)
+            GridOverlay.Opacity = AppearanceService.Preferences.Map.BasemapEnabled ? 0.35 : 1.0;
+    }
+
+    private void ApplyLocalizedChrome()
+    {
+        // Title texts in XAML that we can reach by name where present.
+        if (TitleText is not null)
+            TitleText.Text = Loc.T("Map.Title");
+        if (AddGateButton is not null)
+        {
+            AddGateButton.Content = Loc.T("Map.AddGate");
+            AddGateButton.ToolTip = Loc.T("Map.AddGateTip");
+        }
+        if (RenameGateButton is not null)
+        {
+            RenameGateButton.Content = Loc.T("Map.Rename");
+            RenameGateButton.ToolTip = Loc.T("Map.RenameTip");
+        }
+        if (DeleteGateButton is not null)
+        {
+            DeleteGateButton.Content = Loc.T("Map.Delete");
+            DeleteGateButton.ToolTip = Loc.T("Map.DeleteTip");
+        }
+        if (DeleteAllGatesButton is not null)
+        {
+            DeleteAllGatesButton.Content = Loc.T("Map.DeleteAll");
+            DeleteAllGatesButton.ToolTip = Loc.T("Map.DeleteAllTip");
+        }
+        if (ImportGatesButton is not null)
+        {
+            ImportGatesButton.Content = Loc.T("Map.Import");
+            ImportGatesButton.ToolTip = Loc.T("Map.ImportTip");
+        }
+        if (ExportGatesButton is not null)
+        {
+            ExportGatesButton.Content = Loc.T("Map.Export");
+            ExportGatesButton.ToolTip = Loc.T("Map.ExportTip");
+        }
+        if (BasemapCheck is not null)
+        {
+            BasemapCheck.Content = Loc.T("Map.Basemap");
+            BasemapCheck.ToolTip = Loc.T("Map.BasemapTip");
+        }
+        if (BasemapSourceCombo is not null)
+        {
+            BasemapSourceCombo.ToolTip = Loc.T("Map.SourceTip");
+            var selectedId = (BasemapSourceCombo.SelectedItem as BasemapSourceItem)?.Id
+                             ?? AppearanceService.Preferences.Map.SourceId;
+            _suppressBasemapSourceChanged = true;
+            try
+            {
+                BasemapSourceCombo.Items.Clear();
+                foreach (var src in MapTileSources.Presets)
+                    BasemapSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(Loc.Language)));
+                BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
+                    .FirstOrDefault(i => i.Id == selectedId) ?? BasemapSourceCombo.Items[0];
+            }
+            finally
+            {
+                _suppressBasemapSourceChanged = false;
+            }
+        }
+        if (GateCombo is not null)
+            GateCombo.ToolTip = Loc.T("Map.SelectGate");
+        if (GateWidthBox is not null)
+            GateWidthBox.ToolTip = Loc.T("Map.WidthTip");
+        if (EmptyHint is not null && EmptyHint.Children.Count >= 2)
+        {
+            if (EmptyHint.Children[0] is TextBlock t0)
+                t0.Text = Loc.T("Map.Title");
+            if (EmptyHint.Children[1] is TextBlock t1)
+                t1.Text = Loc.T("Map.Waiting");
+        }
+    }
+
+    private void BasemapCheck_Changed(object sender, RoutedEventArgs e)
+    {
+        if (BasemapCheck is null)
+            return;
+        AppearanceService.SetMapBasemap(BasemapCheck.IsChecked == true);
+        ApplyBasemapFromPreferences();
+    }
+
+    private void BasemapSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressBasemapSourceChanged || BasemapSourceCombo?.SelectedItem is not BasemapSourceItem item)
+            return;
+
+        string? customUrl = AppearanceService.Preferences.Map.CustomUrlTemplate;
+        if (item.Id == MapTileSources.CustomId)
+        {
+            customUrl = PromptText(
+                Loc.T("Map.CustomUrl"),
+                Loc.T("Map.CustomUrlPrompt"),
+                customUrl ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+            if (customUrl is null)
+            {
+                // revert selection
+                _suppressBasemapSourceChanged = true;
+                try
+                {
+                    var prev = AppearanceService.Preferences.Map.SourceId;
+                    BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
+                        .FirstOrDefault(i => i.Id == prev) ?? BasemapSourceCombo.Items[0];
+                }
+                finally
+                {
+                    _suppressBasemapSourceChanged = false;
+                }
+                return;
+            }
+        }
+
+        AppearanceService.SetMapSource(item.Id, customUrl);
+        _tileLayer?.SetSource(AppearanceService.CurrentMapSource());
+        _tileLayer?.Invalidate(force: true);
+    }
+
+    private sealed class BasemapSourceItem
+    {
+        public string Id { get; }
+        public string Name { get; }
+        public BasemapSourceItem(string id, string name) { Id = id; Name = name; }
+        public override string ToString() => Name;
+    }
+
 
     private void RefreshGateCombo()
     {

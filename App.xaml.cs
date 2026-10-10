@@ -1,6 +1,5 @@
-﻿using System.Configuration;
-using System.Data;
 using System.Windows;
+using Chassis_Master_Test_Suite.Themes;
 
 namespace Chassis_Master_Test_Suite
 {
@@ -9,6 +8,10 @@ namespace Chassis_Master_Test_Suite
     /// </summary>
     public partial class App : Application
     {
+        protected override void OnStartup(StartupEventArgs e)
+        {
+            AppearanceService.Initialize();
+            base.OnStartup(e);
+        }
     }
-
 }

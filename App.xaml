@@ -6,20 +6,13 @@
 
     <Application.Resources>
 
-        <!-- ============================================================
-             全局配色（黑金主题）
-             ============================================================ -->
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- Theme brushes live here; ThemeManager swaps index 0 at runtime. -->
+                <ResourceDictionary Source="Themes/Theme.Dark.xaml"/>
+            </ResourceDictionary.MergedDictionaries>
 
-        <SolidColorBrush x:Key="AppBackground"   Color="#0B0E12"/>
-        <SolidColorBrush x:Key="PanelBackground" Color="#12171E"/>
-        <SolidColorBrush x:Key="CardBackground"  Color="#0E131A"/>
-        <SolidColorBrush x:Key="BorderBrushSoft" Color="#1E2530"/>
-        <SolidColorBrush x:Key="AccentBrush"     Color="#C8A34A"/>
-        <SolidColorBrush x:Key="TextPrimary"     Color="#E6EAF0"/>
-        <SolidColorBrush x:Key="TextSecondary"   Color="#8A94A6"/>
-        <SolidColorBrush x:Key="TextMuted"       Color="#5A6474"/>
-
-        <!-- ============================================================
+<!-- ============================================================
              分隔条
              ============================================================ -->
 
@@ -475,33 +468,26 @@
              深色 ScrollBar（曲线区右侧滚动条与黑金主题一致）
              ============================================================ -->
 
-        <SolidColorBrush x:Key="ScrollBarTrackBrush" Color="#0E131A"/>
-        <SolidColorBrush x:Key="ScrollBarThumbBrush" Color="#2A3644"/>
-        <SolidColorBrush x:Key="ScrollBarThumbHoverBrush" Color="#3A4656"/>
-        <SolidColorBrush x:Key="ScrollBarThumbDragBrush" Color="#C8A34A"/>
-        <SolidColorBrush x:Key="ScrollBarButtonBrush" Color="#12171E"/>
-        <SolidColorBrush x:Key="ScrollBarGlyphBrush" Color="#8A94A6"/>
-
-        <Style x:Key="DarkScrollBarThumbStyle" TargetType="Thumb">
+<Style x:Key="DarkScrollBarThumbStyle" TargetType="Thumb">
             <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="IsTabStop" Value="False"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
                         <Border x:Name="ThumbBorder"
-                                Background="{StaticResource ScrollBarThumbBrush}"
+                                Background="{DynamicResource ScrollBarThumbBrush}"
                                 CornerRadius="3"
                                 Margin="1"/>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="ThumbBorder"
                                         Property="Background"
-                                        Value="{StaticResource ScrollBarThumbHoverBrush}"/>
+                                        Value="{DynamicResource ScrollBarThumbHoverBrush}"/>
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
                                 <Setter TargetName="ThumbBorder"
                                         Property="Background"
-                                        Value="{StaticResource ScrollBarThumbDragBrush}"/>
+                                        Value="{DynamicResource ScrollBarThumbDragBrush}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -526,12 +512,12 @@
             <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="Focusable" Value="False"/>
             <Setter Property="IsTabStop" Value="False"/>
-            <Setter Property="Foreground" Value="{StaticResource ScrollBarGlyphBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource ScrollBarGlyphBrush}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RepeatButton">
                         <Border x:Name="Bd"
-                                Background="{StaticResource ScrollBarButtonBrush}"
+                                Background="{DynamicResource ScrollBarButtonBrush}"
                                 CornerRadius="2">
                             <TextBlock x:Name="Arrow"
                                        Text="{TemplateBinding Content}"
@@ -555,7 +541,7 @@
         </Style>
 
         <ControlTemplate x:Key="DarkVerticalScrollBarTemplate" TargetType="ScrollBar">
-            <Grid Background="{StaticResource ScrollBarTrackBrush}">
+            <Grid Background="{DynamicResource ScrollBarTrackBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="16"/>
                     <RowDefinition Height="*"/>
@@ -588,7 +574,7 @@
         </ControlTemplate>
 
         <ControlTemplate x:Key="DarkHorizontalScrollBarTemplate" TargetType="ScrollBar">
-            <Grid Background="{StaticResource ScrollBarTrackBrush}">
+            <Grid Background="{DynamicResource ScrollBarTrackBrush}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="16"/>
                     <ColumnDefinition Width="*"/>
@@ -842,6 +828,7 @@
         </Style>
 
 
+        </ResourceDictionary>
     </Application.Resources>
 
 </Application>
