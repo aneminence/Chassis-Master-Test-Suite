@@ -739,11 +739,7 @@ public partial class MainWindow : Window
     {
         _offlineFiles.Clear();
         ApplyOfflineDataset();
-
-        if (ReplayFileText is not null)
-            ReplayFileText.Text = "No file loaded";
-        if (ReplayInfoText is not null)
-            ReplayInfoText.Text = "";
+        UpdateOfflineFileStatusLabels();
     }
 
 
@@ -772,20 +768,15 @@ public partial class MainWindow : Window
         _isOfflineMode = false;
         ApplyModeUi();
 
-        // 已在线上且无残留线下文件：只刷新工具栏，不清历史
-        if (!wasOffline && _offlineFiles.Count == 0 && !_historyOfflineMode)
+        // Already online with live history: only refresh toolbar.
+        if (!wasOffline && !_historyOfflineMode)
         {
             UpdateConnectionStatusUi();
             return;
         }
 
-        // 从线下切回线上：清空线下文件占用的历史，恢复 live 通道
-        if (_offlineFiles.Count > 0)
-        {
-            _offlineFiles.Clear();
-            RebuildOfflineFileChips();
-        }
-
+        // Switch display to live. Keep opened offline VBO files in memory
+        // (VBTS-style): Offline tools hide, but switching back restores them.
         _historyOfflineMode = false;
         _sampleHistory.Clear();
         _latestSample = null;
@@ -832,8 +823,41 @@ public partial class MainWindow : Window
         if (stopOnline)
             await StopOnlineConnectionAsync();
 
-        _historyOfflineMode = true;
+        // Restore preserved offline files into plots/Dashboard/TrackMap.
+        // Opening Online must not clear _offlineFiles (VBTS-style).
+        ApplyOfflineDataset();
+        UpdateOfflineFileStatusLabels();
         UpdateConnectionStatusUi();
+    }
+
+
+    /// <summary>
+    /// Refresh Replay page labels from the current offline file set.
+    /// </summary>
+    private void UpdateOfflineFileStatusLabels()
+    {
+        if (ReplayFileText is not null)
+        {
+            ReplayFileText.Text = _offlineFiles.Count == 0
+                ? "No file loaded"
+                : _offlineFiles.Count == 1
+                    ? _offlineFiles.Primary!.DisplayName
+                    : $"{_offlineFiles.Count} files";
+        }
+
+        if (ReplayInfoText is not null)
+        {
+            if (_offlineFiles.Count == 0)
+            {
+                ReplayInfoText.Text = "";
+            }
+            else
+            {
+                var total = _offlineFiles.Files.Sum(f => f.Samples.Count);
+                ReplayInfoText.Text =
+                    $"{total} samples · {_lastLoadedChannelCount} channels · {_offlineFiles.Count} file(s)";
+            }
+        }
     }
 
 
