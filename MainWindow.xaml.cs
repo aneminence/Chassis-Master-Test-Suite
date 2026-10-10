@@ -165,6 +165,7 @@ public partial class MainWindow : Window
         };
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
+        DashboardPanelControl.VehicleSummaryClicked += OnVehicleSummaryClicked;
 
         _uiTimer = new DispatcherTimer
         {
@@ -433,7 +434,7 @@ public partial class MainWindow : Window
         ChannelRegistry.Instance.SetFromVboColumns(columns);
         RefreshChannelSelectorsFromRegistry();
 
-        // 主历史 = 第一份文件（光标 / 默认 Dashboard）
+        // 主历史 = 当前选中文件（芯片点击切换；默认最新打开）
         var primary = _offlineFiles.Primary!;
         _sampleHistory.Clear();
         _sampleHistory.AddRange(primary.Samples);
@@ -452,18 +453,30 @@ public partial class MainWindow : Window
 
         OfflineFilesPanel.Children.Clear();
 
+        var selectedId = _offlineFiles.Selected?.Id;
+
         foreach (var file in _offlineFiles.Files)
         {
+            var isSelected = file.Id == selectedId;
+
             var chip = new Border
             {
-                Background = (Brush)new BrushConverter().ConvertFromString("#1A222C")!,
+                Background = (Brush)new BrushConverter().ConvertFromString(
+                    isSelected ? "#243040" : "#1A222C")!,
                 BorderBrush = (Brush)new BrushConverter().ConvertFromString(file.ColorHex)!,
-                BorderThickness = new Thickness(1),
+                BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(8, 2, 4, 2),
                 Margin = new Thickness(0, 0, 6, 0),
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Hand,
+                Tag = file.Id,
+                ToolTip = isSelected
+                    ? $"当前选中：{file.FilePath}"
+                    : $"点击切换 Dashboard 到：{file.DisplayName}"
             };
+
+            chip.MouseLeftButtonUp += OfflineFileChip_Click;
 
             var row = new StackPanel { Orientation = Orientation.Horizontal };
 
@@ -472,11 +485,12 @@ public partial class MainWindow : Window
                 Text = file.DisplayName,
                 Foreground = (Brush)FindResource("TextPrimary"),
                 FontSize = 11,
+                FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 6, 0),
                 MaxWidth = 140,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                ToolTip = file.FilePath
+                IsHitTestVisible = false
             });
 
             var close = new Button
@@ -495,6 +509,69 @@ public partial class MainWindow : Window
             chip.Child = row;
             OfflineFilesPanel.Children.Add(chip);
         }
+    }
+
+    private void OfflineFileChip_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border { Tag: Guid id })
+            return;
+
+        // 点关闭按钮时不切换
+        if (e.OriginalSource is DependencyObject source &&
+            FindParentButton(source) is not null)
+            return;
+
+        if (_offlineFiles.Selected?.Id == id)
+            return;
+
+        _offlineFiles.Select(id);
+        ClearPlotCursors();
+        ApplyOfflineDataset();
+        e.Handled = true;
+    }
+
+    private void ClearPlotCursors()
+    {
+        _cursorSourcePlot = null;
+        foreach (var plot in _plots)
+        {
+            plot.CursorX = null;
+            plot.SelectionX1 = null;
+            plot.SelectionX2 = null;
+            plot.IsSelectingRange = false;
+            if (plot.WpfPlot is not null)
+            {
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot.Refresh();
+            }
+        }
+
+        TrackMapPanelControl.SetCursorSample(null);
+    }
+
+    private static Button? FindParentButton(DependencyObject? node)
+    {
+        while (node is not null)
+        {
+            if (node is Button button)
+                return button;
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return null;
+    }
+
+
+    private void OnVehicleSummaryClicked(string displayName)
+    {
+        var file = _offlineFiles.Files.FirstOrDefault(f =>
+            string.Equals(f.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        if (file is null || _offlineFiles.Selected?.Id == file.Id)
+            return;
+
+        _offlineFiles.Select(file.Id);
+        ClearPlotCursors();
+        ApplyOfflineDataset();
     }
 
 
@@ -2299,8 +2376,25 @@ public partial class MainWindow : Window
     /// <summary>
     /// Track Map 点选轨迹点 → 同步曲线光标、Dashboard、车辆标记。
     /// </summary>
-    private void ApplyCursorFromTrackSample(VehicleSample sample)
+    private void ApplyCursorFromTrackSample(VehicleSample sample, int trackIndex)
     {
+        // 点到某条轨迹时，切换 Dashboard 到对应线下文件
+        if (_isOfflineMode &&
+            trackIndex >= 0 &&
+            trackIndex < _offlineFiles.Count)
+        {
+            var file = _offlineFiles.Files[trackIndex];
+            if (_offlineFiles.Selected?.Id != file.Id)
+            {
+                _offlineFiles.Select(file.Id);
+                _sampleHistory.Clear();
+                _sampleHistory.AddRange(file.Samples);
+                _latestSample = file.Samples.Count > 0 ? file.Samples[^1] : null;
+                RebuildOfflineFileChips();
+                RefreshAllPlots();
+            }
+        }
+
         var selectedXSignal =
             XAxisSelector.SelectedValue is string xSignal
                 ? xSignal
@@ -3314,16 +3408,18 @@ public partial class MainWindow : Window
             steeringAngleDeg: 0.0,
             cursorFrozen: cursorSample is not null);
 
-        // 多车摘要（线下多文件）
+        // 多车摘要（线下多文件）；点选芯片后 Primary 对应当前文件
         if (_isOfflineMode && _offlineFiles.Count > 0)
         {
+            var selected = _offlineFiles.Selected;
             var summary = _offlineFiles.Files
                 .Select(f =>
                 {
                     var s = f.Samples.Count > 0 ? f.Samples[^1] : null;
-                    // 若光标落在主文件上，主文件用光标样本
+                    // 当前选中文件：有光标时用光标样本
                     if (cursorSample is not null &&
-                        ReferenceEquals(f, _offlineFiles.Primary))
+                        selected is not null &&
+                        f.Id == selected.Id)
                         s = cursorSample;
                     return (
                         f.DisplayName,
@@ -3331,7 +3427,9 @@ public partial class MainWindow : Window
                         s?.SpeedKph ?? 0.0);
                 })
                 .ToList();
-            DashboardPanelControl.SetMultiVehicleSummary(summary);
+            DashboardPanelControl.SetMultiVehicleSummary(
+                summary,
+                selected?.DisplayName);
         }
         else
         {

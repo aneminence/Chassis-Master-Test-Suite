@@ -45,8 +45,32 @@ public sealed class OfflineFileSet
 
     public int Count => _files.Count;
 
+    /// <summary>当前选中的线下文件（Dashboard 主读数）。未选时退回第一份。</summary>
+    public Guid? SelectedId { get; private set; }
+
     public OfflineFileEntry? Primary =>
-        _files.Count > 0 ? _files[0] : null;
+        Selected ?? (_files.Count > 0 ? _files[0] : null);
+
+    public OfflineFileEntry? Selected
+    {
+        get
+        {
+            if (SelectedId is Guid id)
+            {
+                var hit = _files.FirstOrDefault(f => f.Id == id);
+                if (hit is not null)
+                    return hit;
+            }
+
+            return _files.Count > 0 ? _files[0] : null;
+        }
+    }
+
+    public void Select(Guid id)
+    {
+        if (_files.Any(f => f.Id == id))
+            SelectedId = id;
+    }
 
     public OfflineFileEntry Add(
         string filePath,
@@ -67,16 +91,23 @@ public sealed class OfflineFileSet
         };
 
         _files.Add(entry);
+        SelectedId = entry.Id; // 新打开的文件成为当前选中
         return entry;
     }
 
-    public bool Remove(Guid id) =>
-        _files.RemoveAll(f => f.Id == id) > 0;
+    public bool Remove(Guid id)
+    {
+        var removed = _files.RemoveAll(f => f.Id == id) > 0;
+        if (removed && SelectedId == id)
+            SelectedId = _files.Count > 0 ? _files[0].Id : null;
+        return removed;
+    }
 
     public void Clear()
     {
         _files.Clear();
         _colorIndex = 0;
+        SelectedId = null;
     }
 
     /// <summary>所有已打开文件列名的并集。</summary>

@@ -94,30 +94,98 @@ public sealed class TrackProjection
     /// <summary>
     /// 用一批样本自动定出投影原点（轨迹的外接矩形中心）。
     /// </summary>
+    /// <summary>
+    /// 有效 GPS：非 NaN/Inf，且不能落在 (0,0) 附近（未定位占位）。
+    /// </summary>
+    public static bool IsValidGps(double latitude, double longitude)
+    {
+        if (double.IsNaN(latitude) || double.IsNaN(longitude) ||
+            double.IsInfinity(latitude) || double.IsInfinity(longitude))
+        {
+            return false;
+        }
+
+        // 未定位常见占位
+        if (Math.Abs(latitude) < 1e-5 && Math.Abs(longitude) < 1e-5)
+        {
+            return false;
+        }
+
+        if (latitude < -90.0 || latitude > 90.0 ||
+            longitude < -180.0 || longitude > 180.0)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    public static bool IsValidGps(VehicleSample sample) =>
+        IsValidGps(sample.Latitude, sample.Longitude);
+
+    /// <summary>
+    /// 用一批样本自动定出投影原点（轨迹的外接矩形中心）。
+    /// 自动跳过无效 GPS；若有效点不足则回退 (0,0)。
+    /// </summary>
     public static TrackProjection FitToTrack(
         IReadOnlyList<VehicleSample> samples)
     {
-        if (samples.Count == 0)
-        {
-            return new TrackProjection(0.0, 0.0);
-        }
-
         var minLat = double.MaxValue;
         var maxLat = double.MinValue;
         var minLon = double.MaxValue;
         var maxLon = double.MinValue;
+        var any = false;
 
         foreach (var sample in samples)
         {
+            if (!IsValidGps(sample))
+                continue;
+
+            any = true;
             minLat = Math.Min(minLat, sample.Latitude);
             maxLat = Math.Max(maxLat, sample.Latitude);
             minLon = Math.Min(minLon, sample.Longitude);
             maxLon = Math.Max(maxLon, sample.Longitude);
         }
 
+        if (!any)
+        {
+            return new TrackProjection(0.0, 0.0);
+        }
+
         return new TrackProjection(
             (minLat + maxLat) / 2.0,
             (minLon + maxLon) / 2.0);
+    }
+
+    /// <summary>
+    /// 去掉离每条轨迹中位数过远的毛刺点（默认 5 km），
+    /// 避免单个坏点把 Track Map 拉成跨城对角斜线。
+    /// </summary>
+    public static List<VehicleSample> FilterGpsOutliers(
+        IReadOnlyList<VehicleSample> samples,
+        double maxDistanceMeters = 5_000.0)
+    {
+        var valid = samples.Where(IsValidGps).ToList();
+        if (valid.Count < 3)
+            return valid;
+
+        var lats = valid.Select(s => s.Latitude).OrderBy(v => v).ToList();
+        var lons = valid.Select(s => s.Longitude).OrderBy(v => v).ToList();
+        var medLat = lats[lats.Count / 2];
+        var medLon = lons[lons.Count / 2];
+
+        // 粗略平面距离（与 TrackProjection 同量级）
+        var mPerLon = MetersPerDegreeLatitude *
+                      Math.Cos(medLat * Math.PI / 180.0);
+        var maxSq = maxDistanceMeters * maxDistanceMeters;
+
+        return valid.Where(s =>
+        {
+            var dx = (s.Longitude - medLon) * mPerLon;
+            var dy = (s.Latitude - medLat) * MetersPerDegreeLatitude;
+            return dx * dx + dy * dy <= maxSq;
+        }).ToList();
     }
 
     /// <summary>

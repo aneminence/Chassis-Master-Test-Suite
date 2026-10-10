@@ -125,7 +125,7 @@ public partial class TrackMapPanel : UserControl
     /// <summary>
     /// 用户在轨迹上点选样本时触发（供曲线光标 / Dashboard 同步）。
     /// </summary>
-    public event Action<VehicleSample>? SampleSelected;
+    public event Action<VehicleSample, int>? SampleSelected;
 
     // ============================================================
     // 初始化
@@ -300,7 +300,32 @@ public partial class TrackMapPanel : UserControl
         // 显式复位视野时重新允许后续自动取景
         _userHasAdjustedView = false;
 
-        var (minX, maxX, minY, maxY) = GetBounds(_samples, _projection);
+        var gps = TrackProjection.FilterGpsOutliers(_samples);
+        if (gps.Count < 2)
+            gps = _samples.Where(TrackProjection.IsValidGps).ToList();
+
+        AutoFitToSamples(gps);
+    }
+
+    private void AutoFitToSamples(IReadOnlyList<VehicleSample> samples)
+    {
+        if (_projection is null || samples.Count == 0)
+            return;
+
+        var (minX, maxX, minY, maxY) = GetBounds(samples, _projection);
+
+        // 全是同一点时给一个最小视野
+        if (maxX - minX < 1e-6)
+        {
+            minX -= 25;
+            maxX += 25;
+        }
+
+        if (maxY - minY < 1e-6)
+        {
+            minY -= 25;
+            maxY += 25;
+        }
 
         var padX = Math.Max((maxX - minX) * 0.08, 5.0);
         var padY = Math.Max((maxY - minY) * 0.08, 5.0);
@@ -335,8 +360,37 @@ public partial class TrackMapPanel : UserControl
 
     private void Rebuild(IReadOnlyList<TrackLayer> tracks)
     {
-        var allSamples = tracks.SelectMany(t => t.Samples).ToList();
-        var first = allSamples[0];
+        // 每条轨迹先滤掉无效 GPS / 远距毛刺，再投影与取景。
+        // 否则单个坏点会把视野拉到十几公里，真轨迹缩成看不见的点，
+        // 只剩一条对角“假线”。
+        var filteredLayers = new List<(TrackLayer Layer, List<VehicleSample> Gps)>();
+        foreach (var layer in tracks)
+        {
+            var gps = TrackProjection.FilterGpsOutliers(layer.Samples);
+            if (gps.Count >= 2)
+                filteredLayers.Add((layer, gps));
+        }
+
+        if (filteredLayers.Count == 0)
+        {
+            // 有样本但都无有效 GPS：清空地图，避免画对角假线
+            Clear();
+            EmptyHint.Visibility = Visibility.Visible;
+            return;
+        }
+
+        // 多文件：丢掉中心点离“场地中位数”过远的整条轨迹（坏文件 / 错场地）
+        filteredLayers = KeepLayersNearVenue(filteredLayers);
+
+        if (filteredLayers.Count == 0)
+        {
+            Clear();
+            EmptyHint.Visibility = Visibility.Visible;
+            return;
+        }
+
+        var allGps = filteredLayers.SelectMany(t => t.Gps).ToList();
+        var first = allGps[0];
 
         var needNewProjection =
             _projection is null
@@ -353,6 +407,7 @@ public partial class TrackMapPanel : UserControl
         _tracks.Clear();
         _tracks.AddRange(tracks);
 
+        // 点选/悬停仍用原始样本顺序（与文件对齐），投影时再校验 GPS
         _samples.Clear();
         _sampleTrackIndex.Clear();
         for (var ti = 0; ti < tracks.Count; ti++)
@@ -366,7 +421,7 @@ public partial class TrackMapPanel : UserControl
 
         if (needNewProjection)
         {
-            _projection = TrackProjection.FitToTrack(_samples);
+            _projection = TrackProjection.FitToTrack(allGps);
             _projectionAnchor = (first.Latitude, first.Longitude);
             _userHasAdjustedView = false;
         }
@@ -375,30 +430,33 @@ public partial class TrackMapPanel : UserControl
 
         _wpfPlot.Plot.Clear();
         ApplyDarkStyle();
+        // Clear 后部分轴设置会丢，必须重套，否则多轨时比例/取景异常
+        _wpfPlot.Plot.HideAxesAndGrid();
+        _wpfPlot.Plot.Axes.Frameless(true);
+        _wpfPlot.Plot.Axes.SquareUnits();
         _wpfPlot.Plot.Axes.ContinuouslyAutoscale = false;
 
         _track = null;
-        foreach (var layer in tracks)
+        foreach (var (layer, gps) in filteredLayers)
         {
-            var stride = Math.Max(1, layer.Samples.Count / MaxDisplayPoints);
-            var xs = new List<double>(layer.Samples.Count / stride + 1);
-            var ys = new List<double>(layer.Samples.Count / stride + 1);
+            var stride = Math.Max(1, gps.Count / MaxDisplayPoints);
+            var xs = new List<double>(gps.Count / stride + 1);
+            var ys = new List<double>(gps.Count / stride + 1);
 
-            for (var i = 0; i < layer.Samples.Count; i += stride)
+            for (var i = 0; i < gps.Count; i += stride)
             {
                 var (x, y) = projection.ToMeters(
-                    layer.Samples[i].Latitude,
-                    layer.Samples[i].Longitude);
+                    gps[i].Latitude,
+                    gps[i].Longitude);
                 xs.Add(x);
                 ys.Add(y);
             }
 
-            if (layer.Samples.Count > 0 &&
-                (layer.Samples.Count - 1) % stride != 0)
+            if (gps.Count > 0 && (gps.Count - 1) % stride != 0)
             {
                 var (x, y) = projection.ToMeters(
-                    layer.Samples[^1].Latitude,
-                    layer.Samples[^1].Longitude);
+                    gps[^1].Latitude,
+                    gps[^1].Longitude);
                 xs.Add(x);
                 ys.Add(y);
             }
@@ -410,9 +468,10 @@ public partial class TrackMapPanel : UserControl
                 ? "#E05252"
                 : layer.ColorHex;
 
+            // 用 double[] 拷贝：ScottPlot 对 List 只持引用，避免后续被误改
             var scatter = _wpfPlot.Plot.Add.ScatterLine(
-                xs,
-                ys,
+                xs.ToArray(),
+                ys.ToArray(),
                 ScottPlot.Color.FromHex(colorHex));
 
             scatter.LineWidth = 2.0f;
@@ -420,6 +479,8 @@ public partial class TrackMapPanel : UserControl
             scatter.LegendText = layer.Name;
             _track ??= scatter;
         }
+
+        _wpfPlot.Plot.Legend.IsVisible = filteredLayers.Count > 1;
 
         _hasData = true;
         EmptyHint.Visibility = Visibility.Collapsed;
@@ -430,7 +491,7 @@ public partial class TrackMapPanel : UserControl
 
         if (!_userHasAdjustedView)
         {
-            AutoFit();
+            AutoFitToSamples(allGps);
         }
         else
         {
@@ -467,7 +528,41 @@ public partial class TrackMapPanel : UserControl
         MarkUserAdjustedView();
     }
 
-    private static (double MinX, double MaxX, double MinY, double MaxY) GetBounds(
+    /// <summary>
+    /// 保留中心靠近场地中位数的轨迹；中心偏离 > 8 km 的整条丢掉（不参与取景）。
+    /// 仍会尝试画所有滤后轨迹中“在场地内”的那些。
+    /// </summary>
+    private static List<(TrackLayer Layer, List<VehicleSample> Gps)> KeepLayersNearVenue(
+        List<(TrackLayer Layer, List<VehicleSample> Gps)> layers)
+    {
+        if (layers.Count <= 1)
+            return layers;
+
+        var centers = layers.Select(l =>
+        {
+            var lat = l.Gps.Average(s => s.Latitude);
+            var lon = l.Gps.Average(s => s.Longitude);
+            return (l, lat, lon);
+        }).ToList();
+
+        var medLat = centers.Select(c => c.lat).OrderBy(v => v).ElementAt(centers.Count / 2);
+        var medLon = centers.Select(c => c.lon).OrderBy(v => v).ElementAt(centers.Count / 2);
+        var mPerLon = TrackProjection.MetersPerDegreeLatitude *
+                      Math.Cos(medLat * Math.PI / 180.0);
+        const double maxMeters = 8_000.0;
+        var maxSq = maxMeters * maxMeters;
+
+        var kept = centers.Where(c =>
+        {
+            var dx = (c.lon - medLon) * mPerLon;
+            var dy = (c.lat - medLat) * TrackProjection.MetersPerDegreeLatitude;
+            return dx * dx + dy * dy <= maxSq;
+        }).Select(c => c.l).ToList();
+
+        return kept.Count > 0 ? kept : layers;
+    }
+
+        private static (double MinX, double MaxX, double MinY, double MaxY) GetBounds(
         IReadOnlyList<VehicleSample> samples,
         TrackProjection projection)
     {
@@ -475,9 +570,14 @@ public partial class TrackMapPanel : UserControl
         var maxX = double.MinValue;
         var minY = double.MaxValue;
         var maxY = double.MinValue;
+        var any = false;
 
         foreach (var sample in samples)
         {
+            if (!TrackProjection.IsValidGps(sample))
+                continue;
+
+            any = true;
             var (x, y) = projection.ToMeters(
                 sample.Latitude,
                 sample.Longitude);
@@ -487,6 +587,9 @@ public partial class TrackMapPanel : UserControl
             minY = Math.Min(minY, y);
             maxY = Math.Max(maxY, y);
         }
+
+        if (!any)
+            return (0, 0, 0, 0);
 
         return (minX, maxX, minY, maxY);
     }
@@ -527,7 +630,8 @@ public partial class TrackMapPanel : UserControl
 
         if (_cursorSample is null ||
             _projection is null ||
-            !_hasData)
+            !_hasData ||
+            !TrackProjection.IsValidGps(_cursorSample))
         {
             if (refresh)
                 _wpfPlot.Refresh();
@@ -845,7 +949,10 @@ public partial class TrackMapPanel : UserControl
 
         var sample = _samples[index];
         SetCursorSample(sample);
-        SampleSelected?.Invoke(sample);
+        var trackIndex = index >= 0 && index < _sampleTrackIndex.Count
+            ? _sampleTrackIndex[index]
+            : 0;
+        SampleSelected?.Invoke(sample, trackIndex);
 
         // 点在轨迹上：选点并同步，不启动平移
         e.Handled = true;
@@ -877,6 +984,9 @@ public partial class TrackMapPanel : UserControl
 
         for (var i = 0; i < _samples.Count; i += stride)
         {
+            if (!TrackProjection.IsValidGps(_samples[i]))
+                continue;
+
             var (sampleX, sampleY) = projection.ToMeters(
                 _samples[i].Latitude,
                 _samples[i].Longitude);

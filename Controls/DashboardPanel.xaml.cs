@@ -45,11 +45,15 @@ public partial class DashboardPanel : UserControl
         CursorModeText.Text = cursorFrozen ? "· Cursor" : "";
     }
 
+    /// <summary>点击多车摘要条目时抛出文件名（与线下芯片同名）。</summary>
+    public event Action<string>? VehicleSummaryClicked;
+
     /// <summary>
-    /// 多车同步摘要：名称 / 颜色 / 速度。
+    /// 多车同步摘要：名称 / 颜色 / 速度；selectedName 高亮为当前 Dashboard 主文件。
     /// </summary>
     public void SetMultiVehicleSummary(
-        IReadOnlyList<(string Name, string ColorHex, double SpeedKph)> vehicles)
+        IReadOnlyList<(string Name, string ColorHex, double SpeedKph)> vehicles,
+        string? selectedName = null)
     {
         MultiVehicleHost.Items.Clear();
 
@@ -63,14 +67,30 @@ public partial class DashboardPanel : UserControl
 
         foreach (var (name, colorHex, speed) in vehicles)
         {
+            var isSelected = selectedName is not null &&
+                string.Equals(name, selectedName, StringComparison.OrdinalIgnoreCase);
+
             var border = new Border
             {
-                Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
+                Background = new SolidColorBrush(
+                    isSelected
+                        ? Color.FromRgb(0x24, 0x30, 0x40)
+                        : Color.FromRgb(0x0E, 0x13, 0x1A)),
                 BorderBrush = TryBrush(colorHex) ?? new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
-                BorderThickness = new Thickness(1),
+                BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(8, 4, 8, 4),
-                Margin = new Thickness(0, 0, 6, 4)
+                Margin = new Thickness(0, 0, 6, 4),
+                Cursor = System.Windows.Input.Cursors.Hand,
+                Tag = name,
+                ToolTip = isSelected ? $"当前：{name}" : $"点击切换到 {name}"
+            };
+
+            border.MouseLeftButtonUp += (_, e) =>
+            {
+                if (border.Tag is string n)
+                    VehicleSummaryClicked?.Invoke(n);
+                e.Handled = true;
             };
 
             var stack = new StackPanel { Orientation = Orientation.Horizontal };
@@ -89,10 +109,12 @@ public partial class DashboardPanel : UserControl
                 Text = name,
                 Foreground = new SolidColorBrush(Color.FromRgb(0xC3, 0xCB, 0xD8)),
                 FontSize = 11,
+                FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(0, 0, 8, 0),
                 MaxWidth = 120,
-                TextTrimming = TextTrimming.CharacterEllipsis
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false
             });
 
             stack.Children.Add(new TextBlock
@@ -101,7 +123,8 @@ public partial class DashboardPanel : UserControl
                 Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
                 FontSize = 11,
                 FontFamily = new FontFamily("Consolas"),
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                IsHitTestVisible = false
             });
 
             border.Child = stack;
