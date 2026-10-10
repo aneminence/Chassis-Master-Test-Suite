@@ -273,30 +273,65 @@ public sealed class MapTileLayerController : IDisposable
         TrackProjection projection,
         int z, int x, int y)
     {
-        // Tile corners in the SAME local Web Mercator space as the trajectory.
-        // Using lat/lon ENU boxes here used to warp Mercator imagery and cause
-        // growing offset when zoomed out.
-        var (south, west, north, east) = MapTileMath.TileBounds(x, y, z);
-        var (wx0, wy0) = projection.ToMeters(north, west); // NW
-        var (wx1, wy1) = projection.ToMeters(south, east); // SE
+        // Tile corners in local Web Mercator metres (same CRS as the trajectory).
+        var (west, north, east, south) = MapTileMath.TileMercatorBounds(x, y, z);
+        var wx0 = west - projection.OriginMercatorX;
+        var wyN = north - projection.OriginMercatorY;
+        var wx1 = east - projection.OriginMercatorX;
+        var wyS = south - projection.OriginMercatorY;
 
-        ScottPlot.Pixel px0, px1;
+        ScottPlot.PixelRect data;
+        ScottPlot.AxisLimits limits;
         try
         {
-            px0 = plot.Plot.GetPixel(new ScottPlot.Coordinates(wx0, wy0));
-            px1 = plot.Plot.GetPixel(new ScottPlot.Coordinates(wx1, wy1));
+            data = plot.Plot.RenderManager.LastRender.DataRect;
+            limits = plot.Plot.Axes.GetLimits();
         }
         catch
         {
             return;
         }
 
-        var left = Math.Min(px0.X, px1.X);
-        var top = Math.Min(px0.Y, px1.Y);
-        var w = Math.Abs(px1.X - px0.X);
-        var h = Math.Abs(px1.Y - px0.Y);
+        // DataRect is in *unscaled* figure pixels (same space as WPF DIPs once
+        // Plot.ScaleFactor is divided out of mouse hits). Do NOT use GetPixel here:
+        // GetPixel multiplies by ScaleFactor, and placing those values on a WPF Canvas
+        // makes the geographic error grow when zoomed out on high-DPI displays.
+        var spanX = limits.Right - limits.Left;
+        var spanY = limits.Top - limits.Bottom;
+        if (data.Width < 1 || data.Height < 1 || spanX <= 0 || spanY <= 0)
+            return;
+
+        var sx = data.Width / spanX;
+        var sy = data.Height / spanY;
+
+        // Screen Y grows downward; plot Y (northing) grows upward.
+        var left = data.Left + (wx0 - limits.Left) * sx;
+        var right = data.Left + (wx1 - limits.Left) * sx;
+        var top = data.Top + (limits.Top - wyN) * sy;
+        var bottom = data.Top + (limits.Top - wyS) * sy;
+
+        var w = Math.Abs(right - left);
+        var h = Math.Abs(bottom - top);
         if (w < 1 || h < 1)
             return;
+
+        left = Math.Min(left, right);
+        top = Math.Min(top, bottom);
+
+        // DataRect is relative to the plot render surface; offset into TileCanvas.
+        if (img.Parent is UIElement canvas)
+        {
+            try
+            {
+                var o = plot.TranslatePoint(new Point(0, 0), canvas);
+                left += o.X;
+                top += o.Y;
+            }
+            catch
+            {
+                // keep untranslated
+            }
+        }
 
         Canvas.SetLeft(img, left);
         Canvas.SetTop(img, top);

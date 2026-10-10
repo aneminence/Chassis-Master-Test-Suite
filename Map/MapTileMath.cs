@@ -2,7 +2,7 @@ namespace Chassis_Master_Test_Suite.Map;
 
 /// <summary>
 /// Web Mercator / XYZ tile math (EPSG:3857, slippy map convention).
-/// Pure logic — no WPF dependency; unit-testable on Linux.
+/// Pure logic 鈥?no WPF dependency; unit-testable on Linux.
 /// </summary>
 public static class MapTileMath
 {
@@ -25,7 +25,7 @@ public static class MapTileMath
         return (latitude, longitude);
     }
 
-    /// <summary>Tile indices covering the NW corner of the tile (x west→east, y north→south).</summary>
+    /// <summary>Tile indices covering the NW corner of the tile (x west鈫抏ast, y north鈫抯outh).</summary>
     public static (int X, int Y) LatLonToTile(double latitude, double longitude, int zoom)
     {
         var n = 1 << zoom;
@@ -57,6 +57,25 @@ public static class MapTileMath
     }
 
     /// <summary>Bing Maps quadkey for tile (z,x,y).</summary>
+
+    /// <summary>
+    /// Bounding box of XYZ tile in absolute Web Mercator metres:
+    /// (west, north, east, south). Tile edges are linear in Mercator — use this
+    /// for overlay placement instead of converting lat/lon corners.
+    /// </summary>
+    public static (double West, double North, double East, double South) TileMercatorBounds(
+        int x, int y, int zoom)
+    {
+        var n = 1 << zoom;
+        var world = 2.0 * Math.PI * EarthRadius;
+        var tile = world / n;
+        var west = -Math.PI * EarthRadius + x * tile;
+        var east = west + tile;
+        var north = Math.PI * EarthRadius - y * tile;
+        var south = north - tile;
+        return (west, north, east, south);
+    }
+
     public static string ToQuadKey(int x, int y, int zoom)
     {
         var chars = new char[zoom];
@@ -108,7 +127,7 @@ public static class MapTileMath
             lower.Contains("t{s}.", StringComparison.Ordinal);
 
         var sLetter = ((char)('a' + (Math.Abs(x + y) % 4))).ToString();
-        var sDigit = (Math.Abs(x + y) % 4).ToString(); // 0–3 covers Google/Bing
+        var sDigit = (Math.Abs(x + y) % 4).ToString(); // 0鈥? covers Google/Bing
         var s = useDigitSubdomain ? sDigit : sLetter;
         var quad = ToQuadKey(x, y, z);
 

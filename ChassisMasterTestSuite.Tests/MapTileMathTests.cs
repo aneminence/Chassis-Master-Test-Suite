@@ -103,4 +103,21 @@ public class MapTileMathTests
         Assert.False(MapTileCache.LooksLikeImage(
             System.Text.Encoding.ASCII.GetBytes("<html>error page not an image!!")));
     }
+
+    [Fact]
+    public void TileMercatorBounds_MatchesLatLonCorners()
+    {
+        const int z = 14;
+        var (tx, ty) = MapTileMath.LatLonToTile(31.23, 121.47, z);
+        var (west, north, east, south) = MapTileMath.TileMercatorBounds(tx, ty, z);
+        var (latN, lonW) = MapTileMath.TileNwLatLon(tx, ty, z);
+        var (latS, lonE) = MapTileMath.TileNwLatLon(tx + 1, ty + 1, z);
+        var (mxW, myN) = MapTileMath.LatLonToMercator(latN, lonW);
+        var (mxE, myS) = MapTileMath.LatLonToMercator(latS, lonE);
+        Assert.InRange(west, mxW - 1e-3, mxW + 1e-3);
+        Assert.InRange(north, myN - 1e-3, myN + 1e-3);
+        Assert.InRange(east, mxE - 1e-3, mxE + 1e-3);
+        Assert.InRange(south, myS - 1e-3, myS + 1e-3);
+        Assert.InRange(Math.Abs((east - west) / (north - south)), 0.999, 1.001);
+    }
 }
