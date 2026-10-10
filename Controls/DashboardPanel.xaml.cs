@@ -1,16 +1,12 @@
 using System.Globalization;
+using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace Chassis_Master_Test_Suite.Controls;
 
 /// <summary>
-/// 实时数据仪表板。
-///
-/// 计划功能：
-/// 用户可以自定义要查看的通道（当前为固定 5 项）。
-///
-/// 当前状态：
-/// 显示 MainWindow 推送过来的实时数值。
+/// 实时数据仪表板；支持多车摘要条。
 /// </summary>
 public partial class DashboardPanel : UserControl
 {
@@ -20,14 +16,8 @@ public partial class DashboardPanel : UserControl
     }
 
     /// <summary>
-    /// 更新数值显示（实时或光标冻结点）。
-    ///
-    /// 由 MainWindow 的 UI 定时器 / 光标交互调用，
-    /// 保持在 UI 线程上。
+    /// 更新主卡片数值（实时或光标冻结点）。
     /// </summary>
-    /// <param name="cursorFrozen">
-    /// true = 显示曲线光标选中点；false = 实时最新样本。
-    /// </param>
     public void SetValues(
         double speedKph,
         double longitudinalAcceleration,
@@ -55,20 +45,90 @@ public partial class DashboardPanel : UserControl
     }
 
     /// <summary>
-    /// 清空显示（尚无数据时）。
+    /// 多车同步摘要：名称 / 颜色 / 速度。
     /// </summary>
+    public void SetMultiVehicleSummary(
+        IReadOnlyList<(string Name, string ColorHex, double SpeedKph)> vehicles)
+    {
+        MultiVehicleHost.Items.Clear();
+
+        if (vehicles.Count <= 1)
+        {
+            MultiVehicleHost.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        MultiVehicleHost.Visibility = Visibility.Visible;
+
+        foreach (var (name, colorHex, speed) in vehicles)
+        {
+            var border = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
+                BorderBrush = TryBrush(colorHex) ?? new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 4, 8, 4),
+                Margin = new Thickness(0, 0, 6, 4)
+            };
+
+            var stack = new StackPanel { Orientation = Orientation.Horizontal };
+
+            stack.Children.Add(new Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = TryBrush(colorHex) ?? Brushes.Gray,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = name,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC3, 0xCB, 0xD8)),
+                FontSize = 11,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0),
+                MaxWidth = 120,
+                TextTrimming = TextTrimming.CharacterEllipsis
+            });
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = $"{speed:0.0} km/h",
+                Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
+                FontSize = 11,
+                FontFamily = new FontFamily("Consolas"),
+                VerticalAlignment = VerticalAlignment.Center
+            });
+
+            border.Child = stack;
+            MultiVehicleHost.Items.Add(border);
+        }
+    }
+
     public void Clear()
     {
         SpeedValueText.Text = "--";
-
         LongitudinalAccelerationValueText.Text = "--";
-
         LateralAccelerationValueText.Text = "--";
-
         YawRateValueText.Text = "--";
-
         SteeringAngleValueText.Text = "--";
-
         CursorModeText.Text = "";
+        MultiVehicleHost.Items.Clear();
+        MultiVehicleHost.Visibility = Visibility.Collapsed;
+    }
+
+    private static Brush? TryBrush(string hex)
+    {
+        try
+        {
+            return (Brush)new BrushConverter().ConvertFromString(hex)!;
+        }
+        catch
+        {
+            return null;
+        }
     }
 }

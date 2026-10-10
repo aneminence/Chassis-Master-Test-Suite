@@ -52,8 +52,16 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     private const double HoverPickPixels = 14.0;
 
+    public readonly record struct TrackLayer(
+        string Name,
+        string ColorHex,
+        IReadOnlyList<VehicleSample> Samples);
+
     private readonly ScottPlot.WPF.WpfPlot _wpfPlot = new();
+    private readonly List<TrackLayer> _tracks = new();
+    /// <summary>所有轨迹样本展平，供点选/悬停；与 _sampleTrackIndex 对齐。</summary>
     private readonly List<VehicleSample> _samples = new();
+    private readonly List<int> _sampleTrackIndex = new();
     private readonly Stopwatch _refreshStopwatch = Stopwatch.StartNew();
 
     /// <summary>
@@ -205,12 +213,35 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
-        var countDelta = samples.Count - _samples.Count;
+        SetTracks(new[]
+        {
+            new TrackLayer("Track", "#E05252", samples)
+        });
+    }
+
+    /// <summary>
+    /// 多车/多文件轨迹同步显示。
+    /// </summary>
+    public void SetTracks(IReadOnlyList<TrackLayer> tracks)
+    {
+        var valid = tracks
+            .Where(t => t.Samples is { Count: > 0 })
+            .ToList();
+
+        if (valid.Count == 0)
+        {
+            Clear();
+            return;
+        }
+
+        var total = valid.Sum(t => t.Samples.Count);
+        var countDelta = total - _samples.Count;
 
         var isBigChange =
             countDelta < 0
             || countDelta > 500
-            || _projectionAnchor is null;
+            || _projectionAnchor is null
+            || valid.Count != _tracks.Count;
 
         if (!isBigChange
             && _refreshStopwatch.ElapsedMilliseconds
@@ -220,8 +251,7 @@ public partial class TrackMapPanel : UserControl
         }
 
         _refreshStopwatch.Restart();
-
-        Rebuild(samples);
+        Rebuild(valid);
     }
 
     /// <summary>
@@ -229,7 +259,9 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public void Clear()
     {
+        _tracks.Clear();
         _samples.Clear();
+        _sampleTrackIndex.Clear();
         _projection = null;
         _projectionAnchor = null;
         _track = null;
@@ -301,89 +333,101 @@ public partial class TrackMapPanel : UserControl
     // 重建轨迹
     // ============================================================
 
-    private void Rebuild(IReadOnlyList<VehicleSample> samples)
+    private void Rebuild(IReadOnlyList<TrackLayer> tracks)
     {
-        var first = samples[0];
+        var allSamples = tracks.SelectMany(t => t.Samples).ToList();
+        var first = allSamples[0];
 
         var needNewProjection =
             _projection is null
             || _projectionAnchor is null
             || Math.Abs(_projectionAnchor.Value.Latitude - first.Latitude) > 1e-9
-            || Math.Abs(_projectionAnchor.Value.Longitude - first.Longitude) > 1e-9;
+            || Math.Abs(_projectionAnchor.Value.Longitude - first.Longitude) > 1e-9
+            || tracks.Count != _tracks.Count;
 
-        // Clear() 会让轴变 unset，下一帧可能自动缩放到数据；
-        // 用户已手动取景时必须先记下视野，重建后再写回去。
         var hadData = _hasData;
         var savedLimits = hadData
             ? _wpfPlot.Plot.Axes.GetLimits()
             : default;
 
-        _samples.Clear();
-        _samples.AddRange(samples);
+        _tracks.Clear();
+        _tracks.AddRange(tracks);
 
-        // 纵向/横向的抽稀步长
-        var stride = Math.Max(1, _samples.Count / MaxDisplayPoints);
+        _samples.Clear();
+        _sampleTrackIndex.Clear();
+        for (var ti = 0; ti < tracks.Count; ti++)
+        {
+            foreach (var sample in tracks[ti].Samples)
+            {
+                _samples.Add(sample);
+                _sampleTrackIndex.Add(ti);
+            }
+        }
 
         if (needNewProjection)
         {
             _projection = TrackProjection.FitToTrack(_samples);
             _projectionAnchor = (first.Latitude, first.Longitude);
-            // 新数据源：重新允许自动取景
             _userHasAdjustedView = false;
         }
 
         var projection = _projection!;
 
-        var xs = new List<double>(_samples.Count / stride + 1);
-        var ys = new List<double>(_samples.Count / stride + 1);
-
-        for (var i = 0; i < _samples.Count; i += stride)
-        {
-            var (x, y) = projection.ToMeters(
-                _samples[i].Latitude,
-                _samples[i].Longitude);
-
-            xs.Add(x);
-            ys.Add(y);
-        }
-
-        // 抽稀容易把最后一个点漏掉，补上，否则轨迹末端会短一截。
-        if ((_samples.Count - 1) % stride != 0)
-        {
-            var (x, y) = projection.ToMeters(
-                _samples[^1].Latitude,
-                _samples[^1].Longitude);
-
-            xs.Add(x);
-            ys.Add(y);
-        }
-
         _wpfPlot.Plot.Clear();
-
-        // Clear() 会复位样式，必须重新套。
         ApplyDarkStyle();
         _wpfPlot.Plot.Axes.ContinuouslyAutoscale = false;
 
-        _track = _wpfPlot.Plot.Add.ScatterLine(
-            xs,
-            ys,
-            ScottPlot.Color.FromHex("#E05252"));
+        _track = null;
+        foreach (var layer in tracks)
+        {
+            var stride = Math.Max(1, layer.Samples.Count / MaxDisplayPoints);
+            var xs = new List<double>(layer.Samples.Count / stride + 1);
+            var ys = new List<double>(layer.Samples.Count / stride + 1);
 
-        _track.LineWidth = 2.0f;
-        _track.MarkerStyle.IsVisible = false;
+            for (var i = 0; i < layer.Samples.Count; i += stride)
+            {
+                var (x, y) = projection.ToMeters(
+                    layer.Samples[i].Latitude,
+                    layer.Samples[i].Longitude);
+                xs.Add(x);
+                ys.Add(y);
+            }
+
+            if (layer.Samples.Count > 0 &&
+                (layer.Samples.Count - 1) % stride != 0)
+            {
+                var (x, y) = projection.ToMeters(
+                    layer.Samples[^1].Latitude,
+                    layer.Samples[^1].Longitude);
+                xs.Add(x);
+                ys.Add(y);
+            }
+
+            if (xs.Count < 2)
+                continue;
+
+            var colorHex = string.IsNullOrWhiteSpace(layer.ColorHex)
+                ? "#E05252"
+                : layer.ColorHex;
+
+            var scatter = _wpfPlot.Plot.Add.ScatterLine(
+                xs,
+                ys,
+                ScottPlot.Color.FromHex(colorHex));
+
+            scatter.LineWidth = 2.0f;
+            scatter.MarkerStyle.IsVisible = false;
+            scatter.LegendText = layer.Name;
+            _track ??= scatter;
+        }
 
         _hasData = true;
-
         EmptyHint.Visibility = Visibility.Collapsed;
-
         UpdateCoordinateReadout();
 
-        // Clear() 清掉了光标标记，重建后再画上
         _cursorMarker = null;
         UpdateCursorMarker(refresh: false);
 
-        // 首包 / 换数据源 / 用户尚未手动操作 → 自动取景；
-        // 用户已平移缩放 → 恢复 Clear 前的视野，绝不弹回全图。
         if (!_userHasAdjustedView)
         {
             AutoFit();
