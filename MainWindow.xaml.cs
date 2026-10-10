@@ -10,6 +10,7 @@ using Chassis_Master_Test_Suite.Communication.GSpot;
 using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Recorder;
 using Chassis_Master_Test_Suite.Simulator;
+using Chassis_Master_Test_Suite.Session;
 
 namespace Chassis_Master_Test_Suite;
 
@@ -70,6 +71,23 @@ public partial class MainWindow : Window
 
     private VehicleSample? _latestSample;
 
+    /// <summary>true = 线下模式（VBO）；false = 线上模式。</summary>
+    private bool _isOfflineMode;
+
+    /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
+    private readonly OfflineFileSet _offlineFiles = new();
+
+    /// <summary>线上会话：第一条样本时间戳（毫秒）。</summary>
+    private long? _liveSessionOriginMs;
+
+    /// <summary>线上累计行驶距离（米）。</summary>
+    private double _liveDistanceM;
+
+    private VehicleSample? _livePreviousSample;
+
+    /// <summary>打开线下后为 true：消费循环不写历史。</summary>
+    private volatile bool _historyOfflineMode;
+
     // ============================================================
     // Simulator
     // ============================================================
@@ -129,6 +147,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        ApplyModeUi();
+
         InitializeAxisSelector();
 
         InitializePlotSystem();
@@ -145,6 +165,7 @@ public partial class MainWindow : Window
         };
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
+        DashboardPanelControl.VehicleSummaryClicked += OnVehicleSummaryClicked;
 
         _uiTimer = new DispatcherTimer
         {
@@ -358,51 +379,21 @@ public partial class MainWindow : Window
         try
         {
             var reader = new VboReader(filePath);
-
-            var samples = reader.ReadAll();
-
-            if (samples.Count == 0)
-            {
+            var raw = reader.ReadAll();
+            if (raw.Count == 0)
                 return 0;
-            }
 
-            // 通道下拉只显示本文件实际存在的列。
-            // 优先 [column names]；若为空则回退到首条样本 Channels 键。
+            var samples = SampleEnricher.EnrichAll(raw);
+
             var columnNames = reader.Columns.Count > 0
                 ? reader.Columns
                 : samples[0].Channels.Keys.ToList();
 
-            ChannelRegistry.Instance.SetFromVboColumns(columnNames);
-            // AvailableChanged 会刷新下拉；此处再显式刷一次，避免事件未挂上时漏刷。
-            RefreshChannelSelectorsFromRegistry();
+            var entry = _offlineFiles.Add(filePath, samples, columnNames);
+            ApplyOfflineDataset();
 
-            // 离线数据替换掉当前历史，
-            // 避免和实时采集的数据混在一起。
-            _sampleHistory.Clear();
-
-            foreach (var sample in samples)
-            {
-                _sampleHistory.Add(sample);
-            }
-
-            // 控制内存占用：保留最近的样本。
-            while (_sampleHistory.Count > MaxHistorySamples)
-            {
-                _sampleHistory.RemoveAt(0);
-            }
-
-            _latestSample = samples[^1];
-
-            Interlocked.Add(
-                ref _sampleCount,
-                samples.Count);
-
-            RefreshAllPlots();
-
-            UpdateNumericDisplay();
-
-            // 把通道数挂在返回值旁：调用方用于状态栏。
-            _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
+            _lastLoadedChannelCount =
+                ChannelRegistry.Instance.AvailablePlotChannels.Count;
 
             return samples.Count;
         }
@@ -420,6 +411,224 @@ public partial class MainWindow : Window
     }
 
 
+    /// <summary>
+    /// 按当前已打开线下文件重建通道目录、主历史、文件芯片 UI。
+    /// </summary>
+    private void ApplyOfflineDataset()
+    {
+        _historyOfflineMode = true;
+
+        if (_offlineFiles.Count == 0)
+        {
+            _sampleHistory.Clear();
+            _latestSample = null;
+            ChannelRegistry.Instance.SetLiveCore();
+            RefreshChannelSelectorsFromRegistry();
+            RebuildOfflineFileChips();
+            RefreshAllPlots();
+            UpdateNumericDisplay();
+            return;
+        }
+
+        var columns = _offlineFiles.UnionColumns();
+        ChannelRegistry.Instance.SetFromVboColumns(columns);
+        RefreshChannelSelectorsFromRegistry();
+
+        // 主历史 = 当前选中文件（芯片点击切换；默认最新打开）
+        var primary = _offlineFiles.Primary!;
+        _sampleHistory.Clear();
+        _sampleHistory.AddRange(primary.Samples);
+        _latestSample = primary.Samples[^1];
+
+        RebuildOfflineFileChips();
+        RefreshAllPlots();
+        UpdateNumericDisplay();
+    }
+
+
+    private void RebuildOfflineFileChips()
+    {
+        if (OfflineFilesPanel is null)
+            return;
+
+        OfflineFilesPanel.Children.Clear();
+
+        var selectedId = _offlineFiles.Selected?.Id;
+
+        foreach (var file in _offlineFiles.Files)
+        {
+            var isSelected = file.Id == selectedId;
+
+            var chip = new Border
+            {
+                Background = (Brush)new BrushConverter().ConvertFromString(
+                    isSelected ? "#243040" : "#1A222C")!,
+                BorderBrush = (Brush)new BrushConverter().ConvertFromString(file.ColorHex)!,
+                BorderThickness = new Thickness(isSelected ? 2 : 1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 2, 4, 2),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Hand,
+                Tag = file.Id,
+                ToolTip = isSelected
+                    ? $"Selected: {file.FilePath}"
+                    : $"Click to switch Dashboard to: {file.DisplayName}"
+            };
+
+            chip.MouseLeftButtonUp += OfflineFileChip_Click;
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+
+            row.Children.Add(new TextBlock
+            {
+                Text = file.DisplayName,
+                Foreground = (Brush)FindResource("TextPrimary"),
+                FontSize = 11,
+                FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+                MaxWidth = 140,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false
+            });
+
+            var close = new Button
+            {
+                Content = "×",
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                Tag = file.Id,
+                Style = TryFindResource("ToolButtonStyle") as Style,
+                ToolTip = "Close this file"
+            };
+            close.Click += CloseOfflineFileChip_Click;
+            row.Children.Add(close);
+
+            chip.Child = row;
+            OfflineFilesPanel.Children.Add(chip);
+        }
+    }
+
+    private void OfflineFileChip_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border { Tag: Guid id })
+            return;
+
+        // 点关闭按钮时不切换
+        if (e.OriginalSource is DependencyObject source &&
+            FindParentButton(source) is not null)
+            return;
+
+        if (_offlineFiles.Selected?.Id == id)
+            return;
+
+        SelectOfflineFileKeepingCursor(id);
+        e.Handled = true;
+    }
+
+    private void ClearPlotCursors()
+    {
+        _cursorSourcePlot = null;
+        foreach (var plot in _plots)
+        {
+            plot.CursorX = null;
+            plot.SelectionX1 = null;
+            plot.SelectionX2 = null;
+            plot.IsSelectingRange = false;
+            if (plot.WpfPlot is not null)
+            {
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot.Refresh();
+            }
+        }
+
+        TrackMapPanelControl.SetCursorSample(null);
+    }
+
+
+    /// <summary>
+    /// Switch selected offline VBO while keeping plot cursor X (time/distance).
+    /// Dashboard / Track Map / readouts update to the new file at the same cursor.
+    /// </summary>
+    private void SelectOfflineFileKeepingCursor(Guid id)
+    {
+        if (_offlineFiles.Selected?.Id == id)
+            return;
+
+        // Preserve absolute cursor X and selection across the file switch.
+        double? cursorX = null;
+        double? sel1 = null;
+        double? sel2 = null;
+        foreach (var plot in _plots)
+        {
+            if (cursorX is null && plot.CursorX is double cx)
+                cursorX = cx;
+            if (sel1 is null && plot.SelectionX1 is double s1)
+                sel1 = s1;
+            if (sel2 is null && plot.SelectionX2 is double s2)
+                sel2 = s2;
+        }
+
+        _offlineFiles.Select(id);
+        ApplyOfflineDataset();
+
+        if (cursorX is double keepX)
+        {
+            PlotDefinition? source = null;
+            foreach (var plot in _plots)
+            {
+                plot.CursorX = keepX;
+                plot.SelectionX1 = sel1;
+                plot.SelectionX2 = sel2;
+                source ??= plot;
+                if (plot.WpfPlot is not null)
+                {
+                    ApplyPlotOverlays(plot);
+                    plot.WpfPlot.Refresh();
+                }
+            }
+
+            _cursorSourcePlot = source;
+            UpdateNumericDisplay();
+        }
+    }
+
+    private static Button? FindParentButton(DependencyObject? node)
+    {
+        while (node is not null)
+        {
+            if (node is Button button)
+                return button;
+            node = VisualTreeHelper.GetParent(node);
+        }
+
+        return null;
+    }
+
+
+    private void OnVehicleSummaryClicked(string displayName)
+    {
+        var file = _offlineFiles.Files.FirstOrDefault(f =>
+            string.Equals(f.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+        if (file is null || _offlineFiles.Selected?.Id == file.Id)
+            return;
+
+        SelectOfflineFileKeepingCursor(file.Id);
+    }
+
+
+    private void CloseOfflineFileChip_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id })
+            return;
+
+        _offlineFiles.Remove(id);
+        ApplyOfflineDataset();
+    }
+
+
     // ============================================================
     // 导航栏页面切换
     // ============================================================
@@ -432,10 +641,11 @@ public partial class MainWindow : Window
     }
 
 
-    private void ReplayNavButton_Click(
+    private async void ReplayNavButton_Click(
         object sender,
         RoutedEventArgs e)
     {
+        await EnterOfflineModeAsync(stopOnline: true);
         ShowPage(dashboard: false);
     }
 
@@ -470,10 +680,13 @@ public partial class MainWindow : Window
     // Replay：打开 VBO 文件
     // ============================================================
 
-    private void OpenVboButton_Click(
+    private async void OpenVboButton_Click(
         object sender,
         RoutedEventArgs e)
     {
+        // 线下打开前自动停掉线上连接
+        await EnterOfflineModeAsync(stopOnline: true);
+
         var preferredDirs = new[]
         {
             @"D:\CMTS",
@@ -487,34 +700,224 @@ public partial class MainWindow : Window
         var dialog =
             new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Open VBO file",
+                Title = "Open VBO file(s)",
                 Filter =
                     "VBO files (*.vbo)|*.vbo|All files (*.*)|*.*",
-                InitialDirectory = initialDir
+                InitialDirectory = initialDir,
+                Multiselect = true
             };
 
         if (dialog.ShowDialog(this) != true)
-        {
             return;
-        }
 
-        var count = LoadVboFile(dialog.FileName);
+        var total = 0;
+        foreach (var file in dialog.FileNames)
+            total += LoadVboFile(file);
 
-        if (count <= 0)
-        {
+        if (total <= 0)
             return;
-        }
 
-        // 让用户马上看到曲线，
-        // 否则数据载入了但还停在 Replay 页面上。
         ShowPage(dashboard: true);
 
-        ReplayFileText.Text =
-            Path.GetFileName(dialog.FileName);
+        if (ReplayFileText is not null)
+        {
+            ReplayFileText.Text =
+                _offlineFiles.Count == 1
+                    ? _offlineFiles.Primary!.DisplayName
+                    : $"{_offlineFiles.Count} files";
+        }
 
-        ReplayInfoText.Text =
-            $"{count} samples · {_lastLoadedChannelCount} channels";
+        if (ReplayInfoText is not null)
+        {
+            ReplayInfoText.Text =
+                $"{total} samples · {_lastLoadedChannelCount} channels · {_offlineFiles.Count} file(s)";
+        }
     }
+
+
+    private void CloseAllVboButton_Click(object sender, RoutedEventArgs e)
+    {
+        _offlineFiles.Clear();
+        ApplyOfflineDataset();
+        UpdateOfflineFileStatusLabels();
+    }
+
+
+    private async void OnlineModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await EnterOnlineModeAsync();
+    }
+
+
+    private async void OfflineModeButton_Click(object sender, RoutedEventArgs e)
+    {
+        await EnterOfflineModeAsync(stopOnline: true);
+    }
+
+
+    private async void StopOnlineButton_Click(object sender, RoutedEventArgs e)
+    {
+        await StopOnlineConnectionAsync();
+        UpdateConnectionStatusUi();
+    }
+
+
+    private async Task EnterOnlineModeAsync()
+    {
+        var wasOffline = _isOfflineMode;
+        _isOfflineMode = false;
+        ApplyModeUi();
+
+        // Already online with live history: only refresh toolbar.
+        if (!wasOffline && !_historyOfflineMode)
+        {
+            UpdateConnectionStatusUi();
+            return;
+        }
+
+        // Switch display to live. Keep opened offline VBO files in memory
+        // (VBTS-style): Offline tools hide, but switching back restores them.
+        _historyOfflineMode = false;
+        _sampleHistory.Clear();
+        _latestSample = null;
+        _liveSessionOriginMs = null;
+        _liveDistanceM = 0;
+        _livePreviousSample = null;
+        ChannelRegistry.Instance.SetLiveCore();
+        RefreshChannelSelectorsFromRegistry();
+        RefreshAllPlots();
+        UpdateNumericDisplay();
+
+        // 若当前无连接，尝试拉起默认 UDP
+        if (_dataSource is null ||
+            _dataSource.State is DataSourceState.Disconnected
+                or DataSourceState.Faulted)
+        {
+            try
+            {
+                var next = new UdpReceiver(_dataBus);
+                await SwitchDataSourceAsync(next);
+                if (GSpotButton is not null)
+                    GSpotButton.Content = "GSpot…";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    this,
+                    "启动 UDP 失败:\n" + ex.Message,
+                    "Online",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+            }
+        }
+
+        UpdateConnectionStatusUi();
+    }
+
+
+    private async Task EnterOfflineModeAsync(bool stopOnline)
+    {
+        _isOfflineMode = true;
+        ApplyModeUi();
+
+        if (stopOnline)
+            await StopOnlineConnectionAsync();
+
+        // Restore preserved offline files into plots/Dashboard/TrackMap.
+        // Opening Online must not clear _offlineFiles (VBTS-style).
+        ApplyOfflineDataset();
+        UpdateOfflineFileStatusLabels();
+        UpdateConnectionStatusUi();
+    }
+
+
+    /// <summary>
+    /// Refresh Replay page labels from the current offline file set.
+    /// </summary>
+    private void UpdateOfflineFileStatusLabels()
+    {
+        if (ReplayFileText is not null)
+        {
+            ReplayFileText.Text = _offlineFiles.Count == 0
+                ? "No file loaded"
+                : _offlineFiles.Count == 1
+                    ? _offlineFiles.Primary!.DisplayName
+                    : $"{_offlineFiles.Count} files";
+        }
+
+        if (ReplayInfoText is not null)
+        {
+            if (_offlineFiles.Count == 0)
+            {
+                ReplayInfoText.Text = "";
+            }
+            else
+            {
+                var total = _offlineFiles.Files.Sum(f => f.Samples.Count);
+                ReplayInfoText.Text =
+                    $"{total} samples · {_lastLoadedChannelCount} channels · {_offlineFiles.Count} file(s)";
+            }
+        }
+    }
+
+
+    private async Task StopOnlineConnectionAsync()
+    {
+        var old = _dataSource;
+        _dataSource = null;
+
+        if (old is not null)
+        {
+            try
+            {
+                await old.StopAsync();
+            }
+            catch
+            {
+                try { old.Dispose(); } catch { /* ignore */ }
+            }
+        }
+
+        if (_simulatorWindow is not null)
+        {
+            try { _simulatorWindow.Close(); } catch { /* ignore */ }
+            _simulatorWindow = null;
+        }
+    }
+
+
+    private void ApplyModeUi()
+    {
+        if (OnlineModeButton is null || OfflineModeButton is null)
+            return;
+
+        // 互斥视觉：选中高亮，另一个灰色样式（仍可点切换）
+        if (_isOfflineMode)
+        {
+            OnlineModeButton.Style = (Style)FindResource("NavButtonStyle");
+            OfflineModeButton.Style = (Style)FindResource("NavButtonActiveStyle");
+            OnlineModeButton.Opacity = 0.45;
+            OfflineModeButton.Opacity = 1.0;
+
+            if (OnlineToolsPanel is not null)
+                OnlineToolsPanel.Visibility = Visibility.Collapsed;
+            if (OfflineToolsPanel is not null)
+                OfflineToolsPanel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            OnlineModeButton.Style = (Style)FindResource("NavButtonActiveStyle");
+            OfflineModeButton.Style = (Style)FindResource("NavButtonStyle");
+            OnlineModeButton.Opacity = 1.0;
+            OfflineModeButton.Opacity = 0.45;
+
+            if (OnlineToolsPanel is not null)
+                OnlineToolsPanel.Visibility = Visibility.Visible;
+            if (OfflineToolsPanel is not null)
+                OfflineToolsPanel.Visibility = Visibility.Collapsed;
+        }
+    }
+
 
 
     // ============================================================
@@ -1422,14 +1825,31 @@ public partial class MainWindow : Window
                 }
             }
 
-            // 轨迹图。SetTrack 内部按 250 ms 限流，
-            // 所以这里跟着 10 Hz 的 UI 定时器调也不会重画太频繁。
-            TrackMapPanelControl.SetTrack(_sampleHistory);
+            // 轨迹图：线下多文件叠轨；线上单轨。
+            RefreshTrackMap();
         }
         finally
         {
             _isRefreshingPlots = false;
         }
+    }
+
+
+    private void RefreshTrackMap()
+    {
+        if (_isOfflineMode && _offlineFiles.Count > 0)
+        {
+            var layers = _offlineFiles.Files
+                .Select(f => new Controls.TrackMapPanel.TrackLayer(
+                    f.DisplayName,
+                    f.ColorHex,
+                    f.Samples))
+                .ToList();
+            TrackMapPanelControl.SetTracks(layers);
+            return;
+        }
+
+        TrackMapPanelControl.SetTrack(_sampleHistory);
     }
 
 
@@ -1545,54 +1965,100 @@ public partial class MainWindow : Window
             double.MinValue;
 
 
-        foreach (var channel in selectedChannels)
+        // 线下多文件：同一通道叠多条曲线（按文件着色）
+        if (_isOfflineMode && _offlineFiles.Count > 1)
         {
-            var ys =
-                new double[history.Count];
-
-
-            for (var i = 0;
-                 i < history.Count;
-                 i++)
+            foreach (var channel in selectedChannels)
             {
-                var value =
-                    GetSignalValue(
-                        history[i],
-                        channel.ChannelId);
+                foreach (var file in _offlineFiles.Files)
+                {
+                    if (file.Samples.Count < 2)
+                        continue;
 
-                ys[i] = value;
+                    var fileXs = new double[file.Samples.Count];
+                    var fileYs = new double[file.Samples.Count];
+
+                    for (var i = 0; i < file.Samples.Count; i++)
+                    {
+                        fileXs[i] = GetAxisValue(file.Samples[i], selectedXSignal);
+                        var value = GetSignalValue(file.Samples[i], channel.ChannelId);
+                        fileYs[i] = value;
+                        if (value < minY) minY = value;
+                        if (value > maxY) maxY = value;
+                    }
+
+                    var scatter = scottPlot.Add.Scatter(fileXs, fileYs);
+                    scatter.Color = ScottPlot.Color.FromHex(file.ColorHex);
+                    scatter.LegendText =
+                        $"{GetSignalDisplayName(channel.ChannelId)} · {file.DisplayName}";
+                    scatter.LineWidth = 1.5f;
+                    scatter.MarkerSize = 0;
+                }
+            }
+
+            // 光标仍对齐主文件（第一份）
+            plot.LastXs = xs;
+            plot.LastSamples = history.ToArray();
+            plot.LastChannelSeries.Clear();
+            foreach (var channel in selectedChannels)
+            {
+                var ys = new double[history.Count];
+                for (var i = 0; i < history.Count; i++)
+                    ys[i] = GetSignalValue(history[i], channel.ChannelId);
+                plot.LastChannelSeries.Add((channel.ChannelId, ys));
+            }
+        }
+        else
+        {
+            foreach (var channel in selectedChannels)
+            {
+                var ys =
+                    new double[history.Count];
 
 
-                if (value < minY)
-                    minY = value;
+                for (var i = 0;
+                     i < history.Count;
+                     i++)
+                {
+                    var value =
+                        GetSignalValue(
+                            history[i],
+                            channel.ChannelId);
+
+                    ys[i] = value;
 
 
-                if (value > maxY)
-                    maxY = value;
+                    if (value < minY)
+                        minY = value;
+
+
+                    if (value > maxY)
+                        maxY = value;
+                }
+
+
+                var scatter =
+                    scottPlot.Add.Scatter(
+                        xs,
+                        ys);
+
+
+                scatter.LegendText =
+                    $"{GetSignalDisplayName(channel.ChannelId)} " +
+                    $"({GetSignalUnit(channel.ChannelId)})";
+
+
+                scatter.LineWidth = 1;
+                scatter.MarkerSize = 0;
+
+                plot.LastChannelSeries.Add(
+                    (channel.ChannelId, ys));
             }
 
 
-            var scatter =
-                scottPlot.Add.Scatter(
-                    xs,
-                    ys);
-
-
-            scatter.LegendText =
-                $"{GetSignalDisplayName(channel.ChannelId)} " +
-                $"({GetSignalUnit(channel.ChannelId)})";
-
-
-            scatter.LineWidth = 1;
-            scatter.MarkerSize = 0;
-
-            plot.LastChannelSeries.Add(
-                (channel.ChannelId, ys));
+            plot.LastXs = xs;
+            plot.LastSamples = history.ToArray();
         }
-
-
-        plot.LastXs = xs;
-        plot.LastSamples = history.ToArray();
 
 
         // ========================================================
@@ -1978,8 +2444,25 @@ public partial class MainWindow : Window
     /// <summary>
     /// Track Map 点选轨迹点 → 同步曲线光标、Dashboard、车辆标记。
     /// </summary>
-    private void ApplyCursorFromTrackSample(VehicleSample sample)
+    private void ApplyCursorFromTrackSample(VehicleSample sample, int trackIndex)
     {
+        // 点到某条轨迹时，切换 Dashboard 到对应线下文件
+        if (_isOfflineMode &&
+            trackIndex >= 0 &&
+            trackIndex < _offlineFiles.Count)
+        {
+            var file = _offlineFiles.Files[trackIndex];
+            if (_offlineFiles.Selected?.Id != file.Id)
+            {
+                _offlineFiles.Select(file.Id);
+                _sampleHistory.Clear();
+                _sampleHistory.AddRange(file.Samples);
+                _latestSample = file.Samples.Count > 0 ? file.Samples[^1] : null;
+                RebuildOfflineFileChips();
+                RefreshAllPlots();
+            }
+        }
+
         var selectedXSignal =
             XAxisSelector.SelectedValue is string xSignal
                 ? xSignal
@@ -2494,6 +2977,9 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        if (_isOfflineMode)
+            await EnterOnlineModeAsync();
+
         var roomDefault =
             Environment.GetEnvironmentVariable("CMTS_GSPOT_ROOM")
             ?? "";
@@ -2614,6 +3100,9 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        if (_isOfflineMode)
+            await EnterOnlineModeAsync();
+
         try
         {
             // 已是 UDP 且正在监听：提示即可。
@@ -2987,6 +3476,35 @@ public partial class MainWindow : Window
             steeringAngleDeg: 0.0,
             cursorFrozen: cursorSample is not null);
 
+        // 多车摘要（线下多文件）；点选芯片后 Primary 对应当前文件
+        if (_isOfflineMode && _offlineFiles.Count > 0)
+        {
+            var selected = _offlineFiles.Selected;
+            var summary = _offlineFiles.Files
+                .Select(f =>
+                {
+                    var s = f.Samples.Count > 0 ? f.Samples[^1] : null;
+                    // 当前选中文件：有光标时用光标样本
+                    if (cursorSample is not null &&
+                        selected is not null &&
+                        f.Id == selected.Id)
+                        s = cursorSample;
+                    return (
+                        f.DisplayName,
+                        f.ColorHex,
+                        s?.SpeedKph ?? 0.0);
+                })
+                .ToList();
+            DashboardPanelControl.SetMultiVehicleSummary(
+                summary,
+                selected?.DisplayName);
+        }
+        else
+        {
+            DashboardPanelControl.SetMultiVehicleSummary(
+                Array.Empty<(string, string, double)>());
+        }
+
         // 光标移动时 Track Map 车辆位置跟着走；清除光标后回到实时最新点
         TrackMapPanelControl.SetCursorSample(cursorSample);
     }
@@ -3022,7 +3540,18 @@ public partial class MainWindow : Window
             _dataSource;
 
         if (source is null)
+        {
+            if (ReceivedPacketsText is not null)
+                ReceivedPacketsText.Text = "0";
+            if (ValidPacketsText is not null)
+                ValidPacketsText.Text = "0";
+            if (LostPacketsText is not null)
+                LostPacketsText.Text = "0";
+            if (OutOfOrderPacketsText is not null)
+                OutOfOrderPacketsText.Text = "0";
+            UpdateConnectionStatusUi();
             return;
+        }
 
         var stats = source.Stats;
 
@@ -3039,6 +3568,56 @@ public partial class MainWindow : Window
             stats.OutOfOrder.ToString();
 
         UpdateConnectionStatusUi(source);
+    }
+
+    private void UpdateConnectionStatusUi()
+    {
+        if (_isOfflineMode)
+        {
+            if (ConnectionStatusText is not null)
+            {
+                ConnectionStatusText.Text =
+                    _offlineFiles.Count > 0
+                        ? "Offline · " + _offlineFiles.Count + " file(s)"
+                        : "Offline";
+                ConnectionStatusText.ToolTip = "Offline VBO replay";
+            }
+
+            if (ConnectionDot is not null)
+            {
+                try
+                {
+                    ConnectionDot.Fill =
+                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                }
+                catch { /* ignore */ }
+            }
+
+            return;
+        }
+
+        if (_dataSource is null)
+        {
+            if (ConnectionStatusText is not null)
+            {
+                ConnectionStatusText.Text = "Stopped";
+                ConnectionStatusText.ToolTip = "Online connection stopped";
+            }
+
+            if (ConnectionDot is not null)
+            {
+                try
+                {
+                    ConnectionDot.Fill =
+                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                }
+                catch { /* ignore */ }
+            }
+
+            return;
+        }
+
+        UpdateConnectionStatusUi(_dataSource);
     }
 
     private void UpdateConnectionStatusUi(IDataSource source)
@@ -3137,6 +3716,21 @@ public partial class MainWindow : Window
             while (reader.TryRead(
                        out var sample))
             {
+                // 线下模式：丢弃实时包，避免污染 VBO 历史
+                if (_historyOfflineMode || _isOfflineMode)
+                {
+                    Interlocked.Increment(ref _sampleCount);
+                    continue;
+                }
+
+                _liveSessionOriginMs ??= sample.Timestamp;
+                sample = SampleEnricher.EnrichLive(
+                    sample,
+                    _liveSessionOriginMs.Value,
+                    ref _liveDistanceM,
+                    _livePreviousSample);
+                _livePreviousSample = sample;
+
                 _latestSample =
                     sample;
 
