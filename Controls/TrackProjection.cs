@@ -3,18 +3,13 @@ using Chassis_Master_Test_Suite.Core;
 namespace Chassis_Master_Test_Suite.Controls;
 
 /// <summary>
-/// Track Map 用到的坐标换算。
+/// Track Map coordinate transforms.
 ///
-/// 三个坐标系：
-///     经纬度     度（VehicleSample 里的原始值）
-///     米         以轨迹中心为原点、正东为 +X、正北为 +Y 的平面
-///     墨卡托     Web Mercator 米，给以后的在线地图瓦片用
-///
-/// 显示用"米"这一层（局部等距投影）。
-/// 对一条几公里内的测试轨迹，它和 Web Mercator 的差别小于 1 米，
-/// 但换算简单得多。
-/// 真贴地图瓦片时瓦片走 ToMercator()，轨迹走 ToMeters()，
-/// 两者在几公里内不会错位。
+/// Plot space is local Web Mercator (EPSG:3857) meters relative to the track
+/// origin — the same projection XYZ satellite tiles use. Trajectory points and
+/// basemap tile corners therefore share one CRS, so alignment holds at every zoom.
+/// Local ENU (equirectangular) was previously used for the track while tiles were
+/// still Mercator imagery stretched into ENU boxes; that mismatch grew when zoomed out.
 /// </summary>
 public sealed class TrackProjection
 {
@@ -34,12 +29,14 @@ public sealed class TrackProjection
         OriginLatitude = originLatitude;
         OriginLongitude = originLongitude;
 
-        // 经度方向必须按纬度收缩：
-        // 北纬 33 度处 1 度经度只有 93 km，而 1 度纬度有 111 km。
-        // 不乘这个因子，圆形轨迹会被拉成椭圆。
+        // Kept for callers that still need approximate ground degrees→meters.
         MetersPerDegreeLongitude =
             MetersPerDegreeLatitude
             * Math.Cos(originLatitude * Math.PI / 180.0);
+
+        var (ox, oy) = ToMercator(originLatitude, originLongitude);
+        OriginMercatorX = ox;
+        OriginMercatorY = oy;
     }
 
     /// <summary>
@@ -57,20 +54,27 @@ public sealed class TrackProjection
     /// </summary>
     public double MetersPerDegreeLongitude { get; }
 
+    
+    /// <summary>Origin easting in absolute Web Mercator meters.</summary>
+    public double OriginMercatorX { get; }
+
+    /// <summary>Origin northing in absolute Web Mercator meters.</summary>
+    public double OriginMercatorY { get; }
+
     /// <summary>
+    /// Local scale: ground meters ≈ mercator meters × cos(origin latitude).
+    /// Web Mercator is conformal; use this when labelling distances on the plot.
+    /// </summary>
+    public double GroundMetersPerMercatorMeter =>
+        Math.Max(0.05, Math.Cos(OriginLatitude * Math.PI / 180.0));
+
+/// <summary>
     /// 经纬度 -> 米。
     /// </summary>
     public (double X, double Y) ToMeters(double latitude, double longitude)
     {
-        var x =
-            (longitude - OriginLongitude)
-            * MetersPerDegreeLongitude;
-
-        var y =
-            (latitude - OriginLatitude)
-            * MetersPerDegreeLatitude;
-
-        return (x, y);
+        var (mx, my) = ToMercator(latitude, longitude);
+        return (mx - OriginMercatorX, my - OriginMercatorY);
     }
 
     /// <summary>
@@ -80,15 +84,7 @@ public sealed class TrackProjection
         double x,
         double y)
     {
-        var longitude =
-            OriginLongitude
-            + x / MetersPerDegreeLongitude;
-
-        var latitude =
-            OriginLatitude
-            + y / MetersPerDegreeLatitude;
-
-        return (latitude, longitude);
+        return FromMercator(x + OriginMercatorX, y + OriginMercatorY);
     }
 
     /// <summary>
@@ -196,7 +192,7 @@ public sealed class TrackProjection
         double latitude,
         double longitude)
     {
-        // 纬度必须夹住，两极的 Mercator 会趋于无穷。
+        // Clamp latitude — Mercator diverges at the poles.
         var clamped = Math.Clamp(latitude, -85.05112878, 85.05112878);
 
         var x =
@@ -214,6 +210,20 @@ public sealed class TrackProjection
             * EarthRadius;
 
         return (x, y);
+    }
+
+    /// <summary>
+    /// Absolute Web Mercator meters → WGS84 lat/lon.
+    /// </summary>
+    public static (double Latitude, double Longitude) FromMercator(
+        double x,
+        double y)
+    {
+        var longitude = x / EarthRadius * 180.0 / Math.PI;
+        var latitude =
+            90.0
+            - 2.0 * Math.Atan(Math.Exp(-y / EarthRadius)) * 180.0 / Math.PI;
+        return (latitude, longitude);
     }
 
     /// <summary>

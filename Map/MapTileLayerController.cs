@@ -273,6 +273,9 @@ public sealed class MapTileLayerController : IDisposable
         TrackProjection projection,
         int z, int x, int y)
     {
+        // Tile corners in the SAME local Web Mercator space as the trajectory.
+        // Using lat/lon ENU boxes here used to warp Mercator imagery and cause
+        // growing offset when zoomed out.
         var (south, west, north, east) = MapTileMath.TileBounds(x, y, z);
         var (wx0, wy0) = projection.ToMeters(north, west); // NW
         var (wx1, wy1) = projection.ToMeters(south, east); // SE

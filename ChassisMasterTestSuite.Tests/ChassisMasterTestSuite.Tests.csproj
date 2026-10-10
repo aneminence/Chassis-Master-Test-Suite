@@ -40,6 +40,7 @@
     <Compile Include="..\Map\MapTileMath.cs" Link="Linked\Map\MapTileMath.cs" />
     <Compile Include="..\Map\MapTileSource.cs" Link="Linked\Map\MapTileSource.cs" />
     <Compile Include="..\Map\MapTileCache.cs" Link="Linked\Map\MapTileCache.cs" />
+    <Compile Include="..\Controls\TrackProjection.cs" Link="Linked\Controls\TrackProjection.cs" />
     <Compile Include="..\Analysis\TestType.cs" Link="Linked\Analysis\TestType.cs" />
     <Compile Include="..\Analysis\CrossingDirection.cs" Link="Linked\Analysis\CrossingDirection.cs" />
     <Compile Include="..\Analysis\ThresholdCondition.cs" Link="Linked\Analysis\ThresholdCondition.cs" />

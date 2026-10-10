@@ -76,18 +76,20 @@ public static class MapTileMath
 
     /// <summary>
     /// Suggest zoom so that one tile is roughly <paramref name="targetTilePixels"/> screen pixels wide.
+    /// <paramref name="mercatorMetersPerPixel"/> is plot resolution in Web Mercator meters/pixel
+    /// (Track Map plot space). Web Mercator tile resolution at z=0 is 156543.03 m/px (independent of latitude).
     /// </summary>
-    public static int SuggestZoom(double metersPerPixel, double latitude, int targetTilePixels = 256)
+    public static int SuggestZoom(double mercatorMetersPerPixel, double latitude, int targetTilePixels = 256)
     {
-        if (metersPerPixel <= 0 || double.IsNaN(metersPerPixel) || double.IsInfinity(metersPerPixel))
+        if (mercatorMetersPerPixel <= 0 || double.IsNaN(mercatorMetersPerPixel) || double.IsInfinity(mercatorMetersPerPixel))
             return 15;
 
-        var cos = Math.Max(0.05, Math.Cos(latitude * Math.PI / 180.0));
-        // meters per pixel at equator for zoom z ≈ 156543.03 / 2^z
-        // at latitude: / cos(lat)
-        var metersPerPixelAtZ0 = 156543.03392 / cos;
-        var desiredMpp = metersPerPixel; // local plot meters ≈ ground meters for short tracks
-        var z = Math.Log(metersPerPixelAtZ0 / desiredMpp, 2.0);
+        // Keep latitude param for API stability / future use; scale is conformal in mercator metres.
+        _ = latitude;
+        _ = targetTilePixels;
+
+        const double mercatorMetersPerPixelAtZ0 = 156543.03392;
+        var z = Math.Log(mercatorMetersPerPixelAtZ0 / mercatorMetersPerPixel, 2.0);
         return Math.Clamp((int)Math.Round(z), 1, 19);
     }
 

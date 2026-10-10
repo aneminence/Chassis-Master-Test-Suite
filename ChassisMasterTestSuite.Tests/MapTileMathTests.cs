@@ -40,8 +40,8 @@ public class MapTileMathTests
     [Fact]
     public void SuggestZoom_IncreasesWhenZoomedIn()
     {
-        var far = MapTileMath.SuggestZoom(metersPerPixel: 50, latitude: 30);
-        var near = MapTileMath.SuggestZoom(metersPerPixel: 0.5, latitude: 30);
+        var far = MapTileMath.SuggestZoom(mercatorMetersPerPixel: 50, latitude: 30);
+        var near = MapTileMath.SuggestZoom(mercatorMetersPerPixel: 0.5, latitude: 30);
         Assert.True(near > far);
     }
 

@@ -850,18 +850,22 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
-        // 横向纵向已用 SquareUnits() 锁成等比，取横向的即可。
-        var metersPerPixel = spanX / width;
+        // Plot axes are local Web Mercator metres. Convert to ground metres for
+        // scale labels (Mercator scale ≈ 1/cos(lat) relative to ground).
+        var mercatorMetersPerPixel = spanX / width;
 
-        if (double.IsNaN(metersPerPixel) || metersPerPixel <= 0.0)
+        if (double.IsNaN(mercatorMetersPerPixel) || mercatorMetersPerPixel <= 0.0)
         {
             return;
         }
 
-        var step = TrackProjection.NiceDistanceStep(
-            metersPerPixel * GridTargetPixels);
+        var groundScale = _projection?.GroundMetersPerMercatorMeter ?? 1.0;
+        var groundMetersPerPixel = mercatorMetersPerPixel * groundScale;
 
-        var spacing = step / metersPerPixel;
+        var step = TrackProjection.NiceDistanceStep(
+            groundMetersPerPixel * GridTargetPixels);
+
+        var spacing = step / groundMetersPerPixel;
 
         if (spacing < 6.0)
         {
