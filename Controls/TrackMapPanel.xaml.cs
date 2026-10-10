@@ -630,6 +630,7 @@ public partial class TrackMapPanel : UserControl
 
         RedrawRunHighlights();
         RedrawGates();
+        _tileLayer?.Invalidate(force: true);
     }
 
 
@@ -1474,7 +1475,7 @@ public partial class TrackMapPanel : UserControl
             customUrl = PromptText(
                 Loc.T("Map.CustomUrl"),
                 Loc.T("Map.CustomUrlPrompt"),
-                customUrl ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
+                customUrl ?? MapTileSources.Find(MapTileSources.DefaultId)!.UrlTemplate);
             if (customUrl is null)
             {
                 RevertBasemapSelection();

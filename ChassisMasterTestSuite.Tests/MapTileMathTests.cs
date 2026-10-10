@@ -53,4 +53,54 @@ public class MapTileMathTests
         Assert.InRange(lat, 31.19, 31.21);
         Assert.InRange(lon, 121.49, 121.51);
     }
+
+    [Fact]
+    public void FormatUrl_BingQuadKey()
+    {
+        var url = MapTileMath.FormatUrl(
+            "https://ecn.t{s}.tiles.virtualearth.net/tiles/a{q}.jpeg?g=1",
+            4, 12, 6);
+        Assert.DoesNotContain("{q}", url);
+        Assert.DoesNotContain("{s}", url);
+        Assert.Contains("/tiles/a", url);
+        Assert.Contains(".jpeg", url);
+        Assert.Equal(MapTileMath.ToQuadKey(12, 6, 4), url.Split("/tiles/a")[1].Split('.')[0]);
+    }
+
+    [Fact]
+    public void FormatUrl_GoogleUsesDigitSubdomain()
+    {
+        var url = MapTileMath.FormatUrl(
+            "https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}",
+            4, 12, 6);
+        Assert.StartsWith("https://mt", url);
+        Assert.Contains(".google.com", url);
+        Assert.Contains("x=12", url);
+        Assert.Contains("y=6", url);
+        Assert.Contains("z=4", url);
+        var afterMt = url["https://mt".Length];
+        Assert.InRange(afterMt, '0', '3');
+    }
+
+    [Fact]
+    public void ToQuadKey_KnownValue()
+    {
+        Assert.Equal("0", MapTileMath.ToQuadKey(0, 0, 1));
+        Assert.Equal(3, MapTileMath.ToQuadKey(1, 2, 3).Length);
+    }
+
+    [Fact]
+    public void LooksLikeImage_JpegAndPng()
+    {
+        var jpeg = new byte[32];
+        jpeg[0] = 0xFF; jpeg[1] = 0xD8; jpeg[2] = 0xFF; jpeg[3] = 0xE0;
+        Assert.True(MapTileCache.LooksLikeImage(jpeg));
+
+        var png = new byte[32];
+        png[0] = 0x89; png[1] = 0x50; png[2] = 0x4E; png[3] = 0x47;
+        Assert.True(MapTileCache.LooksLikeImage(png));
+
+        Assert.False(MapTileCache.LooksLikeImage(
+            System.Text.Encoding.ASCII.GetBytes("<html>error page not an image!!")));
+    }
 }

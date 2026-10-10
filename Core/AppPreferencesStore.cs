@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Chassis_Master_Test_Suite.Map;
 
 namespace Chassis_Master_Test_Suite.Core;
 
@@ -40,7 +41,7 @@ public sealed class MapPreferences
     public bool BasemapEnabled { get; set; }
 
     /// <summary>Id of a preset source, or "custom".</summary>
-    public string SourceId { get; set; } = "osm";
+    public string SourceId { get; set; } = "esri-imagery";
 
     /// <summary>XYZ template with {z}/{x}/{y} or {Z}/{X}/{Y}; used when SourceId == custom.</summary>
     public string? CustomUrlTemplate { get; set; }
@@ -90,9 +91,12 @@ public static class AppPreferencesStore
             if (string.IsNullOrWhiteSpace(prefs.ThemeMode))
                 prefs.ThemeMode = "Dark";
             if (string.IsNullOrWhiteSpace(prefs.Map.SourceId))
-                prefs.Map.SourceId = "osm";
+                prefs.Map.SourceId = "esri-imagery";
             if (prefs.Map.Opacity is < 0.05 or > 1.0)
                 prefs.Map.Opacity = 0.92;
+            // Drop removed vector/topo/key-gated ids from older builds.
+            if (!MapTileSources.IsKnownId(prefs.Map.SourceId))
+                prefs.Map.SourceId = MapTileSources.DefaultId;
 
             return prefs;
         }

@@ -65,7 +65,7 @@ public static class AppearanceService
 
     public static void SetMapSource(string sourceId, string? customUrl = null, string? tiandituKey = null, bool persist = true)
     {
-        _prefs.Map.SourceId = string.IsNullOrWhiteSpace(sourceId) ? "osm" : sourceId;
+        _prefs.Map.SourceId = string.IsNullOrWhiteSpace(sourceId) ? MapTileSources.DefaultId : sourceId;
         if (customUrl is not null)
             _prefs.Map.CustomUrlTemplate = customUrl;
         if (tiandituKey is not null)

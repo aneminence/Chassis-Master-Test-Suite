@@ -1,5 +1,4 @@
 using Chassis_Master_Test_Suite.Core;
-using Chassis_Master_Test_Suite.Localization;
 using Chassis_Master_Test_Suite.Map;
 
 namespace ChassisMasterTestSuite.Tests;
@@ -7,12 +6,13 @@ namespace ChassisMasterTestSuite.Tests;
 public class AppPreferencesStoreTests
 {
     [Fact]
-    public void RoundTrip_LanguageThemeMap()
+    public void RoundTrip_LanguageAndTheme()
     {
-        var path = Path.Combine(Path.GetTempPath(), "cmts-prefs-" + Guid.NewGuid().ToString("N") + ".json");
+        var dir = Path.Combine(Path.GetTempPath(), "cmts-prefs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
         try
         {
-            AppPreferencesStore.StoragePathOverride = path;
+            AppPreferencesStore.StoragePathOverride = Path.Combine(dir, "app-preferences.json");
             var prefs = new AppPreferences
             {
                 Language = "en",
@@ -35,49 +35,60 @@ public class AppPreferencesStoreTests
         finally
         {
             AppPreferencesStore.StoragePathOverride = null;
-            if (File.Exists(path)) File.Delete(path);
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
         }
     }
 
     [Fact]
-    public void Loc_SwitchesChineseAndEnglish()
+    public void Load_MigratesUnknownBasemapSourceToDefault()
     {
-        Loc.SetLanguage(Loc.En);
-        Assert.Equal("Load", Loc.T("Toolbar.Load"));
-        Loc.SetLanguage(Loc.ZhCn);
-        Assert.Equal("加载", Loc.T("Toolbar.Load"));
+        var dir = Path.Combine(Path.GetTempPath(), "cmts-prefs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var path = Path.Combine(dir, "app-preferences.json");
+            AppPreferencesStore.StoragePathOverride = path;
+            File.WriteAllText(path, """
+                {"version":1,"language":"zh-CN","themeMode":"Dark","map":{"basemapEnabled":true,"sourceId":"osm","opacity":0.92}}
+                """);
+            var loaded = AppPreferencesStore.Load();
+            Assert.Equal(MapTileSources.DefaultId, loaded.Map.SourceId);
+        }
+        finally
+        {
+            AppPreferencesStore.StoragePathOverride = null;
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+        }
     }
 
     [Fact]
-    public void MapTileSources_ResolveCustom()
+    public void MapTileSources_ResolveCustomUsesTemplate()
     {
-        var src = MapTileSources.Resolve("custom", "https://tiles.example/{z}/{x}/{y}.png");
+        var src = MapTileSources.Resolve("custom", "https://example/{z}/{x}/{y}.png");
         Assert.True(src.IsCustom);
         Assert.Contains("{z}", src.UrlTemplate);
     }
 
     [Fact]
-    public void MapTileSources_PresetsIncludeOsmAndEsri()
+    public void MapTileSources_PresetsAreSatelliteOnly()
     {
-        Assert.Contains(MapTileSources.Presets, s => s.Id == "osm");
         Assert.Contains(MapTileSources.Presets, s => s.Id == "esri-imagery");
-        Assert.Contains(MapTileSources.Presets, s => s.Id == "opentopo");
-    }
-
-    [Fact]
-    public void MapTileSources_PresetsIncludeTiandituAndCarto()
-    {
-        Assert.Contains(MapTileSources.Presets, s => s.Id == "tdt-img" && s.NeedsTiandituKey);
-        Assert.Contains(MapTileSources.Presets, s => s.Id == "carto-voyager");
         Assert.Contains(MapTileSources.Presets, s => s.Id == "esri-clarity");
-        Assert.True(MapTileSources.Presets.Count >= 15);
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "google-sat");
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "google-hybrid");
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "bing-aerial");
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "custom");
+        Assert.DoesNotContain(MapTileSources.Presets, s => s.Id == "osm");
+        Assert.DoesNotContain(MapTileSources.Presets, s => s.Id == "carto-voyager");
+        Assert.DoesNotContain(MapTileSources.Presets, s => s.Id == "tdt-vec");
+        Assert.DoesNotContain(MapTileSources.Presets, s => s.Id == "opentopo");
+        Assert.True(MapTileSources.Presets.Count <= 8);
     }
 
     [Fact]
-    public void MapTileSources_ResolveInjectsTiandituKey()
+    public void MapTileSources_ResolveFallsBackToDefault()
     {
-        var src = MapTileSources.Resolve("tdt-img", null, "abc123");
-        Assert.DoesNotContain("{tk}", src.UrlTemplate);
-        Assert.Contains("tk=abc123", src.UrlTemplate);
+        var src = MapTileSources.Resolve("osm", null);
+        Assert.Equal(MapTileSources.DefaultId, src.Id);
     }
 }

@@ -56,6 +56,24 @@ public static class MapTileMath
         return (south, west, north, east);
     }
 
+    /// <summary>Bing Maps quadkey for tile (z,x,y).</summary>
+    public static string ToQuadKey(int x, int y, int zoom)
+    {
+        var chars = new char[zoom];
+        for (var i = zoom; i > 0; i--)
+        {
+            var digit = 0;
+            var mask = 1 << (i - 1);
+            if ((x & mask) != 0)
+                digit += 1;
+            if ((y & mask) != 0)
+                digit += 2;
+            chars[zoom - i] = (char)('0' + digit);
+        }
+
+        return new string(chars);
+    }
+
     /// <summary>
     /// Suggest zoom so that one tile is roughly <paramref name="targetTilePixels"/> screen pixels wide.
     /// </summary>
@@ -78,14 +96,24 @@ public static class MapTileMath
         if (string.IsNullOrWhiteSpace(template))
             return "";
 
-        // {s} → subdomain letter a–d or digit 0–7 (Tianditu / Carto / OSM mirrors)
+        var lower = template.ToLowerInvariant();
+        // Digit subdomains: Google mt{s}, Bing t{s}, Tianditu t{s}
+        var useDigitSubdomain =
+            lower.Contains("tianditu", StringComparison.Ordinal) ||
+            lower.Contains("google.com", StringComparison.Ordinal) ||
+            lower.Contains("virtualearth.net", StringComparison.Ordinal) ||
+            lower.Contains("mt{s}", StringComparison.Ordinal) ||
+            lower.Contains("t{s}.", StringComparison.Ordinal);
+
         var sLetter = ((char)('a' + (Math.Abs(x + y) % 4))).ToString();
-        var sDigit = (Math.Abs(x + y) % 8).ToString();
-        // Prefer digit when template looks like t{s}.tianditu; letter otherwise.
-        var s = template.Contains("tianditu", StringComparison.OrdinalIgnoreCase) ? sDigit : sLetter;
+        var sDigit = (Math.Abs(x + y) % 4).ToString(); // 0–3 covers Google/Bing
+        var s = useDigitSubdomain ? sDigit : sLetter;
+        var quad = ToQuadKey(x, y, z);
 
         return template
             .Replace("{s}", s, StringComparison.OrdinalIgnoreCase)
+            .Replace("{q}", quad, StringComparison.OrdinalIgnoreCase)
+            .Replace("{quadkey}", quad, StringComparison.OrdinalIgnoreCase)
             .Replace("{z}", z.ToString(), StringComparison.OrdinalIgnoreCase)
             .Replace("{x}", x.ToString(), StringComparison.OrdinalIgnoreCase)
             .Replace("{y}", y.ToString(), StringComparison.OrdinalIgnoreCase)

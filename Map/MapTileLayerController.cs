@@ -22,11 +22,13 @@ public sealed class MapTileLayerController : IDisposable
     private CancellationTokenSource? _cts;
     private int _generation;
     private bool _enabled;
-    private string _sourceId = "osm";
+    private string _sourceId = MapTileSources.DefaultId;
     private string _urlTemplate = MapTileSources.Presets[0].UrlTemplate;
     private int _maxZoom = 19;
     private double _opacity = 0.92;
     private string _lastLayoutKey = "";
+    private int _debounceGeneration;
+    private const int DebounceMs = 120;
 
     public MapTileLayerController(
         Canvas canvas,
@@ -85,6 +87,48 @@ public sealed class MapTileLayerController : IDisposable
     }
 
     public void Invalidate(bool force = false)
+    {
+        if (!_enabled)
+            return;
+
+        if (!force)
+        {
+            var token = Interlocked.Increment(ref _debounceGeneration);
+            _ = DebouncedInvalidateAsync(token);
+            return;
+        }
+
+        InvalidateCore(force: true);
+    }
+
+    private async Task DebouncedInvalidateAsync(int token)
+    {
+        try
+        {
+            await Task.Delay(DebounceMs).ConfigureAwait(true);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (token != _debounceGeneration)
+            return;
+
+        if (!_canvas.Dispatcher.CheckAccess())
+        {
+            await _canvas.Dispatcher.InvokeAsync(() =>
+            {
+                if (token == _debounceGeneration)
+                    InvalidateCore(force: false);
+            });
+            return;
+        }
+
+        InvalidateCore(force: false);
+    }
+
+    private void InvalidateCore(bool force)
     {
         if (!_enabled)
             return;
