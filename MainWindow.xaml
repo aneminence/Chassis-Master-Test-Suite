@@ -59,12 +59,12 @@
 
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Logo -->
+                <!-- Logo + Online/Offline -->
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
@@ -79,21 +79,92 @@
                     <Border Width="1"
                             Height="20"
                             Background="#26303C"
-                            Margin="12,0,12,0"
+                            Margin="12,0,10,0"
                             VerticalAlignment="Center"/>
 
-                    <TextBlock Text="Chassis Master Test Suite"
-                               Foreground="#E6EAF0"
-                               FontSize="14"
-                               VerticalAlignment="Center"/>
+                    <Button x:Name="OnlineModeButton"
+                            Content="Online"
+                            Style="{StaticResource NavButtonActiveStyle}"
+                            Margin="0,0,4,0"
+                            Padding="12,4"
+                            Click="OnlineModeButton_Click"
+                            ToolTip="Remote live data (UDP / GSpot / Simulator)"/>
+
+                    <Button x:Name="OfflineModeButton"
+                            Content="Offline"
+                            Style="{StaticResource NavButtonStyle}"
+                            Margin="0,0,10,0"
+                            Padding="12,4"
+                            Click="OfflineModeButton_Click"
+                            ToolTip="VBO replay and multi-file compare"/>
+
+                    <!-- Online tools -->
+                    <StackPanel x:Name="OnlineToolsPanel"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+
+                        <Button x:Name="UdpSourceButton"
+                                Content="UDP"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="UdpSourceButton_Click"
+                                ToolTip="Local UDP / Simulator data source"/>
+
+                        <Button x:Name="GSpotButton"
+                                Content="GSpot…"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="GSpotButton_Click"
+                                ToolTip="GSpot WebSocket (room + password)"/>
+
+                        <Button x:Name="SimulatorButton"
+                                Content="Simulator"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="SimulatorButton_Click"/>
+
+                        <Button x:Name="StopOnlineButton"
+                                Content="Stop Connection"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Foreground="#E08A8A"
+                                Click="StopOnlineButton_Click"
+                                ToolTip="Stop the current online data source"/>
+                    </StackPanel>
+
+                    <!-- Offline tools -->
+                    <StackPanel x:Name="OfflineToolsPanel"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Visibility="Collapsed">
+
+                        <Button x:Name="OpenVboButton"
+                                Content="Open VBO…"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="OpenVboButton_Click"/>
+
+                        <Button x:Name="CloseAllVboButton"
+                                Content="Close All"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,8,0"
+                                Click="CloseAllVboButton_Click"
+                                ToolTip="Close all opened VBO files"/>
+
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Disabled"
+                                      MaxWidth="420">
+                            <StackPanel x:Name="OfflineFilesPanel"
+                                        Orientation="Horizontal"/>
+                        </ScrollViewer>
+                    </StackPanel>
 
                 </StackPanel>
 
                 <!-- 网络状态 -->
-                <StackPanel Grid.Column="1"
+                <StackPanel Grid.Column="2"
                             Orientation="Horizontal"
                             VerticalAlignment="Center"
-                            Margin="20,0,0,0">
+                            Margin="12,0,16,0">
 
                     <Ellipse x:Name="ConnectionDot"
                              Width="7"
@@ -280,7 +351,7 @@
 
                     <StackPanel Orientation="Horizontal">
 
-                        <Button x:Name="OpenVboButton"
+                        <Button x:Name="ReplayPageOpenVboButton"
                                 Content="📂  Open VBO…"
                                 Style="{StaticResource ToolButtonStyle}"
                                 Height="30"
@@ -412,25 +483,6 @@
                                 Style="{StaticResource ToolButtonStyle}"
                                 Margin="0,0,6,0"
                                 Click="ResetViewButton_Click"/>
-
-                        <Button x:Name="SimulatorButton"
-                                Content="Simulator"
-                                Style="{StaticResource ToolButtonStyle}"
-                                Margin="0,0,6,0"
-                                Click="SimulatorButton_Click"/>
-
-                        <Button x:Name="GSpotButton"
-                                Content="GSpot…"
-                                Style="{StaticResource ToolButtonStyle}"
-                                Margin="0,0,6,0"
-                                Click="GSpotButton_Click"
-                                ToolTip="切换到 GSpot WebSocket 数据源（房间号+密码）"/>
-
-                        <Button x:Name="UdpSourceButton"
-                                Content="UDP"
-                                Style="{StaticResource ToolButtonStyle}"
-                                Click="UdpSourceButton_Click"
-                                ToolTip="切回本机 UDP / Simulator 数据源"/>
 
                     </StackPanel>
 

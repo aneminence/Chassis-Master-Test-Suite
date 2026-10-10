@@ -96,6 +96,8 @@ public sealed class VehicleSample
             ChannelIds.Latitude => Latitude,
             ChannelIds.Longitude => Longitude,
             ChannelIds.Height => Altitude,
+            ChannelIds.ElapsedTest => 0.0,
+            ChannelIds.DistanceTraveled => 0.0,
             _ => 0.0
         };
     }

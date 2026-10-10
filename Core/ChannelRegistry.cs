@@ -17,6 +17,12 @@ public sealed class ChannelRegistry
     public static ChannelInfo AxisTime { get; } =
         new(ChannelIds.AxisTime, "Time", "Beijing", isSyntheticTime: true);
 
+    public static ChannelInfo ElapsedTest { get; } =
+        new(ChannelIds.ElapsedTest, "Test Elapsed", "s");
+
+    public static ChannelInfo DistanceTraveled { get; } =
+        new(ChannelIds.DistanceTraveled, "Distance Traveled", "m");
+
     public static ChannelRegistry Instance { get; } = new();
 
     private readonly Dictionary<string, ChannelInfo> _catalog =
@@ -99,7 +105,9 @@ public sealed class ChannelRegistry
             ChannelIds.Heading,
             ChannelIds.Latitude,
             ChannelIds.Longitude,
-            ChannelIds.Height
+            ChannelIds.Height,
+            ChannelIds.ElapsedTest,
+            ChannelIds.DistanceTraveled
         };
 
         SetAvailable(ids);
@@ -125,9 +133,16 @@ public sealed class ChannelRegistry
         if (AxisTime is not null)
             list.Add(AxisTime);
 
+        // 合成通道始终可选（线上/线下均有）
+        EnsureCatalogSynthetic();
+        list.Add(ElapsedTest);
+        list.Add(DistanceTraveled);
+
         foreach (var id in channelIds)
         {
-            if (string.Equals(id, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(id, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(id, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(id, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase))
                 continue;
 
             if (!_catalog.TryGetValue(id, out var info))
@@ -169,6 +184,12 @@ public sealed class ChannelRegistry
             [ChannelIds.Longitude] = longitude,
             [ChannelIds.Height] = altitude
         };
+    }
+
+    private void EnsureCatalogSynthetic()
+    {
+        _catalog[ChannelIds.ElapsedTest] = ElapsedTest;
+        _catalog[ChannelIds.DistanceTraveled] = DistanceTraveled;
     }
 
     private void SeedCatalogFromOnsShot7()
