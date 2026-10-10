@@ -195,51 +195,7 @@
                             </MenuItem>
                         </MenuItem>
                     </Menu>
-
-                    <!-- Appearance: language + theme -->
-                    <Menu Background="Transparent"
-                          BorderThickness="0"
-                          Padding="0"
-                          Margin="0,0,4,0"
-                          VerticalAlignment="Center"
-                          Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="AppearanceMenuRoot"
-                                  Header="Appearance ▾"
-                                  Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="Language and theme">
-                            <MenuItem x:Name="LanguageMenu"
-                                      Header="Language"
-                                      Style="{StaticResource DarkMenuItemStyle}">
-                                <MenuItem x:Name="LangZhItem"
-                                          Header="中文"
-                                          Style="{StaticResource DarkMenuItemStyle}"
-                                          Click="LangZh_Click"/>
-                                <MenuItem x:Name="LangEnItem"
-                                          Header="English"
-                                          Style="{StaticResource DarkMenuItemStyle}"
-                                          Click="LangEn_Click"/>
-                            </MenuItem>
-                            <MenuItem x:Name="ThemeMenu"
-                                      Header="Theme"
-                                      Style="{StaticResource DarkMenuItemStyle}">
-                                <MenuItem x:Name="ThemeDarkItem"
-                                          Header="Dark"
-                                          Style="{StaticResource DarkMenuItemStyle}"
-                                          Click="ThemeDark_Click"/>
-                                <MenuItem x:Name="ThemeLightItem"
-                                          Header="Light"
-                                          Style="{StaticResource DarkMenuItemStyle}"
-                                          Click="ThemeLight_Click"/>
-                                <Separator Style="{StaticResource DarkMenuSeparatorStyle}"/>
-                                <MenuItem x:Name="ThemeCustomItem"
-                                          Header="Custom colors…"
-                                          Style="{StaticResource DarkMenuItemStyle}"
-                                          Click="ThemeCustom_Click"/>
-                            </MenuItem>
-                        </MenuItem>
-                    </Menu>
-
-                    <Button x:Name="LoadVboButton"
+<Button x:Name="LoadVboButton"
                             Content="Load"
                             Style="{StaticResource ToolButtonStyle}"
                             Margin="0,0,4,0"
@@ -334,11 +290,68 @@
                 </StackPanel>
 
                 <!-- 右侧：录制控制 + 时钟 -->
-                <StackPanel Grid.Column="3"
+                                <StackPanel Grid.Column="3"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
 
+                    <!-- Language (top-right outer dropdown) -->
+                    <Menu Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0"
+                          Margin="0,0,4,0"
+                          VerticalAlignment="Center"
+                          Style="{StaticResource DarkMenuStyle}">
+                        <MenuItem x:Name="LanguageMenu"
+                                  Header="语言 ▾"
+                                  Style="{StaticResource DarkTopMenuItemStyle}"
+                                  ToolTip="Interface language">
+                            <MenuItem x:Name="LangZhItem"
+                                      Header="中文"
+                                      Style="{StaticResource DarkMenuItemStyle}"
+                                      Click="LangZh_Click"/>
+                            <MenuItem x:Name="LangEnItem"
+                                      Header="English"
+                                      Style="{StaticResource DarkMenuItemStyle}"
+                                      Click="LangEn_Click"/>
+                        </MenuItem>
+                    </Menu>
+
+                    <!-- Theme (top-right outer dropdown) -->
+                    <Menu Background="Transparent"
+                          BorderThickness="0"
+                          Padding="0"
+                          Margin="0,0,10,0"
+                          VerticalAlignment="Center"
+                          Style="{StaticResource DarkMenuStyle}">
+                        <MenuItem x:Name="ThemeMenu"
+                                  Header="主题 ▾"
+                                  Style="{StaticResource DarkTopMenuItemStyle}"
+                                  ToolTip="UI theme">
+                            <MenuItem x:Name="ThemeLightItem"
+                                      Header="明亮"
+                                      Style="{StaticResource DarkMenuItemStyle}"
+                                      Click="ThemeLight_Click"/>
+                            <MenuItem x:Name="ThemeDarkItem"
+                                      Header="暗黑"
+                                      Style="{StaticResource DarkMenuItemStyle}"
+                                      Click="ThemeDark_Click"/>
+                            <Separator Style="{StaticResource DarkMenuSeparatorStyle}"/>
+                            <MenuItem x:Name="ThemeCustomItem"
+                                      Header="自定义…"
+                                      Style="{StaticResource DarkMenuItemStyle}"
+                                      IsEnabled="False"
+                                      ToolTip="Custom theme colors (placeholder)"/>
+                        </MenuItem>
+                    </Menu>
+
+                    <Border Width="1"
+                            Height="18"
+                            Background="#26303C"
+                            Margin="0,0,10,0"
+                            VerticalAlignment="Center"/>
+
                     <Button x:Name="RecordButton"
+
                             Style="{StaticResource ToolButtonStyle}"
                             Foreground="#E08A8A"
                             Margin="0,0,6,0"

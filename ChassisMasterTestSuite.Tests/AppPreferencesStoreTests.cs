@@ -63,4 +63,21 @@ public class AppPreferencesStoreTests
         Assert.Contains(MapTileSources.Presets, s => s.Id == "esri-imagery");
         Assert.Contains(MapTileSources.Presets, s => s.Id == "opentopo");
     }
+
+    [Fact]
+    public void MapTileSources_PresetsIncludeTiandituAndCarto()
+    {
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "tdt-img" && s.NeedsTiandituKey);
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "carto-voyager");
+        Assert.Contains(MapTileSources.Presets, s => s.Id == "esri-clarity");
+        Assert.True(MapTileSources.Presets.Count >= 15);
+    }
+
+    [Fact]
+    public void MapTileSources_ResolveInjectsTiandituKey()
+    {
+        var src = MapTileSources.Resolve("tdt-img", null, "abc123");
+        Assert.DoesNotContain("{tk}", src.UrlTemplate);
+        Assert.Contains("tk=abc123", src.UrlTemplate);
+    }
 }

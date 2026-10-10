@@ -23,6 +23,14 @@ public class MapTileMathTests
     }
 
     [Fact]
+    public void FormatUrl_ReplacesSubdomain()
+    {
+        var url = MapTileMath.FormatUrl("https://{s}.example/{z}/{x}/{y}.png", 3, 4, 5);
+        Assert.DoesNotContain("{s}", url);
+        Assert.Contains("/3/4/5.png", url);
+    }
+
+    [Fact]
     public void FormatUrl_ReplacesTokens()
     {
         var url = MapTileMath.FormatUrl("https://example/{z}/{x}/{y}.png", 3, 4, 5);

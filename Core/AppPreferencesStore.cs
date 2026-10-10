@@ -45,6 +45,9 @@ public sealed class MapPreferences
     /// <summary>XYZ template with {z}/{x}/{y} or {Z}/{X}/{Y}; used when SourceId == custom.</summary>
     public string? CustomUrlTemplate { get; set; }
 
+    /// <summary>天地图 tk key for tdt-* sources (console.tianditu.gov.cn).</summary>
+    public string? TiandituKey { get; set; }
+
     /// <summary>0..1 opacity of basemap tiles.</summary>
     public double Opacity { get; set; } = 0.92;
 }

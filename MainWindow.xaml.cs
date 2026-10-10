@@ -989,12 +989,10 @@ public partial class MainWindow : Window
     private void ThemeLight_Click(object sender, RoutedEventArgs e) =>
         AppearanceService.SetTheme(AppThemeMode.Light);
 
+    // Custom theme is a placeholder in the Theme menu (IsEnabled=false).
     private void ThemeCustom_Click(object sender, RoutedEventArgs e)
     {
-        var seed = AppearanceService.Preferences.CustomColors
-                   ?? ThemeManager.CaptureCurrentAsCustom();
-        if (CustomThemeDialog.Show(this, seed, out var colors) == true)
-            AppearanceService.SetTheme(AppThemeMode.Custom, colors);
+        // Reserved for a future custom-color picker.
     }
 
     private void ApplyLocalizedToolbar()
@@ -1006,25 +1004,30 @@ public partial class MainWindow : Window
             LayoutMenuRoot.Header = Loc.T("Menu.Layout");
             LayoutMenuRoot.ToolTip = Loc.T("Menu.LayoutTip");
         }
-        if (AppearanceMenuRoot is not null)
-        {
-            AppearanceMenuRoot.Header = Loc.T("Menu.Appearance");
-            AppearanceMenuRoot.ToolTip = Loc.T("Menu.AppearanceTip");
-        }
         if (LanguageMenu is not null)
+        {
             LanguageMenu.Header = Loc.T("Menu.Language");
+            LanguageMenu.ToolTip = Loc.T("Menu.LanguageTip");
+        }
         if (ThemeMenu is not null)
+        {
             ThemeMenu.Header = Loc.T("Menu.Theme");
+            ThemeMenu.ToolTip = Loc.T("Menu.ThemeTip");
+        }
         if (LangZhItem is not null)
             LangZhItem.Header = Loc.T("Menu.Lang.Zh");
         if (LangEnItem is not null)
             LangEnItem.Header = Loc.T("Menu.Lang.En");
-        if (ThemeDarkItem is not null)
-            ThemeDarkItem.Header = Loc.T("Menu.Theme.Dark");
         if (ThemeLightItem is not null)
             ThemeLightItem.Header = Loc.T("Menu.Theme.Light");
+        if (ThemeDarkItem is not null)
+            ThemeDarkItem.Header = Loc.T("Menu.Theme.Dark");
         if (ThemeCustomItem is not null)
+        {
             ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");
+            ThemeCustomItem.ToolTip = Loc.T("Menu.Theme.CustomTip");
+            ThemeCustomItem.IsEnabled = false;
+        }
 
         SetText(LayoutCellDashboard, Loc.T("Layout.Dashboard"), Loc.T("Layout.ToggleDashboard"));
         SetText(LayoutCellTestResults, Loc.T("Layout.TestResults"), Loc.T("Layout.ToggleTestResults"));

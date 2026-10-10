@@ -1467,6 +1467,8 @@ public partial class TrackMapPanel : UserControl
             return;
 
         string? customUrl = AppearanceService.Preferences.Map.CustomUrlTemplate;
+        string? tiandituKey = AppearanceService.Preferences.Map.TiandituKey;
+
         if (item.Id == MapTileSources.CustomId)
         {
             customUrl = PromptText(
@@ -1475,25 +1477,46 @@ public partial class TrackMapPanel : UserControl
                 customUrl ?? "https://tile.openstreetmap.org/{z}/{x}/{y}.png");
             if (customUrl is null)
             {
-                // revert selection
-                _suppressBasemapSourceChanged = true;
-                try
-                {
-                    var prev = AppearanceService.Preferences.Map.SourceId;
-                    BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
-                        .FirstOrDefault(i => i.Id == prev) ?? BasemapSourceCombo.Items[0];
-                }
-                finally
-                {
-                    _suppressBasemapSourceChanged = false;
-                }
+                RevertBasemapSelection();
                 return;
             }
         }
 
-        AppearanceService.SetMapSource(item.Id, customUrl);
+        var preset = MapTileSources.Find(item.Id);
+        if (preset?.NeedsTiandituKey == true && string.IsNullOrWhiteSpace(tiandituKey))
+        {
+            tiandituKey = PromptText(
+                Loc.T("Map.TiandituKey"),
+                Loc.T("Map.TiandituKeyPrompt"),
+                "");
+            if (string.IsNullOrWhiteSpace(tiandituKey))
+            {
+                RevertBasemapSelection();
+                return;
+            }
+        }
+
+        AppearanceService.SetMapSource(item.Id, customUrl, tiandituKey);
         _tileLayer?.SetSource(AppearanceService.CurrentMapSource());
         _tileLayer?.Invalidate(force: true);
+    }
+
+    private void RevertBasemapSelection()
+    {
+        _suppressBasemapSourceChanged = true;
+        try
+        {
+            var prev = AppearanceService.Preferences.Map.SourceId;
+            if (BasemapSourceCombo is not null)
+            {
+                BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
+                    .FirstOrDefault(i => i.Id == prev) ?? BasemapSourceCombo.Items[0];
+            }
+        }
+        finally
+        {
+            _suppressBasemapSourceChanged = false;
+        }
     }
 
     private sealed class BasemapSourceItem

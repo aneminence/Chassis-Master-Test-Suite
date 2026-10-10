@@ -50,12 +50,12 @@
                               Unchecked="BasemapCheck_Changed"
                               ToolTip="Toggle online map tiles under the track"/>
                     <ComboBox x:Name="BasemapSourceCombo"
-                              Width="140"
+                              Width="200"
                               Height="26"
                               Margin="0,0,10,0"
                               Style="{StaticResource DarkComboBoxStyle}"
                               SelectionChanged="BasemapSourceCombo_SelectionChanged"
-                              ToolTip="Map tile source (Ovi-style XYZ)"/>
+                              ToolTip="Basemap source (Ovi-style)"/>
                     <Border Width="1" Height="16" Background="{DynamicResource BorderBrushSoft}" Margin="0,0,10,0" VerticalAlignment="Center"/>
                     <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
                             Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>

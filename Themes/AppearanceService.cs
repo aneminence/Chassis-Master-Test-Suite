@@ -63,13 +63,15 @@ public static class AppearanceService
         PreferencesChanged?.Invoke(null, EventArgs.Empty);
     }
 
-    public static void SetMapSource(string sourceId, string? customUrl = null, bool persist = true)
+    public static void SetMapSource(string sourceId, string? customUrl = null, string? tiandituKey = null, bool persist = true)
     {
         _prefs.Map.SourceId = string.IsNullOrWhiteSpace(sourceId) ? "osm" : sourceId;
         if (customUrl is not null)
             _prefs.Map.CustomUrlTemplate = customUrl;
-        // Validate custom resolves
-        _ = MapTileSources.Resolve(_prefs.Map.SourceId, _prefs.Map.CustomUrlTemplate);
+        if (tiandituKey is not null)
+            _prefs.Map.TiandituKey = tiandituKey;
+        // Validate resolves
+        _ = MapTileSources.Resolve(_prefs.Map.SourceId, _prefs.Map.CustomUrlTemplate, _prefs.Map.TiandituKey);
         if (persist)
             Persist();
         PreferencesChanged?.Invoke(null, EventArgs.Empty);
@@ -84,7 +86,7 @@ public static class AppearanceService
     }
 
     public static MapTileSource CurrentMapSource() =>
-        MapTileSources.Resolve(_prefs.Map.SourceId, _prefs.Map.CustomUrlTemplate);
+        MapTileSources.Resolve(_prefs.Map.SourceId, _prefs.Map.CustomUrlTemplate, _prefs.Map.TiandituKey);
 
     public static void Persist() => AppPreferencesStore.Save(_prefs);
 }
