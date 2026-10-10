@@ -21,4 +21,13 @@
     <Resource Include="Assets\icon.ico" />
   </ItemGroup>
 
+
+  <!-- Nested test project: do not compile into the WPF app -->
+  <ItemGroup>
+    <Compile Remove="ChassisMasterTestSuite.Tests/**" />
+    <None Remove="ChassisMasterTestSuite.Tests/**" />
+    <EmbeddedResource Remove="ChassisMasterTestSuite.Tests/**" />
+    <Page Remove="ChassisMasterTestSuite.Tests/**" />
+  </ItemGroup>
+
 </Project>

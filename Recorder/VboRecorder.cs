@@ -151,6 +151,17 @@ public sealed class VboRecorder : IDisposable
     public long RowCount => Interlocked.Read(ref _rowCount);
 
     /// <summary>
+    /// TryWrite 失败次数（Interlocked）。
+    ///
+    /// 注意：内部队列 FullMode=Wait，但对 TryWrite 而言队列满时
+    /// 仍立即返回 false（不会阻塞等待空位）。调用方必须检查返回值；
+    /// 失败会计入本计数，禁止静默吞掉。
+    /// </summary>
+    private long _droppedSamples;
+
+    public long DroppedSamples => Interlocked.Read(ref _droppedSamples);
+
+    /// <summary>
     /// 写入 [header] / [channel units] / [comments]
     /// / [SessionData] / [column names] / [data] 六个段头。
     ///
@@ -243,7 +254,11 @@ public sealed class VboRecorder : IDisposable
     /// </summary>
     public bool TryWrite(VehicleSample sample)
     {
-        return _channel.Writer.TryWrite(sample);
+        if (_channel.Writer.TryWrite(sample))
+            return true;
+
+        Interlocked.Increment(ref _droppedSamples);
+        return false;
     }
 
     /// <summary>

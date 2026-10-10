@@ -19,48 +19,32 @@ public partial class MainWindow : Window
     private readonly DataBus _dataBus = new();
 
     /// <summary>
-    /// 当前活动数据源（UDP 或 GSpot）。
-    /// Settings 完善前用顶部 GSpot… / UDP 按钮切换。
+    /// 当前活动数据源（UDP / GSpot）所有权；Settings 完善前用顶部按钮切换。
     /// </summary>
-    private IDataSource? _dataSource;
+    private readonly DataSourceSession _dataSourceSession;
 
     private UdpSender? _udpSender;
 
     // ============================================================
-    // 录制（VBO）
-    //
-    // Recorder 在窗口加载时创建，
-    // 但只有在 _recordingState == Recording 时才写入数据。
+    // 录制（VBO）— 文件 / 状态机在 RecordingSession；UI 外观仍在本类。
     // ============================================================
 
-    private VboRecorder? _recorder;
-
-    private RecordingState _recordingState = RecordingState.Stopped;
-
-    /// <summary>
-    /// 本次测试第一条数据的时间戳（毫秒），用于显示经过时间。
-    /// </summary>
-    private long? _recordingStartTimestamp;
+    private readonly RecordingSession _recordingSession = new();
 
     private DispatcherTimer? _elapsedTimer;
 
-    /// <summary>
-    /// 录制状态机。
-    ///
-    /// Stopped -> Recording <-> Paused -> Stopped
-    /// </summary>
-    private enum RecordingState
-    {
-        Stopped,
-        Recording,
-        Paused
-    }
-
     private CancellationTokenSource? _cancellationTokenSource;
 
-    private readonly List<VehicleSample> _sampleHistory = new();
-
     private const int MaxHistorySamples = 1_000_000;
+
+    private readonly SampleHistoryBuffer _sampleHistory =
+        new(MaxHistorySamples);
+
+    /// <summary>
+    /// 打开 VBO 离线回放后为 true：消费循环仍读总线，但不写入历史，
+    /// 避免实时包污染 Replay 曲线 / Track Map。切回 live 源时清零。
+    /// </summary>
+    private volatile bool _historyOfflineMode;
 
     private long _sampleCount;
 
@@ -84,9 +68,6 @@ public partial class MainWindow : Window
     private double _liveDistanceM;
 
     private VehicleSample? _livePreviousSample;
-
-    /// <summary>打开线下后为 true：消费循环不写历史。</summary>
-    private volatile bool _historyOfflineMode;
 
     // ============================================================
     // Simulator
@@ -120,6 +101,19 @@ public partial class MainWindow : Window
     /// </summary>
     private bool _suppressAutoScaleCheckboxRefresh;
 
+    /// <summary>
+    /// 曲线脏检查：与上次成功重建时历史尾指纹相同则跳过 Clear+重建。
+    /// UI 改通道 / 轴 / 手势结束时置 <see cref="_forcePlotRebuild"/>。
+    /// </summary>
+    private int _lastPlotHistoryCount = -1;
+
+    private long _lastPlotHistoryTimestamp;
+
+    private long _lastPlotHistorySequence;
+
+    /// <summary>通道/轴/视野变化时强制下一拍重建（即使样本指纹未变）。</summary>
+    private bool _forcePlotRebuild = true;
+
     /// <summary>北京时间（Asia/Shanghai / China Standard Time）。</summary>
     private static readonly TimeZoneInfo BeijingTimeZone = ResolveBeijingTimeZone();
 
@@ -145,6 +139,8 @@ public partial class MainWindow : Window
 
     public MainWindow()
     {
+        _dataSourceSession = new DataSourceSession(_dataBus);
+
         InitializeComponent();
 
         ApplyModeUi();
@@ -220,20 +216,11 @@ public partial class MainWindow : Window
     // 实时曲线、数值显示和数据消费都照常运行。
     // ============================================================
 
-    private void StartRecorder()
-    {
-        _recorder = new VboRecorder(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "Recordings",
-                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"));
-    }
-
     private void RecordButton_Click(
         object sender,
         RoutedEventArgs e)
     {
-        switch (_recordingState)
+        switch (_recordingSession.State)
         {
             case RecordingState.Stopped:
                 ApplyRecordingState(
@@ -261,20 +248,16 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 切换录制状态，并同步按钮外观和 Elapsed 计时器。
+    /// 切换录制状态（委托 RecordingSession），并同步按钮外观和 Elapsed 计时器。
     /// </summary>
     private void ApplyRecordingState(
         RecordingState state)
     {
+        _recordingSession.ApplyState(state);
+
         switch (state)
         {
             case RecordingState.Stopped:
-                // 关闭并落盘当前文件。
-                _recorder?.Dispose();
-                _recorder = null;
-
-                _recordingStartTimestamp = null;
-
                 _elapsedTimer?.Stop();
 
                 RecordGlyphText.Text = "●";
@@ -288,16 +271,6 @@ public partial class MainWindow : Window
                 break;
 
             case RecordingState.Recording:
-                // 从停止状态开始时才新建文件；
-                // 从暂停恢复时继续写同一个文件。
-                if (_recorder is null)
-                {
-                    // 让第一条样本重新定义经过时间的零点。
-                    _recordingStartTimestamp = null;
-
-                    StartRecorder();
-                }
-
                 RecordGlyphText.Text = "❚❚";
                 RecordLabelText.Text = "Pause";
                 RecordGlyphText.Foreground = new SolidColorBrush(
@@ -315,8 +288,6 @@ public partial class MainWindow : Window
                 StopRecordButton.IsEnabled = true;
                 break;
         }
-
-        _recordingState = state;
     }
 
     private void StartElapsedTimer()
@@ -339,7 +310,7 @@ public partial class MainWindow : Window
         if (ElapsedTimeText is null)
             return;
 
-        if (_recordingStartTimestamp is null ||
+        if (_recordingSession.RecordingStartTimestamp is null ||
             _latestSample is null)
         {
             ElapsedTimeText.Text = "00:00:00.0";
@@ -349,7 +320,7 @@ public partial class MainWindow : Window
         var elapsed =
             TimeSpan.FromMilliseconds(
                 _latestSample.Timestamp -
-                _recordingStartTimestamp.Value);
+                _recordingSession.RecordingStartTimestamp.Value);
 
         if (elapsed < TimeSpan.Zero)
         {
@@ -425,7 +396,7 @@ public partial class MainWindow : Window
             ChannelRegistry.Instance.SetLiveCore();
             RefreshChannelSelectorsFromRegistry();
             RebuildOfflineFileChips();
-            RefreshAllPlots();
+            RefreshAllPlots(force: true);
             UpdateNumericDisplay();
             return;
         }
@@ -441,7 +412,7 @@ public partial class MainWindow : Window
         _latestSample = primary.Samples[^1];
 
         RebuildOfflineFileChips();
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
         UpdateNumericDisplay();
     }
 
@@ -785,17 +756,17 @@ public partial class MainWindow : Window
         _livePreviousSample = null;
         ChannelRegistry.Instance.SetLiveCore();
         RefreshChannelSelectorsFromRegistry();
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
         UpdateNumericDisplay();
 
         // 若当前无连接，尝试拉起默认 UDP
-        if (_dataSource is null ||
-            _dataSource.State is DataSourceState.Disconnected
+        if (_dataSourceSession.Current is null ||
+            _dataSourceSession.Current.State is DataSourceState.Disconnected
                 or DataSourceState.Faulted)
         {
             try
             {
-                var next = new UdpReceiver(_dataBus);
+                var next = _dataSourceSession.CreateUdpReceiver();
                 await SwitchDataSourceAsync(next);
                 if (GSpotButton is not null)
                     GSpotButton.Content = "GSpot…";
@@ -863,8 +834,8 @@ public partial class MainWindow : Window
 
     private async Task StopOnlineConnectionAsync()
     {
-        var old = _dataSource;
-        _dataSource = null;
+        var old = _dataSourceSession.Current;
+        _dataSourceSession.SetCurrent(null);
 
         if (old is not null)
         {
@@ -982,7 +953,7 @@ public partial class MainWindow : Window
         if (!IsInitialized)
             return;
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -997,7 +968,7 @@ public partial class MainWindow : Window
         if (XAxisAutoScaleCheckBox.IsChecked != true)
             CaptureLockedLimitsFromPlots();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1041,7 +1012,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1065,7 +1036,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1780,7 +1751,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1799,7 +1770,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1807,7 +1778,7 @@ public partial class MainWindow : Window
     // 刷新所有 Plot
     // ============================================================
 
-    private void RefreshAllPlots()
+    private void RefreshAllPlots(bool force = false)
     {
         if (_isRefreshingPlots)
             return;
@@ -1816,17 +1787,36 @@ public partial class MainWindow : Window
 
         try
         {
+            // 整拍只 Snapshot 一次，所有 Plot + Track Map 共用。
+            var history = _sampleHistory.Snapshot();
+
             // 手动平移/缩放时不要 Clear+重建，否则像「缩放被锁定」
             if (_activeManualAxisGestures == 0)
             {
-                foreach (var plot in _plots)
+                var rebuild =
+                    force
+                    || _forcePlotRebuild
+                    || IsPlotHistoryDirty(history);
+
+                if (rebuild)
                 {
-                    RefreshPlot(plot);
+                    foreach (var plot in _plots)
+                    {
+                        RefreshPlot(plot, history);
+                    }
+
+                    RememberPlotHistoryFingerprint(history);
+                    _forcePlotRebuild = false;
                 }
             }
+            else if (force)
+            {
+                // 手势进行中来的强制请求延后到松手后下一拍
+                _forcePlotRebuild = true;
+            }
 
-            // 轨迹图：线下多文件叠轨；线上单轨。
-            RefreshTrackMap();
+            // 轨迹图：线下多文件叠轨；线上单轨（Snapshot）。
+            RefreshTrackMap(history);
         }
         finally
         {
@@ -1835,7 +1825,40 @@ public partial class MainWindow : Window
     }
 
 
-    private void RefreshTrackMap()
+    private bool IsPlotHistoryDirty(
+        IReadOnlyList<VehicleSample> history)
+    {
+        if (history.Count != _lastPlotHistoryCount)
+            return true;
+
+        if (history.Count == 0)
+            return _lastPlotHistoryCount != 0;
+
+        var last = history[^1];
+        return last.Timestamp != _lastPlotHistoryTimestamp
+            || last.Sequence != _lastPlotHistorySequence;
+    }
+
+
+    private void RememberPlotHistoryFingerprint(
+        IReadOnlyList<VehicleSample> history)
+    {
+        _lastPlotHistoryCount = history.Count;
+        if (history.Count == 0)
+        {
+            _lastPlotHistoryTimestamp = 0;
+            _lastPlotHistorySequence = 0;
+            return;
+        }
+
+        var last = history[^1];
+        _lastPlotHistoryTimestamp = last.Timestamp;
+        _lastPlotHistorySequence = last.Sequence;
+    }
+
+
+    private void RefreshTrackMap(
+        IReadOnlyList<VehicleSample>? liveSnapshot = null)
     {
         if (_isOfflineMode && _offlineFiles.Count > 0)
         {
@@ -1849,7 +1872,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        TrackMapPanelControl.SetTrack(_sampleHistory);
+        TrackMapPanelControl.SetTrack(
+            liveSnapshot ?? _sampleHistory.Snapshot());
     }
 
 
@@ -1860,12 +1884,16 @@ public partial class MainWindow : Window
     private void RefreshPlot(
         PlotDefinition plot)
     {
+        RefreshPlot(plot, GetHistorySnapshot());
+    }
+
+
+    private void RefreshPlot(
+        PlotDefinition plot,
+        IReadOnlyList<VehicleSample> history)
+    {
         if (plot.WpfPlot is null)
             return;
-
-
-        var history =
-            GetHistorySnapshot();
 
 
         var selectedXSignal =
@@ -1936,22 +1964,55 @@ public partial class MainWindow : Window
 
 
         // ========================================================
-        // X 数据
+        // 可见窗口 + 降采样下标（各通道共用，保证 LastXs / LastSamples 对齐）
         // ========================================================
 
-        var xs =
-            new double[history.Count];
+        var autoX =
+            XAxisAutoScaleCheckBox.IsChecked == true;
 
+        double GetXAt(int index) =>
+            GetAxisValue(history[index], selectedXSignal);
 
-        for (var i = 0;
-             i < history.Count;
-             i++)
+        var (visStart, visEnd) =
+            PlotDownsampler.FindVisibleIndexRange(
+                history.Count,
+                GetXAt,
+                previousLimits.Left,
+                previousLimits.Right,
+                useFullRange: autoX);
+
+        if (visEnd - visStart < 2)
         {
-            xs[i] =
-                GetAxisValue(
-                    history[i],
-                    selectedXSignal);
+            visStart = 0;
+            visEnd = history.Count;
         }
+
+        // min-max 按首通道 Y 选点，保留尖峰；其余通道复用同一批下标
+        var primaryChannelId = selectedChannels[0].ChannelId;
+        double GetPrimaryY(int index) =>
+            GetSignalValue(history[index], primaryChannelId);
+
+        var indices =
+            PlotDownsampler.BuildDownsampleIndices(
+                visStart,
+                visEnd,
+                GetPrimaryY,
+                PlotDownsampler.MaxPlotPoints);
+
+        if (indices.Length < 2)
+        {
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            ApplyPlotOverlays(plot);
+            RefreshPlotTitle(plot);
+            plot.WpfPlot.Refresh();
+            return;
+        }
+
+        var xs =
+            PlotDownsampler.ExtractXs(
+                history,
+                indices,
+                sample => GetAxisValue(sample, selectedXSignal));
 
 
         // ========================================================
@@ -1996,15 +2057,18 @@ public partial class MainWindow : Window
                 }
             }
 
-            // 光标仍对齐主文件（第一份）
+            // 光标 / Dashboard 对齐主文件（当前选中），与降采样后的 LastXs 一致
             plot.LastXs = xs;
-            plot.LastSamples = history.ToArray();
+            plot.LastSamples =
+                PlotDownsampler.ExtractSamples(history, indices);
             plot.LastChannelSeries.Clear();
             foreach (var channel in selectedChannels)
             {
-                var ys = new double[history.Count];
-                for (var i = 0; i < history.Count; i++)
-                    ys[i] = GetSignalValue(history[i], channel.ChannelId);
+                var ys =
+                    PlotDownsampler.ExtractYs(
+                        history,
+                        indices,
+                        sample => GetSignalValue(sample, channel.ChannelId));
                 plot.LastChannelSeries.Add((channel.ChannelId, ys));
             }
         }
@@ -2013,40 +2077,30 @@ public partial class MainWindow : Window
             foreach (var channel in selectedChannels)
             {
                 var ys =
-                    new double[history.Count];
+                    PlotDownsampler.ExtractYs(
+                        history,
+                        indices,
+                        sample => GetSignalValue(sample, channel.ChannelId));
 
-
-                for (var i = 0;
-                     i < history.Count;
-                     i++)
+                for (var i = 0; i < ys.Length; i++)
                 {
-                    var value =
-                        GetSignalValue(
-                            history[i],
-                            channel.ChannelId);
-
-                    ys[i] = value;
-
+                    var value = ys[i];
 
                     if (value < minY)
                         minY = value;
 
-
                     if (value > maxY)
                         maxY = value;
                 }
-
 
                 var scatter =
                     scottPlot.Add.Scatter(
                         xs,
                         ys);
 
-
                 scatter.LegendText =
                     $"{GetSignalDisplayName(channel.ChannelId)} " +
                     $"({GetSignalUnit(channel.ChannelId)})";
-
 
                 scatter.LineWidth = 1;
                 scatter.MarkerSize = 0;
@@ -2055,9 +2109,10 @@ public partial class MainWindow : Window
                     (channel.ChannelId, ys));
             }
 
-
             plot.LastXs = xs;
-            plot.LastSamples = history.ToArray();
+            // 与降采样后的 LastXs 对齐，供光标 / Dashboard 冻结；非全量历史。
+            plot.LastSamples =
+                PlotDownsampler.ExtractSamples(history, indices);
         }
 
 
@@ -2105,6 +2160,7 @@ public partial class MainWindow : Window
 
         plot.WpfPlot.Refresh();
     }
+
 
 
     // ============================================================
@@ -2374,7 +2430,11 @@ public partial class MainWindow : Window
 
         // 手势结束立刻锁定当前轴范围，避免下一帧 Refresh 读到被冲掉的 GetLimits
         if (_activeManualAxisGestures == 0)
+        {
             CaptureLockedLimitsFromPlots();
+            // 视野变了但样本指纹可能未变：强制下一拍按新可见窗降采样
+            _forcePlotRebuild = true;
+        }
     }
 
 
@@ -2438,6 +2498,8 @@ public partial class MainWindow : Window
                 plot.LockedLimits = limits;
             }
         }
+
+        _forcePlotRebuild = true;
     }
 
 
@@ -2459,7 +2521,7 @@ public partial class MainWindow : Window
                 _sampleHistory.AddRange(file.Samples);
                 _latestSample = file.Samples.Count > 0 ? file.Samples[^1] : null;
                 RebuildOfflineFileChips();
-                RefreshAllPlots();
+                RefreshAllPlots(force: true);
             }
         }
 
@@ -2892,9 +2954,9 @@ public partial class MainWindow : Window
     // 获取历史数据
     // ============================================================
 
-    private List<VehicleSample> GetHistorySnapshot()
+    private IReadOnlyList<VehicleSample> GetHistorySnapshot()
     {
-        return _sampleHistory.ToList();
+        return _sampleHistory.Snapshot();
     }
 
 
@@ -2965,7 +3027,7 @@ public partial class MainWindow : Window
 
         RefreshPlotContainer();
 
-        RefreshAllPlots();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -3001,8 +3063,8 @@ public partial class MainWindow : Window
 
         // 先探测连接；只有真正 Connected 才替换当前数据源。
         // 失败时保留原来的 UDP/GSpot，避免「假成功」把可用源切掉。
-        var previous = _dataSource;
-        var next = new GSpotDataSource(_dataBus, options);
+        var previous = _dataSourceSession.Current;
+        var next = _dataSourceSession.CreateGSpot(options);
         GSpotButton.IsEnabled = false;
         UdpSourceButton.IsEnabled = false;
 
@@ -3011,7 +3073,7 @@ public partial class MainWindow : Window
             await next.StartAsync();
 
             // StartAsync 立即返回；必须等到 Connected，或首轮失败进入 Reconnecting。
-            var connected = await WaitForDataSourceConnectedAsync(
+            var connected = await DataSourceSession.WaitForConnectedAsync(
                 next,
                 TimeSpan.FromSeconds(20));
 
@@ -3044,20 +3106,8 @@ public partial class MainWindow : Window
             }
 
             // 连接成功：再停旧源、提交切换
-            _dataSource = null;
-            if (previous is not null)
-            {
-                try
-                {
-                    await previous.StopAsync();
-                }
-                catch
-                {
-                    try { previous.Dispose(); } catch { /* ignore */ }
-                }
-            }
-
-            _dataSource = next;
+            await _dataSourceSession.CommitConnectedAsync(previous, next);
+            EnterLiveSourceMode();
             GSpotButton.Content = "GSpot●";
 
             MessageBox.Show(
@@ -3107,7 +3157,7 @@ public partial class MainWindow : Window
         {
             // 已是 UDP 且正在监听：提示即可。
             // Faulted（例如端口占用）时允许原地重试 StartAsync。
-            if (_dataSource is UdpReceiver existingUdp)
+            if (_dataSourceSession.Current is UdpReceiver existingUdp)
             {
                 if (existingUdp.State == DataSourceState.Connected)
                 {
@@ -3123,6 +3173,7 @@ public partial class MainWindow : Window
                 try
                 {
                     await existingUdp.StartAsync();
+                    EnterLiveSourceMode();
                     GSpotButton.Content = "GSpot…";
                     MessageBox.Show(
                         this,
@@ -3147,7 +3198,7 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var next = new UdpReceiver(_dataBus);
+            var next = _dataSourceSession.CreateUdpReceiver();
             await SwitchDataSourceAsync(next);
             GSpotButton.Content = "GSpot…";
         }
@@ -3164,54 +3215,18 @@ public partial class MainWindow : Window
 
     private async Task SwitchDataSourceAsync(IDataSource next)
     {
-        var old = _dataSource;
-        _dataSource = null;
-
-        if (old is not null)
-        {
-            try
-            {
-                await old.StopAsync();
-            }
-            catch
-            {
-                try { old.Dispose(); } catch { /* ignore */ }
-            }
-        }
-
-        _dataSource = next;
-        await next.StartAsync();
+        await _dataSourceSession.SwitchAsync(next);
+        EnterLiveSourceMode();
     }
 
-    private static async Task<bool> WaitForDataSourceConnectedAsync(
-        IDataSource source,
-        TimeSpan timeout)
+    /// <summary>
+    /// 切回 UDP / GSpot 等实时源：恢复通道目录，并允许消费循环再写历史。
+    /// </summary>
+    private void EnterLiveSourceMode()
     {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            if (source.State == DataSourceState.Connected)
-                return true;
-
-            if (source.State == DataSourceState.Faulted)
-                return false;
-
-            // Reconnecting 且已有 LastError：首轮已失败，不必空等满超时
-            if (source is GSpotDataSource gspot &&
-                source.State == DataSourceState.Reconnecting &&
-                !string.IsNullOrWhiteSpace(gspot.LastError))
-            {
-                // 再给一次瞬间机会，避免刚写下 LastError 时误判
-                await Task.Delay(400);
-                if (source.State == DataSourceState.Connected)
-                    return true;
-                return false;
-            }
-
-            await Task.Delay(200);
-        }
-
-        return source.State == DataSourceState.Connected;
+        _historyOfflineMode = false;
+        ChannelRegistry.Instance.SetLiveCore();
+        RefreshChannelSelectorsFromRegistry();
     }
 
     /// <summary>
@@ -3537,7 +3552,7 @@ public partial class MainWindow : Window
     private void UpdateNetworkDisplay()
     {
         var source =
-            _dataSource;
+            _dataSourceSession.Current;
 
         if (source is null)
         {
@@ -3561,8 +3576,26 @@ public partial class MainWindow : Window
         ValidPacketsText.Text =
             stats.Valid.ToString();
 
-        LostPacketsText.Text =
-            stats.Lost.ToString();
+        var recordDrops = _recordingSession.DroppedSamples;
+        var busDrops = _dataBus.DroppedPublishCount;
+
+        if (recordDrops > 0)
+        {
+            LostPacketsText.Text =
+                $"{stats.Lost}+R{recordDrops}";
+            LostPacketsText.ToolTip =
+                $"网络丢包 {stats.Lost}；录制队列丢样 {recordDrops}" +
+                (busDrops > 0 ? $"；总线 TryPublish 失败 {busDrops}" : "");
+        }
+        else
+        {
+            LostPacketsText.Text =
+                stats.Lost.ToString();
+            LostPacketsText.ToolTip =
+                busDrops > 0
+                    ? $"总线 TryPublish 失败 {busDrops}"
+                    : null;
+        }
 
         OutOfOrderPacketsText.Text =
             stats.OutOfOrder.ToString();
@@ -3596,7 +3629,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (_dataSource is null)
+        if (_dataSourceSession.Current is null)
         {
             if (ConnectionStatusText is not null)
             {
@@ -3617,7 +3650,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        UpdateConnectionStatusUi(_dataSource);
+        UpdateConnectionStatusUi(_dataSourceSession.Current);
     }
 
     private void UpdateConnectionStatusUi(IDataSource source)
@@ -3734,36 +3767,24 @@ public partial class MainWindow : Window
                 _latestSample =
                     sample;
 
-
-                _sampleHistory.Add(
-                    sample);
-
-
-                if (_sampleHistory.Count >
-                    MaxHistorySamples)
+                // 离线 VBO 回放时不把实时样本写入历史。
+                if (!_historyOfflineMode)
                 {
-                    _sampleHistory.RemoveAt(0);
+                    _sampleHistory.Add(sample);
                 }
-
 
                 Interlocked.Increment(
                     ref _sampleCount);
 
 
-                // 只有正在录制时才写入文件。
+                // 只有正在录制时才写入文件（RecordingSession）。
                 //
                 // 暂停时刻意让"经过时间"按真实时间继续走：
                 // VboRecorder 内部以第一条数据为原点，
                 // 恢复后第一行的 Elapsed_time 会自然跳过暂停时长。
-                if (_recordingState ==
-                    RecordingState.Recording)
-                {
-                    _recordingStartTimestamp ??=
-                        sample.Timestamp;
-
-                    _recorder?.TryWrite(
-                        sample);
-                }
+                // TryWrite 失败会计入 DroppedSamples，
+                // 并由 UpdateNetworkDisplay 在 Lost 区展示。
+                _recordingSession.TryWriteIfRecording(sample);
             }
         }
     }
@@ -3801,20 +3822,19 @@ public partial class MainWindow : Window
         // 关闭时由 MainWindow_Closed 调用 StopAsync / Dispose。
         // ========================================================
 
-        _dataSource =
-            new UdpReceiver(
-                _dataBus);
+        var defaultUdp =
+            _dataSourceSession.CreateUdpReceiver();
+        _dataSourceSession.SetCurrent(defaultUdp);
 
         try
         {
-            await _dataSource.StartAsync();
+            await defaultUdp.StartAsync();
         }
         catch (Exception ex)
         {
             // 端口占用等绑定失败：弹窗提示，窗口继续可用（可切 GSpot 或稍后点 UDP 重试）。
-            var detail = _dataSource is UdpReceiver udp &&
-                         !string.IsNullOrWhiteSpace(udp.LastError)
-                ? udp.LastError
+            var detail = !string.IsNullOrWhiteSpace(defaultUdp.LastError)
+                ? defaultUdp.LastError
                 : ex.Message;
 
             MessageBox.Show(
@@ -3894,8 +3914,7 @@ public partial class MainWindow : Window
 
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
-        _dataSource?.Dispose();
-        _dataSource = null;
+        _dataSourceSession.Dispose();
 
 
         _dataBus.Complete();
@@ -3914,7 +3933,7 @@ public partial class MainWindow : Window
         // 释放资源
         // ========================================================
 
-        _recorder?.Dispose();
+        _recordingSession.Dispose();
 
 
         _udpSender?.Dispose();
