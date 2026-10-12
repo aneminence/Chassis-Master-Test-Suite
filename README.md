@@ -6,17 +6,23 @@
 
 ---
 
-## 最近更新（2026-10-10）
+## 最近更新（2026-10-12）
+
+### KML/KMZ 导入（`feature/kml-import`，Phase 1）
+- **Offline Open** 支持 `*.vbo;*.kml;*.kmz`；KML/KMZ 轨迹叠加到 Track Map（可与 VBO 等多轨叠画）。
+- 解析 **gx:Track**（含两步路：coords 后 when + `GxTrackExtendedData`）与基础 **LineString**（仅画线、无时间）。
+- 两步路 ExtendedData 速度单位为 **m/s**，导入时 ×3.6 写入 `SpeedKph`（手机轨迹，非 VBOX 多普勒速度）。
 
 ### 外观 / 语言 / 在线地图（`feature/map-i18n-theme`）
-- **语言**：顶部 `Appearance` → Language，中文 / English 运行时切换并写入 `%LocalAppData%\CMTS\app-preferences.json`。
-- **主题**：暗黑 / 明亮；自定义配色（强调色 / 窗口与面板背景），持久化。
+- **语言**：顶栏右侧 Language 菜单，中文 / English 运行时切换并写入 `%LocalAppData%\CMTS\app-preferences.json`。
+- **主题**：顶栏右侧 Theme 菜单 — 暗黑 / 明亮；自定义配色仍为占位，偏好持久化。
 - **在线底图**：Track Map 工具栏 `Basemap` 开关 + 图源下拉（OSM / OpenTopo / Esri 影像·街道·地形 / Carto 浅·深 / 自定义 XYZ）；瓦片画在轨迹与 Gate **之下**；磁盘缓存 `map-tiles/`。商业图源（谷歌/高德等）请用自定义 XYZ 自行填入合法地址。
 
 ### 外壳与工作区
-- **顶部栏（VBTS 风格）**：`Layout` 分区示意菜单可单独开关 Dashboard / Test Results / Map / Chart（**无 Video**），并带 Reset；`Load` 打开 VBO；`Online` / `Offline` 切换线上线下；`Clear` 清空已打开文件；Files 芯片**始终展开**不折叠。
+- **顶部栏（VBTS 风格）**：`Layout` 分区示意菜单可单独开关 Dashboard / Test Results / Map / Chart（**无 Video**），并带 Reset；`Load` 打开 VBO/KML/KMZ；`Online` / `Offline` 切换线上线下；`Clear` 清空已打开文件；Files 芯片**始终展开**不折叠。
+- **布局**：关闭 Test Results 时 Map 并到 Dashboard 旁，水平分割条仍可左右拖（中间不留空列）。
 - **已删除**顶部 Dashboard / Data / Analysis / Replay / Settings 导航行（无实际用途）。
-- **会话记忆**：启动自动恢复上次未关闭的 VBO、已导入 `.vbts` 门点、Test Results 条件设置、Maths 通道。
+- **会话记忆**：启动自动恢复上次未关闭的 VBO、已导入 `.vbts` 门点、Test Results 条件设置、Maths 通道、Test Curve 布局等。
 
 ### Dashboard（可定制）
 - 可 **Add Gauge / Reset**；表盘可拖动、缩放、删除；点标题选 **Live 通道** 或 **Test Results**（含 Pass 实测值）。
@@ -36,12 +42,18 @@
 ### Track Map / Gate / `.vbts`
 - 底轨加粗；每扇门独立颜色，**左上角 Gates 图例**（与右上角轨迹图例分离）。
 - 工具栏 Add / 下拉切换 / 改宽度 / Rename / Delete；地图可点选门段。
-- **Import** 可从 VBTS 工程 `.vbts` 导入门（分→度、航向校正）；Export `.spl` 仍为占位。
+- **Import** 可从 VBTS 工程 `.vbts` 导入门（分→度、航向校正）；门配置优先 `.vbts`，Gate `.spl` 已明确不做（Export `.spl` 仍为占位）。
+- **KML/KMZ**（Phase 1）：Offline 打开后叠画到地图；多文件可叠加。
 
 ### Maths / Measure
 - **Maths Channels…** 对话框：增删、公式编辑（Channels / fx 插入）、名称与单位；通道可供曲线 / Custom / Dashboard 使用（基础四则；累计/积分未做）。
 - 曲线拖选 X 区间 → 左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除。
 
+
+### Test Curve UX
+- 滚轮默认**滚动**曲线区；点击聚焦后才用滚轮缩放。
+- `+ Channel` 右侧为通道芯片；各 Plot **高度可拖拽**调整并记忆。
+- 多 Plot **黄色光标联动**（与 Dashboard / Track Map 同步）。
 ---
 
 ## 设计理念
@@ -77,7 +89,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
      VboRecorder        ScottPlot 曲线      Dashboard / Track Map
      (可选录制)         + 光标 / Measure     + Test Results / Gate
 
-离线：VboReader ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
+离线：VboReader / KmlTrackImporter ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
 分析：Analysis（SpeedToSpeed / GateRun / Maths）──► Test Results 表 + 区间标注
 ```
 
@@ -98,7 +110,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 │ CMTS  Layout│Appearance│Load│Online│Offline│Clear  [●][■] Elapsed     │  顶部栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
 │ Dashboard        │ Test Results        │ Track Map                    │
-│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS 轨迹 · Gate · .vbts 导入 │
+│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS/KML 轨迹 · Gate · .vbts │
 │ Live / Test 绑定 │ Gate · Maths · CSV  │ run 高亮 · 左上 Gates 图例   │
 ├──────────────────┴─────────────────────┴──────────────────────────────┤
 │ [X Axis] [X Auto Scale] [+ Add Plot] [Reset]   Files 芯片（常显）     │
@@ -135,6 +147,7 @@ Chassis Master Test Suite/
 ├─ Analysis/
 │   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
 │   ├─ GateStore / GateRunEngine / GatePassCondition / VbtsGateImporter
+│   ├─ KmlTrackImporter（KML/KMZ → TrackMap）
 │   ├─ MathsChannelStore / MathsExpression / MathsEnricher
 │   └─ SelectionMeasure / SampleSource / AnnotatedTestRun
 ├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel
@@ -233,13 +246,14 @@ dotnet test "Chassis Master Test Suite.sln" -c Release
 bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 ```
 
-### 5. Offline / Load：打开 VBO
+### 5. Offline / Load：打开 VBO / KML / KMZ
 
 1. 点顶部 **Load**（或切到 **Offline** 后在离线页打开）。  
-2. 可打开多个 VBO；Files 芯片常显，曲线默认全部叠加。  
-3. 曲线 / Track Map / Dashboard 共用历史缓冲；点芯片 focus 某一文件。  
-4. **Clear** 清空已打开文件。  
-5. **注意**：打开 VBO 会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
+2. 对话框过滤：`*.vbo;*.kml;*.kmz`（也可只选 VBO 或只选 KML/KMZ）。  
+3. 可打开多个文件；Files 芯片常显；VBO 曲线默认全部叠加，KML/KMZ 叠画到 Track Map。  
+4. 曲线 / Track Map / Dashboard 共用历史缓冲；点芯片 focus 某一文件。  
+5. **Clear** 清空已打开文件。  
+6. **注意**：打开文件会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
 
 ### 6. 曲线交互
 
@@ -248,17 +262,21 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 | 横轴标签 | 同会话约 2h 内用**北京时间**；跨度更大时用各文件相对 **Elapsed (s)** |
 | **左键** 点击 / 拖动 | 竖向光标；Dashboard 冻结为该点 |
 | **中键** 拖动 | 平移视野（取消 Auto；对比模式同样可用） |
-| **右键** / 滚轮 | 缩放（取消 Auto） |
+| **滚轮**（未聚焦） | 默认滚动曲线区；**点击**曲线聚焦后滚轮才缩放 |
+| **右键** / 聚焦后滚轮 | 缩放（取消 Auto） |
 | **拖选 X 区间** | Measure：左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除 |
 | **X Auto Scale** | 勾选时随数据自动缩放；人手操作后取消勾选 |
 | Reset View | 恢复自动缩放视野 |
+| 多 Plot | `+ Channel` 右侧通道芯片；拖分割条改高度；黄色光标跨图联动 |
 
 ### 7. Track Map 与 Gate
 
-- 点击轨迹同步曲线光标与 Dashboard。  
-- **Add Gate** → 点轨迹放置；下拉切换、改宽度、Rename、Delete；地图点选高亮。  
-- **Import**：选择 `.vbts` 导入门（会确认是否替换现有门）。  
-- Compute 后的 run 段以加粗彩色轨迹显示；右上角为轨迹/文件图例，左上角为 Gates 图例。
+- 实时/离线轨迹同步曲线光标与 Dashboard。  
+- Offline 可叠加 **KML/KMZ** 轨迹（Phase 1：gx:Track / LineString；两步路速度 m/s→km/h）。  
+- **Add Gate** → 在轨迹上布置；下拉切换、改宽度、Rename、Delete；地图点选高亮。  
+- **Import**：选择 `.vbts` 导入门（会确认是否替换现有门；优先 `.vbts`，不用 `.spl`）。  
+- Compute 后的 run 段以加粗彩色轨迹显示；右上角为轨迹/文件图例，左上角为 Gates 图例。  
+- Layout 关掉 Test Results 后，Map 与 Dashboard 并排，仍可拖水平分割条。
 
 ### 8. Dashboard
 
@@ -288,8 +306,9 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 
 ### 11. 多 Plot
 
-- `+ Add Plot` 增加图；每图可改名、`Auto Y`、`+ Channel`、`Remove Plot`。  
-- `X Axis` 可选横轴信号（默认时间）。
+- `+ Add Plot` 增加图；每图可改名、`Auto Y`、`+ Channel`（通道芯片在右侧）、`Remove Plot`。  
+- 各图高度可拖拽调整并记忆；滚轮默认滚动，点击聚焦后再缩放。  
+- `X Axis` 可选横轴信号（默认时间）；多图黄色光标联动。
 
 ---
 
@@ -336,8 +355,11 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] Session 元数据写入 VBO `[SessionData]`  
 - [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）  
 - [x] 通道注册表（实时 vs 文件）  
-- [x] UI 主题（暗黑 / 明亮 / 自定义）+ 中英语言  
+- [x] UI 主题（暗黑 / 明亮 / 自定义占位）+ 中英语言（顶栏菜单）  
 - [x] Track Map 在线底图（可开关、多图源）  
+- [x] KML/KMZ 导入（Phase 1：gx:Track / LineString → TrackMap 叠画；两步路速度 m/s→km/h）  
+- [x] Layout：关 Test Results 后 Dashboard|Map 并排可拖  
+- [x] Test Curve UX：滚轮滚动优先、点击聚焦缩放、通道芯片、可调高度、光标联动  
 
 ---
 
@@ -345,10 +367,12 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 与用户确认后的规划一致（不做 / 砍掉的项已从路线图移除）。
 
-**已完成（本分支）**
+**已完成（本分支 / 近期）**
 - [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）  
 - [x] 界面语言中/英  
-- [x] 皮肤：暗黑 / 明亮 + 自定义配色  
+- [x] 皮肤：暗黑 / 明亮 + 自定义配色（占位）  
+- [x] KML/KMZ Phase 1（Offline 叠画 TrackMap）  
+- [x] Layout 关 Test Results 后 Dashboard/Map 并排  
 
 **延后**
 - [ ] Settings 正式页  
@@ -386,7 +410,7 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 Minimal xUnit project: `ChassisMasterTestSuite.Tests`（`net10.0`，stock xUnit）。
 
-覆盖纯逻辑（经 linked 生产源）：历史缓冲、DataBus、降采样、UDP 序列化、VBO 经度往返、GSpot `pos`、Maths、Gate/`.vbts` 导入、SessionMemory 等——无 WPF / 无实网。
+覆盖纯逻辑（经 linked 生产源）：历史缓冲、DataBus、降采样、UDP 序列化、VBO 经度往返、GSpot `pos`、Maths、Gate/`.vbts` 导入、KML/KMZ（含两步路速度换算）、SessionMemory 等——无 WPF / 无实网。
 
 ```bash
 dotnet test "Chassis Master Test Suite.sln" -c Release
