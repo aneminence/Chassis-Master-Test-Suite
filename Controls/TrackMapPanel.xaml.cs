@@ -235,10 +235,10 @@ public partial class TrackMapPanel : UserControl
         _wpfPlot.UserInputProcessor.RemoveAll<
             ScottPlot.Interactivity.UserActionResponses.SingleClickAutoscale>();
 
-        plot.RenderManager.RenderFinished += (_, _) =>
+        plot.RenderManager.RenderFinished += (_, render) =>
         {
             UpdateGridOverlay();
-            _tileLayer?.Invalidate();
+            _tileLayer?.OnRenderFinished(render);
         };
 
         _wpfPlot.PreviewMouseMove += WpfPlot_PreviewMouseMove;

@@ -1,4 +1,5 @@
 <Solution>
   <Project Path="Chassis Master Test Suite.csproj" />
   <Project Path="ChassisMasterTestSuite.Tests/ChassisMasterTestSuite.Tests.csproj" />
+  <Project Path="ChassisMasterTestSuite.Tests/Rendering/ChassisMasterTestSuite.RenderingTests.csproj" />
 </Solution>

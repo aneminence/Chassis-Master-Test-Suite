@@ -9,37 +9,55 @@ using Chassis_Master_Test_Suite.Themes;
 namespace Chassis_Master_Test_Suite.Map;
 
 /// <summary>
-/// Draws XYZ basemap tiles onto a Canvas, aligned to TrackMapPanel's local-meter plot.
-/// Place the canvas UNDER the ScottPlot host. Call <see cref="Invalidate"/> after pan/zoom/render.
+/// Draws XYZ tiles below the track. Placement follows every completed plot frame;
+/// only fetching a new set of tiles is debounced.
 /// </summary>
 public sealed class MapTileLayerController : IDisposable
 {
     private readonly Canvas _canvas;
     private readonly Func<ScottPlot.WPF.WpfPlot?> _plotGetter;
     private readonly Func<TrackProjection?> _projectionGetter;
-    private readonly MapTileCache _cache = new();
-    private readonly Dictionary<string, Image> _images = new(StringComparer.Ordinal);
+    private readonly MapTileCache _cache;
+    private readonly Dictionary<TileKey, Image> _images = new();
     private CancellationTokenSource? _cts;
     private int _generation;
     private bool _enabled;
+    private bool _disposed;
     private string _sourceId = MapTileSources.DefaultId;
     private string _urlTemplate = MapTileSources.Presets[0].UrlTemplate;
     private int _maxZoom = 19;
     private double _opacity = 0.92;
-    private string _lastLayoutKey = "";
+    private MapViewport? _viewport;
+    private TileCoverage? _requestedCoverage;
+    private TileCoverage? _pendingCoverage;
     private int _debounceGeneration;
     private const int DebounceMs = 120;
+
+    private readonly record struct TileKey(int Zoom, int X, int Y);
+    private readonly record struct TileCoverage(int Zoom, int X0, int Y0, int X1, int Y1);
 
     public MapTileLayerController(
         Canvas canvas,
         Func<ScottPlot.WPF.WpfPlot?> plotGetter,
         Func<TrackProjection?> projectionGetter)
+        : this(canvas, plotGetter, projectionGetter, new MapTileCache())
+    {
+    }
+
+    internal MapTileLayerController(
+        Canvas canvas,
+        Func<ScottPlot.WPF.WpfPlot?> plotGetter,
+        Func<TrackProjection?> projectionGetter,
+        MapTileCache cache)
     {
         _canvas = canvas;
         _plotGetter = plotGetter;
         _projectionGetter = projectionGetter;
+        _cache = cache;
         _canvas.IsHitTestVisible = false;
         _canvas.ClipToBounds = true;
+        _canvas.UseLayoutRounding = false;
+        _canvas.SnapsToDevicePixels = false;
     }
 
     public bool Enabled
@@ -47,361 +65,267 @@ public sealed class MapTileLayerController : IDisposable
         get => _enabled;
         set
         {
-            if (_enabled == value)
+            if (_disposed || _enabled == value)
                 return;
             _enabled = value;
             if (!_enabled)
-            {
-                Cancel();
-                _canvas.Children.Clear();
-                _images.Clear();
-                _lastLayoutKey = "";
-            }
+                ClearTiles();
             else
-            {
                 Invalidate(force: true);
-            }
         }
     }
 
     public void ApplyPreferences()
     {
         var prefs = AppearanceService.Preferences.Map;
-        var src = AppearanceService.CurrentMapSource();
-        _sourceId = src.Id;
-        _urlTemplate = src.UrlTemplate;
-        _maxZoom = src.MaxZoom;
         _opacity = prefs.Opacity;
+        SetSourceCore(AppearanceService.CurrentMapSource());
         Enabled = prefs.BasemapEnabled;
-        if (_enabled)
-            Invalidate(force: true);
+        Invalidate(force: true);
     }
 
     public void SetSource(MapTileSource source)
     {
+        SetSourceCore(source);
+        Invalidate(force: true);
+    }
+
+    private void SetSourceCore(MapTileSource source)
+    {
+        if (_sourceId != source.Id || _urlTemplate != source.UrlTemplate || _maxZoom != source.MaxZoom)
+            ClearTiles();
         _sourceId = source.Id;
         _urlTemplate = source.UrlTemplate;
         _maxZoom = source.MaxZoom;
-        if (_enabled)
-            Invalidate(force: true);
     }
 
-    public void Invalidate(bool force = false)
+    /// <summary>Called with the completed frame, never with pending axis limits.</summary>
+    public void OnRenderFinished(ScottPlot.RenderDetails render)
     {
-        if (!_enabled)
-            return;
-
-        if (!force)
-        {
-            var token = Interlocked.Increment(ref _debounceGeneration);
-            _ = DebouncedInvalidateAsync(token);
-            return;
-        }
-
-        InvalidateCore(force: true);
-    }
-
-    private async Task DebouncedInvalidateAsync(int token)
-    {
-        try
-        {
-            await Task.Delay(DebounceMs).ConfigureAwait(true);
-        }
-        catch
-        {
-            return;
-        }
-
-        if (token != _debounceGeneration)
-            return;
-
-        if (!_canvas.Dispatcher.CheckAccess())
-        {
-            await _canvas.Dispatcher.InvokeAsync(() =>
-            {
-                if (token == _debounceGeneration)
-                    InvalidateCore(force: false);
-            });
-            return;
-        }
-
-        InvalidateCore(force: false);
-    }
-
-    private void InvalidateCore(bool force)
-    {
-        if (!_enabled)
+        if (_disposed)
             return;
 
         var plot = _plotGetter();
         var projection = _projectionGetter();
-        if (plot is null || projection is null)
+        _viewport = plot is null || projection is null
+            ? null
+            : MapViewport.Capture(plot, _canvas, projection, render);
+        if (_viewport is null)
+        {
+            ClearTiles();
+            return;
+        }
+
+        if (_enabled)
+        {
+            RepositionTiles();
+            ScheduleTiles(force: false);
+        }
+    }
+
+    public void Invalidate(bool force = false)
+    {
+        if (!_enabled || _disposed)
             return;
 
-        var width = _canvas.ActualWidth;
-        var height = _canvas.ActualHeight;
-        if (width < 8 || height < 8)
+        // Loading a different track may change the projection before its first
+        // frame. Do not combine that new origin with the previous frame's axes.
+        if (_viewport is null || !ReferenceEquals(_viewport.Projection, _projectionGetter()))
+        {
+            ClearTiles();
+            _plotGetter()?.Refresh();
             return;
+        }
 
-        ScottPlot.AxisLimits limits;
+        RepositionTiles();
+        ScheduleTiles(force);
+    }
+
+    private void RepositionTiles()
+    {
+        if (_viewport is null)
+            return;
+        if (_canvas.Clip is not RectangleGeometry clip || clip.Rect != _viewport.DataArea)
+            _canvas.Clip = new RectangleGeometry(_viewport.DataArea);
+        foreach (var (key, img) in _images)
+            PlaceImage(img, key, _viewport);
+    }
+
+    private void ScheduleTiles(bool force)
+    {
+        if (_viewport is null)
+            return;
+        var coverage = GetCoverage(_viewport);
+        if (coverage == _requestedCoverage)
+        {
+            // Returning to the currently loaded area cancels a pending request.
+            _pendingCoverage = null;
+            _debounceGeneration++;
+            return;
+        }
+
+        if (!force && coverage == _pendingCoverage)
+            return; // repeated renders must not postpone downloads indefinitely
+
+        _pendingCoverage = coverage;
+        var token = ++_debounceGeneration;
+        if (force)
+            UpdateTiles(coverage);
+        else
+            _ = DebouncedLoadAsync(token, coverage);
+    }
+
+    private async Task DebouncedLoadAsync(int token, TileCoverage coverage)
+    {
+        await Task.Delay(DebounceMs).ConfigureAwait(false);
+        if (_canvas.Dispatcher.HasShutdownStarted)
+            return;
         try
         {
-            limits = plot.Plot.Axes.GetLimits();
+            await _canvas.Dispatcher.InvokeAsync(() =>
+            {
+                if (!_disposed && _enabled && token == _debounceGeneration)
+                    UpdateTiles(coverage);
+            });
         }
-        catch
+        catch (TaskCanceledException)
         {
-            return;
+            // The dispatcher may shut down between the check and the queued call.
         }
+    }
 
-        var spanX = limits.Right - limits.Left;
-        if (spanX <= 0 || double.IsNaN(spanX))
-            return;
+    private TileCoverage GetCoverage(MapViewport viewport)
+    {
+        var limits = viewport.Limits;
+        var projection = viewport.Projection;
+        var (north, west) = projection.ToLatLon(limits.Left, limits.Top);
+        var (south, east) = projection.ToLatLon(limits.Right, limits.Bottom);
+        var metersPerPixel = (limits.Right - limits.Left) / viewport.RenderDataWidth;
+        var zoom = Math.Clamp(MapTileMath.SuggestZoom(metersPerPixel, projection.OriginLatitude), 1, _maxZoom);
 
-        var metersPerPixel = spanX / width;
-        var (latC, lonC) = projection.ToLatLon(
-            (limits.Left + limits.Right) / 2.0,
-            (limits.Bottom + limits.Top) / 2.0);
-
-        var zoom = MapTileMath.SuggestZoom(metersPerPixel, latC);
-        zoom = Math.Clamp(zoom, 1, _maxZoom);
-
-        // Viewport corners in lat/lon
-        var (latNW, lonNW) = projection.ToLatLon(limits.Left, limits.Top);
-        var (latSE, lonSE) = projection.ToLatLon(limits.Right, limits.Bottom);
-        var (latNE, lonNE) = projection.ToLatLon(limits.Right, limits.Top);
-        var (latSW, lonSW) = projection.ToLatLon(limits.Left, limits.Bottom);
-
-        var minLat = Math.Min(Math.Min(latNW, latNE), Math.Min(latSW, latSE));
-        var maxLat = Math.Max(Math.Max(latNW, latNE), Math.Max(latSW, latSE));
-        var minLon = Math.Min(Math.Min(lonNW, lonNE), Math.Min(lonSW, lonSE));
-        var maxLon = Math.Max(Math.Max(lonNW, lonNE), Math.Max(lonSW, lonSE));
-
-        var (x0, y0) = MapTileMath.LatLonToTile(maxLat, minLon, zoom);
-        var (x1, y1) = MapTileMath.LatLonToTile(minLat, maxLon, zoom);
-        if (x1 < x0) (x0, x1) = (x1, x0);
-        if (y1 < y0) (y0, y1) = (y1, y0);
-
-        // Pad one tile
-        var n = 1 << zoom;
-        x0 = Math.Max(0, x0 - 1);
-        y0 = Math.Max(0, y0 - 1);
-        x1 = Math.Min(n - 1, x1 + 1);
-        y1 = Math.Min(n - 1, y1 + 1);
-
-        // Cap tile count for performance
-        var count = (x1 - x0 + 1) * (y1 - y0 + 1);
-        if (count > 64)
+        while (true)
         {
-            // Zoom out one level if too many tiles
-            zoom = Math.Max(1, zoom - 1);
-            (x0, y0) = MapTileMath.LatLonToTile(maxLat, minLon, zoom);
-            (x1, y1) = MapTileMath.LatLonToTile(minLat, maxLon, zoom);
+            var (x0, y0) = MapTileMath.LatLonToTile(north, west, zoom);
+            var (x1, y1) = MapTileMath.LatLonToTile(south, east, zoom);
             if (x1 < x0) (x0, x1) = (x1, x0);
             if (y1 < y0) (y0, y1) = (y1, y0);
-            n = 1 << zoom;
+            var n = 1 << zoom;
             x0 = Math.Max(0, x0 - 1);
             y0 = Math.Max(0, y0 - 1);
             x1 = Math.Min(n - 1, x1 + 1);
             y1 = Math.Min(n - 1, y1 + 1);
+            if ((long)(x1 - x0 + 1) * (y1 - y0 + 1) <= 64 || zoom == 1)
+                return new TileCoverage(zoom, x0, y0, x1, y1);
+            zoom--;
         }
+    }
 
-        var layoutKey =
-            $"{_sourceId}|{zoom}|{x0}:{y0}:{x1}:{y1}|{limits.Left:F1}:{limits.Right:F1}:{limits.Bottom:F1}:{limits.Top:F1}|{width:F0}x{height:F0}";
-        if (!force && layoutKey == _lastLayoutKey)
+    private void UpdateTiles(TileCoverage coverage)
+    {
+        if (_viewport is null)
             return;
-        _lastLayoutKey = layoutKey;
-
-        var gen = Interlocked.Increment(ref _generation);
+        _pendingCoverage = null;
+        _requestedCoverage = coverage;
+        var gen = ++_generation;
         Cancel();
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
 
-        // Reposition existing / schedule downloads
-        var needed = new HashSet<string>(StringComparer.Ordinal);
-        for (var x = x0; x <= x1; x++)
+        var needed = new HashSet<TileKey>();
+        for (var x = coverage.X0; x <= coverage.X1; x++)
         {
-            for (var y = y0; y <= y1; y++)
+            for (var y = coverage.Y0; y <= coverage.Y1; y++)
             {
-                var key = $"{zoom}/{x}/{y}";
+                var key = new TileKey(coverage.Zoom, x, y);
                 needed.Add(key);
-                PositionOrCreatePlaceholder(key, plot, projection, zoom, x, y);
-                _ = LoadTileAsync(gen, key, zoom, x, y, plot, projection, ct);
+                if (!_images.TryGetValue(key, out var img))
+                {
+                    img = new Image { Stretch = Stretch.Fill, IsHitTestVisible = false };
+                    _images[key] = img;
+                    _canvas.Children.Add(img);
+                }
+                PlaceImage(img, key, _viewport);
+                if (img.Source is null)
+                    _ = LoadTileAsync(gen, key, _sourceId, _urlTemplate, ct);
             }
         }
 
-        // Remove unused images
-        foreach (var key in _images.Keys.ToList())
+        foreach (var key in _images.Keys.Where(key => !needed.Contains(key)).ToArray())
         {
-            if (needed.Contains(key))
-                continue;
-            if (_images.TryGetValue(key, out var img))
-            {
-                _canvas.Children.Remove(img);
-                _images.Remove(key);
-            }
+            _canvas.Children.Remove(_images[key]);
+            _images.Remove(key);
         }
     }
 
-    private void PositionOrCreatePlaceholder(
-        string key,
-        ScottPlot.WPF.WpfPlot plot,
-        TrackProjection projection,
-        int z, int x, int y)
+    private void PlaceImage(Image img, TileKey key, MapViewport viewport)
     {
-        if (!_images.TryGetValue(key, out var img))
-        {
-            img = new Image
-            {
-                Stretch = Stretch.Fill,
-                Opacity = _opacity,
-                IsHitTestVisible = false
-            };
-            _images[key] = img;
-            _canvas.Children.Add(img);
-        }
-        else
-        {
-            img.Opacity = _opacity;
-        }
-
-        PlaceImage(img, plot, projection, z, x, y);
+        var rect = viewport.TileRectangle(key.Zoom, key.X, key.Y);
+        Canvas.SetLeft(img, rect.Left);
+        Canvas.SetTop(img, rect.Top);
+        img.Width = rect.Width;
+        img.Height = rect.Height;
+        img.Opacity = _opacity;
     }
 
-    private static void PlaceImage(
-        Image img,
-        ScottPlot.WPF.WpfPlot plot,
-        TrackProjection projection,
-        int z, int x, int y)
-    {
-        // Tile corners in local Web Mercator metres (same CRS as the trajectory).
-        var (west, north, east, south) = MapTileMath.TileMercatorBounds(x, y, z);
-        var wx0 = west - projection.OriginMercatorX;
-        var wyN = north - projection.OriginMercatorY;
-        var wx1 = east - projection.OriginMercatorX;
-        var wyS = south - projection.OriginMercatorY;
-
-        ScottPlot.PixelRect data;
-        ScottPlot.AxisLimits limits;
-        try
-        {
-            data = plot.Plot.RenderManager.LastRender.DataRect;
-            limits = plot.Plot.Axes.GetLimits();
-        }
-        catch
-        {
-            return;
-        }
-
-        // DataRect is in *unscaled* figure pixels (same space as WPF DIPs once
-        // Plot.ScaleFactor is divided out of mouse hits). Do NOT use GetPixel here:
-        // GetPixel multiplies by ScaleFactor, and placing those values on a WPF Canvas
-        // makes the geographic error grow when zoomed out on high-DPI displays.
-        var spanX = limits.Right - limits.Left;
-        var spanY = limits.Top - limits.Bottom;
-        if (data.Width < 1 || data.Height < 1 || spanX <= 0 || spanY <= 0)
-            return;
-
-        var sx = data.Width / spanX;
-        var sy = data.Height / spanY;
-
-        // Screen Y grows downward; plot Y (northing) grows upward.
-        var left = data.Left + (wx0 - limits.Left) * sx;
-        var right = data.Left + (wx1 - limits.Left) * sx;
-        var top = data.Top + (limits.Top - wyN) * sy;
-        var bottom = data.Top + (limits.Top - wyS) * sy;
-
-        var w = Math.Abs(right - left);
-        var h = Math.Abs(bottom - top);
-        if (w < 1 || h < 1)
-            return;
-
-        left = Math.Min(left, right);
-        top = Math.Min(top, bottom);
-
-        // DataRect is relative to the plot render surface; offset into TileCanvas.
-        if (img.Parent is UIElement canvas)
-        {
-            try
-            {
-                var o = plot.TranslatePoint(new Point(0, 0), canvas);
-                left += o.X;
-                top += o.Y;
-            }
-            catch
-            {
-                // keep untranslated
-            }
-        }
-
-        Canvas.SetLeft(img, left);
-        Canvas.SetTop(img, top);
-        img.Width = w;
-        img.Height = h;
-    }
-
-    private async Task LoadTileAsync(
-        int gen,
-        string key,
-        int z, int x, int y,
-        ScottPlot.WPF.WpfPlot plot,
-        TrackProjection projection,
-        CancellationToken ct)
+    private async Task LoadTileAsync(int gen, TileKey key, string sourceId, string urlTemplate, CancellationToken ct)
     {
         try
         {
-            var bytes = await _cache.GetOrDownloadAsync(_sourceId, _urlTemplate, z, x, y, ct)
+            var bytes = await _cache.GetOrDownloadAsync(sourceId, urlTemplate, key.Zoom, key.X, key.Y, ct)
                 .ConfigureAwait(false);
-            if (bytes is null || ct.IsCancellationRequested || gen != _generation)
+            if (bytes is null || ct.IsCancellationRequested)
                 return;
 
             await _canvas.Dispatcher.InvokeAsync(() =>
             {
-                if (gen != _generation || !_images.TryGetValue(key, out var img))
+                if (_disposed || !_enabled || ct.IsCancellationRequested || gen != _generation ||
+                    !_images.TryGetValue(key, out var img) || _viewport is null)
                     return;
-                try
-                {
-                    using var ms = new MemoryStream(bytes);
-                    var bmp = new BitmapImage();
-                    bmp.BeginInit();
-                    bmp.CacheOption = BitmapCacheOption.OnLoad;
-                    bmp.StreamSource = ms;
-                    bmp.EndInit();
-                    bmp.Freeze();
-                    img.Source = bmp;
-                    PlaceImage(img, plot, projection, z, x, y);
-                }
-                catch
-                {
-                    // ignore decode errors
-                }
+
+                using var ms = new MemoryStream(bytes);
+                var bmp = new BitmapImage();
+                bmp.BeginInit();
+                bmp.CacheOption = BitmapCacheOption.OnLoad;
+                bmp.StreamSource = ms;
+                bmp.EndInit();
+                bmp.Freeze();
+                img.Source = bmp;
+                // Downloads only supply imagery. Position always uses the latest
+                // completed frame, including pans made while the request was in flight.
+                PlaceImage(img, key, _viewport);
             });
         }
         catch
         {
-            // ignore
+            // Missing/offline tiles and decode errors leave an empty placeholder.
         }
+    }
+
+    private void ClearTiles()
+    {
+        _generation++;
+        _debounceGeneration++;
+        Cancel();
+        _pendingCoverage = null;
+        _requestedCoverage = null;
+        _canvas.Children.Clear();
+        _images.Clear();
     }
 
     private void Cancel()
     {
-        try
-        {
-            _cts?.Cancel();
-            _cts?.Dispose();
-        }
-        catch
-        {
-            // ignore
-        }
-
+        _cts?.Cancel();
+        _cts?.Dispose();
         _cts = null;
     }
 
     public void Dispose()
     {
-        Cancel();
+        if (_disposed)
+            return;
+        _disposed = true;
+        _enabled = false;
+        ClearTiles();
         _cache.Dispose();
-        _canvas.Children.Clear();
-        _images.Clear();
     }
 }

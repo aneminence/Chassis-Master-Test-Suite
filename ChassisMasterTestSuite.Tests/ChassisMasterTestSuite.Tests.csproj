@@ -11,6 +11,7 @@
     <IsTestProject>true</IsTestProject>
     <RootNamespace>ChassisMasterTestSuite.Tests</RootNamespace>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Rendering/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
