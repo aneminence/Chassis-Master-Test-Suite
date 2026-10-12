@@ -26,7 +26,7 @@ public class KmlTrackImporterTests
         Assert.Equal(
             DateTimeOffset.Parse("2026-06-03T23:25:15Z"),
             first.TimeUtc);
-        Assert.Equal(7.95, first.SpeedKph!.Value, precision: 2);
+        Assert.Equal(28.62, first.SpeedKph!.Value, precision: 2); // 7.95 m/s * 3.6
         Assert.Equal(8.377493, first.AccuracyMeters!.Value, precision: 5);
 
         var last = track.Points[^1];
@@ -36,7 +36,7 @@ public class KmlTrackImporterTests
         Assert.Equal(
             DateTimeOffset.Parse("2026-06-04T08:36:03Z"),
             last.TimeUtc);
-        Assert.Equal(0.72, last.SpeedKph!.Value, precision: 2);
+        Assert.Equal(2.592, last.SpeedKph!.Value, precision: 3); // 0.72 m/s * 3.6
         Assert.Equal(6.980179, last.AccuracyMeters!.Value, precision: 5);
 
         Assert.Equal(5536, track.Points.Count(p => p.SpeedKph is not null));
@@ -99,8 +99,9 @@ public class KmlTrackImporterTests
     }
 
     [Fact]
-    public void ParseGxTrackExtendedData_SplitsSpeedAccuracyPairs()
+    public void ParseGxTrackExtendedData_SplitsSpeedAccuracyPairs_AsMetersPerSecond()
     {
+        // Raw parser keeps 2bulu units (m/s); Import converts to km/h for SpeedKph.
         var pairs = KmlTrackImporter.ParseGxTrackExtendedData(
             "7.95,8.377493;9.82,3.7900925;0.72,6.980179;");
         Assert.Equal(3, pairs.Count);

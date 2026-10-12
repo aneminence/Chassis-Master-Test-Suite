@@ -120,7 +120,7 @@ public static class KmlTrackImporter
     /// <summary>
     /// Convert a parsed track into VehicleSample rows for OfflineFileSet / TrackMap.
     /// Timestamps are Unix ms when TimeUtc is present; otherwise sequential 1 Hz.
-    /// Speed from GxTrackExtendedData is stored as velocity (phone track, not VBOX).
+    /// Speed from GxTrackExtendedData is stored as km/h after m/s->km/h (phone track, not VBOX).
     /// </summary>
     public static List<VehicleSample> ToVehicleSamples(KmlTrack track)
     {
@@ -211,7 +211,9 @@ public static class KmlTrackImporter
             double? acc = null;
             if (i < speeds.Count)
             {
-                speed = speeds[i].Speed;
+                // 2bulu GxTrackExtendedData stores speed in m/s (no unit metadata).
+                // Convert to km/h for SpeedKph; do not invent units for other KML formats.
+                speed = speeds[i].Speed is double mps ? mps * 3.6 : null;
                 acc = speeds[i].Acc;
             }
 
@@ -262,6 +264,10 @@ public static class KmlTrackImporter
         return points;
     }
 
+    /// <summary>
+    /// Parse 2bulu GxTrackExtendedData value: "speed,accuracy;...".
+    /// Speed values are returned as stored (m/s); caller converts to km/h for SpeedKph.
+    /// </summary>
     internal static List<(double? Speed, double? Acc)> ParseGxTrackExtendedData(string raw)
     {
         var list = new List<(double? Speed, double? Acc)>();
