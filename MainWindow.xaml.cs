@@ -440,6 +440,58 @@ public partial class MainWindow : Window
     ///
     /// 返回读到的样本数，失败时返回 0。
     /// </summary>
+
+    /// <summary>
+    /// Dispatch offline load by extension: VBO or KML/KMZ.
+    /// </summary>
+    private int LoadOfflineTrackFile(string filePath)
+    {
+        var ext = System.IO.Path.GetExtension(filePath);
+        if (ext.Equals(".kml", StringComparison.OrdinalIgnoreCase) ||
+            ext.Equals(".kmz", StringComparison.OrdinalIgnoreCase))
+            return LoadKmlFile(filePath);
+
+        return LoadVboFile(filePath);
+    }
+
+
+    /// <summary>
+    /// Phase-1 KML/KMZ import: parse track and overlay on TrackMap via OfflineFileSet.
+    /// </summary>
+    public int LoadKmlFile(string filePath)
+    {
+        try
+        {
+            var track = KmlTrackImporter.ImportFile(filePath);
+            var raw = KmlTrackImporter.ToVehicleSamples(track);
+            if (raw.Count == 0)
+                return 0;
+
+            var samples = SampleEnricher.EnrichAll(raw);
+            var columnNames = samples[0].Channels.Keys.ToList();
+            _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name);
+            ApplyOfflineDataset();
+
+            _lastLoadedChannelCount =
+                ChannelRegistry.Instance.AvailablePlotChannels.Count;
+
+            SaveSessionMemory();
+            return samples.Count;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"无法读取 KML/KMZ 文件：\n{filePath}\n\n{ex.Message}",
+                "KML",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+
+            return 0;
+        }
+    }
+
+
     public int LoadVboFile(string filePath)
     {
         try
@@ -758,9 +810,12 @@ public partial class MainWindow : Window
         var dialog =
             new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Open VBO file(s)",
+                Title = "Open VBO / KML file(s)",
                 Filter =
-                    "VBO files (*.vbo)|*.vbo|All files (*.*)|*.*",
+                    "Track files (*.vbo;*.kml;*.kmz)|*.vbo;*.kml;*.kmz|" +
+                    "VBO files (*.vbo)|*.vbo|" +
+                    "KML/KMZ files (*.kml;*.kmz)|*.kml;*.kmz|" +
+                    "All files (*.*)|*.*",
                 InitialDirectory = initialDir,
                 Multiselect = true
             };
@@ -770,7 +825,7 @@ public partial class MainWindow : Window
 
         var total = 0;
         foreach (var file in dialog.FileNames)
-            total += LoadVboFile(file);
+            total += LoadOfflineTrackFile(file);
 
         if (total <= 0)
             return;

@@ -75,7 +75,8 @@ public sealed class OfflineFileSet
     public OfflineFileEntry Add(
         string filePath,
         IReadOnlyList<VehicleSample> samples,
-        IReadOnlyList<string> columnNames)
+        IReadOnlyList<string> columnNames,
+        string? displayName = null)
     {
         var color = Palette[_colorIndex % Palette.Length];
         _colorIndex++;
@@ -84,7 +85,9 @@ public sealed class OfflineFileSet
         {
             Id = Guid.NewGuid(),
             FilePath = filePath,
-            DisplayName = System.IO.Path.GetFileName(filePath),
+            DisplayName = string.IsNullOrWhiteSpace(displayName)
+                ? System.IO.Path.GetFileName(filePath)
+                : displayName.Trim(),
             Samples = samples,
             ColumnNames = columnNames,
             ColorHex = color
