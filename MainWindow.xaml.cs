@@ -76,6 +76,11 @@ public partial class MainWindow : Window
     private double _layoutMapMin = 300;
     private double _layoutCurvesMin = 240;
     private double _layoutTopPanelsMin = 200;
+    /// <summary>
+    /// When Test Results is hidden, Map is temporarily parked in column 2 so
+    /// DashboardSplitter can resize Dashboard|Map (WPF splitters only touch neighbors).
+    /// </summary>
+    private bool _topPanelsRewiredDashMap;
 
     private static readonly GridLength LayoutDefaultDashboardWidth =
         new(1.2, GridUnitType.Star);
@@ -1238,6 +1243,20 @@ public partial class MainWindow : Window
         var map = _layoutShowMap;
         var chart = _layoutShowChart;
 
+        // If Map was parked in the Test Results column, persist its dragged width
+        // before we restore home columns / saved GridLengths.
+        if (_topPanelsRewiredDashMap && TestResultsColumn is not null)
+        {
+            if (TestResultsColumn.Width.Value > 0 || TestResultsColumn.Width.IsStar)
+                _layoutMapWidth = TestResultsColumn.Width;
+            if (TestResultsColumn.MinWidth > 0)
+                _layoutMapMin = TestResultsColumn.MinWidth;
+        }
+
+        if (TrackMapPanelControl is not null)
+            Grid.SetColumn(TrackMapPanelControl, 4);
+        _topPanelsRewiredDashMap = false;
+
         SetColumnPanelVisible(
             DashboardColumn,
             DashboardPanelControl,
@@ -1265,20 +1284,46 @@ public partial class MainWindow : Window
             fallbackWidth: LayoutDefaultMapWidth,
             fallbackMin: 300);
 
-        if (DashboardSplitter is not null)
+        // WPF GridSplitter only resizes adjacent columns. When the middle panel is
+        // hidden, park Map in column 2 so Dashboard|splitter|Map share width.
+        if (dash && map && !test &&
+            TrackMapPanelControl is not null &&
+            TestResultsColumn is not null &&
+            MapColumn is not null)
         {
-            DashboardSplitter.Visibility =
-                dash && (test || map)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
-        }
+            Grid.SetColumn(TrackMapPanelControl, 2);
 
-        if (MapSplitter is not null)
+            var mapWidth = MapColumn.Width;
+            var mapMin = MapColumn.MinWidth;
+            MapColumn.MinWidth = 0;
+            MapColumn.Width = new GridLength(0);
+            TestResultsColumn.Width = mapWidth;
+            TestResultsColumn.MinWidth = mapMin > 0 ? mapMin : 300;
+
+            if (DashboardSplitter is not null)
+                DashboardSplitter.Visibility = Visibility.Visible;
+            if (MapSplitter is not null)
+                MapSplitter.Visibility = Visibility.Collapsed;
+
+            _topPanelsRewiredDashMap = true;
+        }
+        else
         {
-            MapSplitter.Visibility =
-                map && (test || dash)
-                    ? Visibility.Visible
-                    : Visibility.Collapsed;
+            if (DashboardSplitter is not null)
+            {
+                DashboardSplitter.Visibility =
+                    dash && (test || map)
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+            }
+
+            if (MapSplitter is not null)
+            {
+                MapSplitter.Visibility =
+                    map && test
+                        ? Visibility.Visible
+                        : Visibility.Collapsed;
+            }
         }
 
         // Chart (curves row)
