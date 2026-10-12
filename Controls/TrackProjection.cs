@@ -171,17 +171,43 @@ public sealed class TrackProjection
         var medLat = lats[lats.Count / 2];
         var medLon = lons[lons.Count / 2];
 
-        // 粗略平面距离（与 TrackProjection 同量级）
         var mPerLon = MetersPerDegreeLatitude *
                       Math.Cos(medLat * Math.PI / 180.0);
-        var maxSq = maxDistanceMeters * maxDistanceMeters;
 
-        return valid.Where(s =>
+        static double DistSq(
+            VehicleSample s,
+            double medLat,
+            double medLon,
+            double mPerLon)
         {
             var dx = (s.Longitude - medLon) * mPerLon;
             var dy = (s.Latitude - medLat) * MetersPerDegreeLatitude;
-            return dx * dx + dy * dy <= maxSq;
-        }).ToList();
+            return dx * dx + dy * dy;
+        }
+
+        var maxSq = maxDistanceMeters * maxDistanceMeters;
+        var filtered = valid.Where(s =>
+            DistSq(s, medLat, medLon, mPerLon) <= maxSq).ToList();
+
+        // Long drives / bimodal routes (e.g. 两步路 day trips): a fixed 5 km
+        // radius around the coordinate median can wipe the track or keep only
+        // a tiny mid-segment. Widen to the 99th-percentile distance so true
+        // teleport spikes are still dropped while continuous routes remain.
+        if (filtered.Count < Math.Max(2, valid.Count / 2))
+        {
+            var dists = valid
+                .Select(s => Math.Sqrt(DistSq(s, medLat, medLon, mPerLon)))
+                .OrderBy(d => d)
+                .ToList();
+            var p99 = dists[(int)((dists.Count - 1) * 0.99)];
+            var limit = Math.Max(maxDistanceMeters, p99);
+            var limitSq = limit * limit;
+            filtered = valid.Where(s =>
+                DistSq(s, medLat, medLon, mPerLon) <= limitSq).ToList();
+        }
+
+        // Absolute fallback: never return an empty GPS set when valid points exist.
+        return filtered.Count >= 2 ? filtered : valid;
     }
 
     /// <summary>

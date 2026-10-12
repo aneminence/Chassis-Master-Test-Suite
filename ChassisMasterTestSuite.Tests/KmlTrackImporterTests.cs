@@ -1,4 +1,6 @@
 using Chassis_Master_Test_Suite.Analysis;
+using Chassis_Master_Test_Suite.Controls;
+using Chassis_Master_Test_Suite.Core;
 
 namespace ChassisMasterTestSuite.Tests;
 
@@ -106,4 +108,50 @@ public class KmlTrackImporterTests
         Assert.Equal(8.377493, pairs[0].Acc!.Value, precision: 5);
         Assert.Equal(0.72, pairs[2].Speed!.Value, precision: 2);
     }
+
+    private static string DriveFixturePath =>
+        Path.Combine(AppContext.BaseDirectory, "Fixtures", "2bulu-drive-20260527.kml");
+
+    [Fact]
+    public void Import_2buluDrive_Parses11877PointsWithLatLon()
+    {
+        Assert.True(File.Exists(DriveFixturePath), $"Missing fixture: {DriveFixturePath}");
+
+        var track = KmlTrackImporter.ImportFile(DriveFixturePath);
+
+        Assert.Contains("2026-05-27", track.Name);
+        Assert.Equal(11877, track.Points.Count);
+
+        var first = track.Points[0];
+        Assert.Equal(101.6876379, first.Longitude, precision: 7);
+        Assert.Equal(39.225716, first.Latitude, precision: 6);
+        Assert.Equal(1488.03, first.AltitudeMeters!.Value, precision: 2);
+        Assert.Equal(
+            DateTimeOffset.Parse("2026-05-27T01:17:58Z"),
+            first.TimeUtc);
+
+        var last = track.Points[^1];
+        Assert.Equal(101.6717704, last.Longitude, precision: 7);
+        Assert.Equal(39.2077888, last.Latitude, precision: 7);
+        Assert.Equal(1452.92, last.AltitudeMeters!.Value, precision: 2);
+    }
+
+    [Fact]
+    public void ToVehicleSamples_DriveFixture_ExposesGpsForTrackMap()
+    {
+        var track = KmlTrackImporter.ImportFile(DriveFixturePath);
+        var samples = SampleEnricher.EnrichAll(KmlTrackImporter.ToVehicleSamples(track));
+
+        Assert.Equal(11877, samples.Count);
+        Assert.Equal(11877, samples.Count(TrackProjection.IsValidGps));
+
+        // Long/bimodal routes must not be wiped by the 5 km median filter.
+        var filtered = TrackProjection.FilterGpsOutliers(samples);
+        Assert.True(
+            filtered.Count >= samples.Count / 2,
+            $"FilterGpsOutliers kept {filtered.Count}/{samples.Count}; TrackMap would stay empty or clipped.");
+        Assert.True(TrackProjection.IsValidGps(filtered[0]));
+        Assert.True(TrackProjection.IsValidGps(filtered[^1]));
+    }
+
 }

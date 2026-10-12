@@ -495,6 +495,10 @@ public partial class TrackMapPanel : UserControl
         foreach (var layer in tracks)
         {
             var gps = TrackProjection.FilterGpsOutliers(layer.Samples);
+            // Match AutoFit: if outlier filter emptied a long/bimodal track,
+            // fall back to all valid GPS so TrackMap is not left blank.
+            if (gps.Count < 2)
+                gps = layer.Samples.Where(TrackProjection.IsValidGps).ToList();
             if (gps.Count >= 2)
                 filteredLayers.Add((layer, gps));
         }
