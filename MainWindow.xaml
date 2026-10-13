@@ -316,26 +316,28 @@
                         </MenuItem>
                     </Menu>
 
-                    <!-- Theme (top-right outer dropdown) -->
+                    <!-- Theme: single Light/Dark toggle + other themes dropdown -->
+                    <Button x:Name="ThemeToggleButton"
+                            Content="暗黑"
+                            Style="{StaticResource NavButtonActiveStyle}"
+                            Height="26"
+                            Padding="10,0"
+                            Margin="0,0,4,0"
+                            FontSize="11"
+                            Click="ThemeToggle_Click"
+                            ToolTip="切换明亮 / 暗黑"
+                            VerticalAlignment="Center"/>
+
                     <Menu Background="Transparent"
                           BorderThickness="0"
                           Padding="0"
                           Margin="0,0,10,0"
                           VerticalAlignment="Center"
                           Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="ThemeMenu"
-                                  Header="主题 ▾"
+                        <MenuItem x:Name="ThemeMoreMenu"
+                                  Header="其它 ▾"
                                   Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="UI theme">
-                            <MenuItem x:Name="ThemeLightItem"
-                                      Header="明亮"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="ThemeLight_Click"/>
-                            <MenuItem x:Name="ThemeDarkItem"
-                                      Header="暗黑"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="ThemeDark_Click"/>
-                            <Separator Style="{StaticResource DarkMenuSeparatorStyle}"/>
+                                  ToolTip="其它主题">
                             <MenuItem x:Name="ThemeCustomItem"
                                       Header="自定义…"
                                       Style="{StaticResource DarkMenuItemStyle}"

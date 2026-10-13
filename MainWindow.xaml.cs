@@ -274,6 +274,7 @@ public partial class MainWindow : Window
                 SyncLayoutMapVisuals();
                 UpdateConnectionStatusUi();
                 ApplyRecordingState(_recordingSession.State);
+                RefreshThemeToggleUi();
             }
 
             if (!Dispatcher.CheckAccess())
@@ -1062,16 +1063,35 @@ public partial class MainWindow : Window
     private void LangEn_Click(object sender, RoutedEventArgs e) =>
         AppearanceService.SetLanguage(Loc.En);
 
-    private void ThemeDark_Click(object sender, RoutedEventArgs e) =>
-        AppearanceService.SetTheme(AppThemeMode.Dark);
+    private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // Single toggle: Light ↔ Dark. Custom (or any non-binary) flips to Light.
+        var next = ThemeManager.CurrentMode == AppThemeMode.Light
+            ? AppThemeMode.Dark
+            : AppThemeMode.Light;
+        AppearanceService.SetTheme(next);
+    }
 
-    private void ThemeLight_Click(object sender, RoutedEventArgs e) =>
-        AppearanceService.SetTheme(AppThemeMode.Light);
-
-    // Custom theme is a placeholder in the Theme menu (IsEnabled=false).
+    // Custom theme is a placeholder in the other-themes menu (IsEnabled=false).
     private void ThemeCustom_Click(object sender, RoutedEventArgs e)
     {
         // Reserved for a future custom-color picker.
+    }
+
+    private void RefreshThemeToggleUi()
+    {
+        if (ThemeToggleButton is null)
+            return;
+
+        var mode = ThemeManager.CurrentMode;
+        var isBinary = mode is AppThemeMode.Light or AppThemeMode.Dark;
+        var showLight = mode == AppThemeMode.Light;
+
+        ThemeToggleButton.Content = Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
+        ThemeToggleButton.ToolTip = Loc.T("Menu.ThemeToggleTip");
+        ThemeToggleButton.Style = (Style)FindResource(
+            isBinary ? "NavButtonActiveStyle" : "NavButtonStyle");
+        ThemeToggleButton.Opacity = isBinary ? 1.0 : 0.55;
     }
 
     private void ApplyLocalizedToolbar()
@@ -1088,25 +1108,23 @@ public partial class MainWindow : Window
             LanguageMenu.Header = Loc.T("Menu.Language");
             LanguageMenu.ToolTip = Loc.T("Menu.LanguageTip");
         }
-        if (ThemeMenu is not null)
+        if (ThemeMoreMenu is not null)
         {
-            ThemeMenu.Header = Loc.T("Menu.Theme");
-            ThemeMenu.ToolTip = Loc.T("Menu.ThemeTip");
+            ThemeMoreMenu.Header = Loc.T("Menu.ThemeMore");
+            ThemeMoreMenu.ToolTip = Loc.T("Menu.ThemeMoreTip");
         }
         if (LangZhItem is not null)
             LangZhItem.Header = Loc.T("Menu.Lang.Zh");
         if (LangEnItem is not null)
             LangEnItem.Header = Loc.T("Menu.Lang.En");
-        if (ThemeLightItem is not null)
-            ThemeLightItem.Header = Loc.T("Menu.Theme.Light");
-        if (ThemeDarkItem is not null)
-            ThemeDarkItem.Header = Loc.T("Menu.Theme.Dark");
         if (ThemeCustomItem is not null)
         {
             ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");
             ThemeCustomItem.ToolTip = Loc.T("Menu.Theme.CustomTip");
             ThemeCustomItem.IsEnabled = false;
         }
+
+        RefreshThemeToggleUi();
 
         SetText(LayoutCellDashboard, Loc.T("Layout.Dashboard"), Loc.T("Layout.ToggleDashboard"));
         SetText(LayoutCellTestResults, Loc.T("Layout.TestResults"), Loc.T("Layout.ToggleTestResults"));
