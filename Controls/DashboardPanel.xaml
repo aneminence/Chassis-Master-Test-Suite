@@ -1,7 +1,7 @@
 <UserControl x:Class="Chassis_Master_Test_Suite.Controls.DashboardPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="#12171E">
+             Background="{DynamicResource PanelBackground}">
 
     <UserControl.Resources>
         <Style x:Key="DashToolButton" TargetType="Button" BasedOn="{StaticResource HeaderButtonStyle}">
@@ -11,7 +11,7 @@
         </Style>
     </UserControl.Resources>
 
-    <Border BorderBrush="#1E2530"
+    <Border BorderBrush="{DynamicResource BorderBrushSoft}"
             BorderThickness="1"
             CornerRadius="6"
             Padding="10">
@@ -34,13 +34,13 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
                     <TextBlock Text="Dashboard"
-                               Foreground="#E6EAF0"
+                               Foreground="{DynamicResource TextPrimary}"
                                FontSize="14"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
                     <TextBlock x:Name="CursorModeText"
                                Text=""
-                               Foreground="#C8A34A"
+                               Foreground="{DynamicResource AccentBrush}"
                                FontSize="12"
                                Margin="10,0,0,0"
                                VerticalAlignment="Center"/>
@@ -75,8 +75,8 @@
 
             <!-- Free-form gauge canvas -->
             <Border Grid.Row="2"
-                    Background="#0A0E14"
-                    BorderBrush="#1E2530"
+                    Background="{DynamicResource SurfaceSunken}"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
                     BorderThickness="1"
                     CornerRadius="4"
                     ClipToBounds="True">

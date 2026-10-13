@@ -166,12 +166,20 @@ public partial class TrackMapPanel : UserControl
 
         AppearanceService.PreferencesChanged += (_, _) =>
         {
+            void Apply()
+            {
+                ApplyBasemapFromPreferences();
+                ApplyDarkStyle();
+                UpdateGridOverlay();
+                _wpfPlot.Refresh();
+            }
+
             if (!Dispatcher.CheckAccess())
             {
-                Dispatcher.Invoke(ApplyBasemapFromPreferences);
+                Dispatcher.Invoke(Apply);
                 return;
             }
-            ApplyBasemapFromPreferences();
+            Apply();
         };
         Loc.LanguageChanged += (_, _) =>
         {
@@ -261,9 +269,9 @@ public partial class TrackMapPanel : UserControl
             {
                 FigureBackgroundColor = transparent,
                 DataBackgroundColor = transparent,
-                LegendBackgroundColor = ScottPlot.Color.FromHex("#12171E").WithAlpha(0.92),
-                LegendFontColor = ScottPlot.Color.FromHex("#C3CBD8"),
-                LegendOutlineColor = ScottPlot.Color.FromHex("#1E2530"),
+                LegendBackgroundColor = ThemeBrushes.ScottPlot("PanelBackground", "#12171E").WithAlpha(0.92),
+                LegendFontColor = ThemeBrushes.ScottPlot("TextBright", "#C3CBD8"),
+                LegendOutlineColor = ThemeBrushes.ScottPlot("BorderBrushSoft", "#1E2530"),
                 Palette = new ScottPlot.Palettes.Dark()
             });
 
@@ -277,7 +285,7 @@ public partial class TrackMapPanel : UserControl
     {
         var legend = _wpfPlot.Plot.Legend;
         legend.Alignment = ScottPlot.Alignment.UpperRight;
-        legend.FontColor = ScottPlot.Color.FromHex("#C3CBD8");
+        legend.FontColor = ThemeBrushes.ScottPlot("TextBright", "#C3CBD8");
         legend.FontSize = 11;
         // Nudge away from edges; keep clear of bottom coordinate stack.
         legend.Margin = new ScottPlot.PixelPadding(10, 10, 10, 10);
@@ -785,9 +793,9 @@ public partial class TrackMapPanel : UserControl
         _cursorMarker.Shape =
             ScottPlot.MarkerShape.FilledCircle;
         _cursorMarker.Color =
-            ScottPlot.Color.FromHex("#C8A34A");
+            ThemeBrushes.ScottPlot("AccentBrush");
         _cursorMarker.MarkerLineColor =
-            ScottPlot.Color.FromHex("#F5E6B8");
+            ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.85);
         _cursorMarker.MarkerLineWidth = 1.5f;
 
         if (refresh)
@@ -890,14 +898,11 @@ public partial class TrackMapPanel : UserControl
         {
             GridOverlay.Children.Clear();
 
-            var lineBrush = new SolidColorBrush(
-                Color.FromRgb(0x1E, 0x28, 0x33));
+            var lineBrush = ThemeBrushes.Brush("SurfaceElevated");
 
-            var edgeBrush = new SolidColorBrush(
-                Color.FromRgb(0x2A, 0x36, 0x44));
+            var edgeBrush = ThemeBrushes.Brush("MenuItemSelectedBackground");
 
-            var labelBrush = new SolidColorBrush(
-                Color.FromRgb(0x5A, 0x64, 0x74));
+            var labelBrush = ThemeBrushes.TextMuted();
 
             // 竖线：从左边框起算，距离向右递增
             for (var i = 0; i * spacing <= width; i++)
@@ -1122,7 +1127,7 @@ public partial class TrackMapPanel : UserControl
     private static readonly string[] RunHighlightPalette =
     {
         "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
-        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
+        "#5AC8C8", "#E05252", "#D8D84A", ThemeBrushes.Hex("AccentBrush", "#C8A34A")
     };
 
     private void ClearRunHighlightPlots()
@@ -1182,7 +1187,7 @@ public partial class TrackMapPanel : UserControl
 
             // Dark underlay for contrast against muted base path (VBTS: thick solid run overlay).
             var under = _wpfPlot.Plot.Add.ScatterLine(
-                xa, ya, ScottPlot.Color.FromHex("#0A0E14").WithAlpha(dimOthers ? 0.45 : 0.85));
+                xa, ya, ThemeBrushes.ScottPlot("SurfaceSunken", "#0A0E14").WithAlpha(dimOthers ? 0.45 : 0.85));
             under.LineWidth = selected ? 14.0f : (dimOthers ? 8.0f : 11.0f);
             under.MarkerStyle.IsVisible = false;
             under.LegendText = string.Empty;
@@ -1590,23 +1595,23 @@ public partial class TrackMapPanel : UserControl
             Height = 160,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x17, 0x1E))
+            Background = ThemeBrushes.Panel()
         };
         var root = new StackPanel { Margin = new Thickness(16) };
         root.Children.Add(new TextBlock
         {
             Text = label,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Foreground = ThemeBrushes.TextSecondary(),
             Margin = new Thickness(0, 0, 0, 6)
         });
         var box = new TextBox
         {
             Text = initial,
             Height = 28,
-            Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
-            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
-            CaretBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
+            Background = ThemeBrushes.Card(),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Border(),
+            CaretBrush = ThemeBrushes.Accent(),
             VerticalContentAlignment = VerticalAlignment.Center,
             Padding = new Thickness(6, 0, 6, 0)
         };
@@ -1817,7 +1822,7 @@ public partial class TrackMapPanel : UserControl
             var label = new TextBlock
             {
                 Text = g.Name,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC3, 0xCB, 0xD8)),
+                Foreground = ThemeBrushes.TextBright(),
                 FontSize = 11,
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -1859,7 +1864,7 @@ public partial class TrackMapPanel : UserControl
             var color = string.IsNullOrWhiteSpace(g.ColorHex) ? "#3FBF6F" : g.ColorHex;
 
             // Dark underlay for visibility on track
-            var under = _wpfPlot.Plot.Add.ScatterLine(xs, ys, ScottPlot.Color.FromHex("#0A0E14").WithAlpha(0.9));
+            var under = _wpfPlot.Plot.Add.ScatterLine(xs, ys, ThemeBrushes.ScottPlot("SurfaceSunken", "#0A0E14").WithAlpha(0.9));
             under.LineWidth = isSelected ? 10f : 7f;
             under.MarkerStyle.IsVisible = false;
             under.LegendText = string.Empty; // keep gates out of UpperRight track legend

@@ -1,3 +1,4 @@
+using Chassis_Master_Test_Suite.Themes;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.ComponentModel;
@@ -24,7 +25,7 @@ public partial class TestResultsPanel : UserControl
     private static readonly string[] RunAnnotationPalette =
     {
         "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
-        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
+        "#5AC8C8", "#E05252", "#D8D84A", ThemeBrushes.Hex("AccentBrush", "#C8A34A")
     };
     private readonly ObservableCollection<ResultRowVm> _rows = new();
 
@@ -306,8 +307,7 @@ public partial class TestResultsPanel : UserControl
         if (!TryBuildDefinition(out var definition, out var error))
         {
             StatusText.Text = error;
-            StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0xC8, 0xA3, 0x4A));
+            StatusText.Foreground = ThemeBrushes.Accent();
             return;
         }
 
@@ -315,8 +315,7 @@ public partial class TestResultsPanel : UserControl
         if (sources.Count == 0)
         {
             StatusText.Text = "No sample sources wired (open a VBO or wait for live history).";
-            StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0xC8, 0xA3, 0x4A));
+            StatusText.Foreground = ThemeBrushes.Accent();
             return;
         }
 
@@ -342,8 +341,7 @@ public partial class TestResultsPanel : UserControl
                 if (startGate is null || endGate is null || !startGate.IsValid || !endGate.IsValid)
                 {
                     StatusText.Text = "Set Start When + End When gates (place on Track Map first).";
-                    StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                        System.Windows.Media.Color.FromRgb(0xC8, 0xA3, 0x4A));
+                    StatusText.Foreground = ThemeBrushes.Accent();
                     return;
                 }
 
@@ -426,8 +424,7 @@ public partial class TestResultsPanel : UserControl
         StatusText.Text = flat.Count == 0
             ? $"Scanned {scannedFiles} file(s) / {scannedPoints} pts 鈥?no runs. Check thresholds."
             : $"Found {flat.Count} run(s) across {scannedFiles} file(s) ({scannedPoints} pts). Check rows to compare.";
-        StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-            System.Windows.Media.Color.FromRgb(0x8A, 0x94, 0xA6));
+        StatusText.Foreground = ThemeBrushes.TextSecondary();
     }
 
     private IReadOnlyList<SampleSource> ResolveSources()
@@ -449,7 +446,7 @@ public partial class TestResultsPanel : UserControl
                     new SampleSource
                     {
                         Label = "History",
-                        ColorHex = "#C8A34A",
+                        ColorHex = ThemeBrushes.Hex("AccentBrush", "#C8A34A"),
                         Samples = samples
                     }
                 };
@@ -498,14 +495,12 @@ public partial class TestResultsPanel : UserControl
         {
             TestResultsCsvExporter.WriteFile(dialog.FileName, _lastResults, _lastDefinition);
             StatusText.Text = $"Exported: {Path.GetFileName(dialog.FileName)}";
-            StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0x8A, 0x94, 0xA6));
+            StatusText.Foreground = ThemeBrushes.TextSecondary();
         }
         catch (Exception ex)
         {
             StatusText.Text = $"Export failed: {ex.Message}";
-            StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0xC8, 0xA3, 0x4A));
+            StatusText.Foreground = ThemeBrushes.Accent();
         }
     }
 
@@ -1096,8 +1091,7 @@ public partial class TestResultsPanel : UserControl
         StatusText.Text =
             $"Gate: Start={(s is null ? "none" : s.Name)}  End={(e is null ? "none" : e.Name)}  " +
             $"({GateStore.Instance.Gates.Count} on map)";
-        StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-            System.Windows.Media.Color.FromRgb(0x8A, 0x94, 0xA6));
+        StatusText.Foreground = ThemeBrushes.TextSecondary();
     }
 
     private void SessionButton_Click(object sender, RoutedEventArgs e) =>
@@ -1113,8 +1107,7 @@ public partial class TestResultsPanel : UserControl
             StatusText.Text = MathsChannelStore.Instance.Definitions.Count == 0
                 ? "Maths channels cleared."
                 : $"Maths channels: {MathsChannelStore.Instance.Definitions.Count} defined.";
-            StatusText.Foreground = new System.Windows.Media.SolidColorBrush(
-                System.Windows.Media.Color.FromRgb(0x8A, 0x94, 0xA6));
+            StatusText.Foreground = ThemeBrushes.TextSecondary();
             MathsChanged?.Invoke();
         }
     }
@@ -1214,15 +1207,11 @@ public partial class TestResultsPanel : UserControl
             // In-range: green; out-of-range / missing: red
             var ok = m.InRange;
             var fg = ok
-                ? new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0x3D, 0xDC, 0x97))
-                : new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromRgb(0xE0, 0x5A, 0x5A));
+                ? ThemeBrushes.Success()
+                : ThemeBrushes.Danger();
             var bg = ok
-                ? new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(0x33, 0x3D, 0xDC, 0x97))
-                : new System.Windows.Media.SolidColorBrush(
-                    System.Windows.Media.Color.FromArgb(0x33, 0xE0, 0x5A, 0x5A));
+                ? ThemeBrushes.SuccessSoft()
+                : ThemeBrushes.DangerSoft();
             fg.Freeze();
             bg.Freeze();
 

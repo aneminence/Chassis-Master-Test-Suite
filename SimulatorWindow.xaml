@@ -7,7 +7,7 @@
         Height="760"
         MinWidth="900"
         MinHeight="600"
-        Background="#11151A"
+        Background="{DynamicResource WindowChromeBackground}"
         WindowStartupLocation="CenterScreen"
         Focusable="True"
         PreviewKeyDown="Window_KeyDown"
@@ -45,18 +45,18 @@
                 VerticalAlignment="Top"
                 Margin="20"
                 Padding="16,10"
-                Background="#CC111820"
+                Background="{DynamicResource SimulatorPanelBackground}"
                 CornerRadius="8">
 
             <StackPanel>
 
                 <TextBlock Text="CMTS VEHICLE SIMULATOR"
-                           Foreground="White"
+                           Foreground="{DynamicResource TextPrimary}"
                            FontSize="20"
                            FontWeight="SemiBold"/>
 
                 <TextBlock Text="Manual Driving / 100 Hz"
-                           Foreground="#9AA7B5"
+                           Foreground="{DynamicResource SimulatorMutedForeground}"
                            FontSize="12"
                            Margin="0,3,0,0"/>
 
@@ -74,7 +74,7 @@
                 Margin="20"
                 Padding="16"
                 Width="250"
-                Background="#CC111820"
+                Background="{DynamicResource SimulatorPanelBackground}"
                 CornerRadius="8">
 
             <Grid>
@@ -93,7 +93,7 @@
 
                 <TextBlock Grid.Row="0"
                            Text="VEHICLE DATA"
-                           Foreground="White"
+                           Foreground="{DynamicResource TextPrimary}"
                            FontSize="14"
                            FontWeight="SemiBold"
                            Margin="0,0,0,10"/>
@@ -105,11 +105,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Speed"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="SpeedText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                FontWeight="SemiBold"
                                Text="0.0 km/h"/>
                 </Grid>
@@ -123,11 +123,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Long Accel"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="LongAccelText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                Text="0.00 m/s²"/>
                 </Grid>
 
@@ -140,11 +140,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Lat Accel"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="LatAccelText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                Text="0.00 m/s²"/>
                 </Grid>
 
@@ -157,11 +157,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Yaw Rate"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="YawRateText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                Text="0.00 deg/s"/>
                 </Grid>
 
@@ -174,11 +174,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Heading"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="HeadingText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                Text="0.0°"/>
                 </Grid>
 
@@ -191,11 +191,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Steering"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="SteeringText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                Text="0.0°"/>
                 </Grid>
 
@@ -208,11 +208,11 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="Distance"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock x:Name="DistanceText"
                                Grid.Column="1"
-                               Foreground="White"
+                               Foreground="{DynamicResource TextPrimary}"
                                FontWeight="SemiBold"
                                Text="0.0 m"/>
                 </Grid>
@@ -226,10 +226,10 @@
                     </Grid.ColumnDefinitions>
 
                     <TextBlock Text="UDP"
-                               Foreground="#9AA7B5"/>
+                               Foreground="{DynamicResource SimulatorMutedForeground}"/>
 
                     <TextBlock Grid.Column="1"
-                               Foreground="#72D572"
+                               Foreground="{DynamicResource OnlineStatusBrush}"
                                Text="100 Hz"/>
                 </Grid>
 
@@ -246,7 +246,7 @@
                 VerticalAlignment="Bottom"
                 Margin="0,0,0,20"
                 Padding="20,12"
-                Background="#CC111820"
+                Background="{DynamicResource SimulatorPanelBackground}"
                 CornerRadius="8">
 
             <StackPanel>
@@ -257,11 +257,11 @@
                     <Border Width="42"
                             Height="42"
                             Margin="4"
-                            Background="#28313A"
+                            Background="{DynamicResource SimulatorButtonBackground}"
                             CornerRadius="5">
 
                         <TextBlock Text="W"
-                                   Foreground="White"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="18"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
@@ -276,11 +276,11 @@
                     <Border Width="42"
                             Height="42"
                             Margin="4"
-                            Background="#28313A"
+                            Background="{DynamicResource SimulatorButtonBackground}"
                             CornerRadius="5">
 
                         <TextBlock Text="A"
-                                   Foreground="White"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="18"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
@@ -290,11 +290,11 @@
                     <Border Width="42"
                             Height="42"
                             Margin="4"
-                            Background="#28313A"
+                            Background="{DynamicResource SimulatorButtonBackground}"
                             CornerRadius="5">
 
                         <TextBlock Text="S"
-                                   Foreground="White"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="18"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
@@ -304,11 +304,11 @@
                     <Border Width="42"
                             Height="42"
                             Margin="4"
-                            Background="#28313A"
+                            Background="{DynamicResource SimulatorButtonBackground}"
                             CornerRadius="5">
 
                         <TextBlock Text="D"
-                                   Foreground="White"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="18"
                                    FontWeight="Bold"
                                    HorizontalAlignment="Center"
@@ -318,7 +318,7 @@
                 </StackPanel>
 
                 <TextBlock Text="W/S  Accel / Brake     A/D  Steering     SPACE  Emergency Brake     R  Reset"
-                           Foreground="#AEB8C2"
+                           Foreground="{DynamicResource SimulatorLabelForeground}"
                            FontSize="12"
                            HorizontalAlignment="Center"
                            Margin="0,8,0,0"/>

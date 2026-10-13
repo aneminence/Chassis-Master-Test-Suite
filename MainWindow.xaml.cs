@@ -93,25 +93,18 @@ public partial class MainWindow : Window
     private static readonly GridLength LayoutDefaultTopPanelsHeight =
         new(1.0, GridUnitType.Star);
 
-    private static readonly SolidColorBrush LayoutRegionActiveBg =
-        MakeFrozenBrush(0x1E, 0x28, 0x34);
-    private static readonly SolidColorBrush LayoutRegionActiveBorder =
-        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
-    private static readonly SolidColorBrush LayoutRegionActiveFg =
-        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
-    private static readonly SolidColorBrush LayoutRegionInactiveBg =
-        MakeFrozenBrush(0x12, 0x17, 0x1E);
-    private static readonly SolidColorBrush LayoutRegionInactiveBorder =
-        MakeFrozenBrush(0x3A, 0x45, 0x54);
-    private static readonly SolidColorBrush LayoutRegionInactiveFg =
-        MakeFrozenBrush(0x7A, 0x84, 0x94);
-
-    private static SolidColorBrush MakeFrozenBrush(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static SolidColorBrush LayoutRegionActiveBg =>
+        ThemeBrushes.Brush("LayoutActiveBackground");
+    private static SolidColorBrush LayoutRegionActiveBorder =>
+        ThemeBrushes.Brush("LayoutActiveBorder");
+    private static SolidColorBrush LayoutRegionActiveFg =>
+        ThemeBrushes.Brush("LayoutActiveForeground");
+    private static SolidColorBrush LayoutRegionInactiveBg =>
+        ThemeBrushes.Brush("LayoutInactiveBackground");
+    private static SolidColorBrush LayoutRegionInactiveBorder =>
+        ThemeBrushes.Brush("LayoutInactiveBorder");
+    private static SolidColorBrush LayoutRegionInactiveFg =>
+        ThemeBrushes.Brush("LayoutInactiveForeground");
 
     /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
     private readonly OfflineFileSet _offlineFiles = new();
@@ -265,6 +258,33 @@ public partial class MainWindow : Window
 
         Closed += MainWindow_Closed;
 
+
+        ThemeManager.ThemeChanged += (_, _) =>
+        {
+            void RefreshThemeChrome()
+            {
+                foreach (var plot in _plots)
+                {
+                    if (plot.WpfPlot is null)
+                        continue;
+                    ApplyDarkPlotStyle(plot.WpfPlot);
+                    plot.WpfPlot.Refresh();
+                }
+
+                SyncLayoutMapVisuals();
+                UpdateConnectionStatusUi();
+                ApplyRecordingState(_recordingSession.State);
+            }
+
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RefreshThemeChrome);
+                return;
+            }
+
+            RefreshThemeChrome();
+        };
+
         Loc.LanguageChanged += (_, _) =>
         {
             if (!Dispatcher.CheckAccess())
@@ -362,8 +382,7 @@ public partial class MainWindow : Window
 
                 RecordGlyphText.Text = "●";
                 RecordLabelText.Text = "Start";
-                RecordGlyphText.Foreground = new SolidColorBrush(
-                    Color.FromRgb(0xE0, 0x8A, 0x8A));
+                RecordGlyphText.Foreground = ThemeBrushes.RecordActive();
 
                 StopRecordButton.IsEnabled = false;
 
@@ -373,8 +392,7 @@ public partial class MainWindow : Window
             case RecordingState.Recording:
                 RecordGlyphText.Text = "❚❚";
                 RecordLabelText.Text = "Pause";
-                RecordGlyphText.Foreground = new SolidColorBrush(
-                    Color.FromRgb(0xC8, 0xA3, 0x4A));
+                RecordGlyphText.Foreground = ThemeBrushes.Accent();
 
                 StopRecordButton.IsEnabled = true;
 
@@ -593,8 +611,9 @@ public partial class MainWindow : Window
 
             var chip = new Border
             {
-                Background = (Brush)new BrushConverter().ConvertFromString(
-                    isSelected ? "#243040" : "#1A222C")!,
+                Background = isSelected
+                    ? ThemeBrushes.Brush("ComboItemSelectedBackground")
+                    : ThemeBrushes.Brush("LayoutInactiveBackground"),
                 BorderBrush = (Brush)new BrushConverter().ConvertFromString(file.ColorHex)!,
                 BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
@@ -1705,29 +1724,29 @@ public partial class MainWindow : Window
             {
                 // 最外层背景（与曲线区卡片一致）
                 FigureBackgroundColor =
-                    ScottPlot.Color.FromHex("#12171E"),
+                    ThemeBrushes.ScottPlot("PanelBackground", "#12171E"),
 
                 // 绘图区背景
                 DataBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A"),
+                    ThemeBrushes.ScottPlot("CardBackground", "#0E131A"),
 
                 // 坐标轴 / 刻度文字（DateTimeTicksBottom 会冲掉，见 ApplyAxisLabelColors）
                 AxisColor =
-                    ScottPlot.Color.FromHex("#C3CBD8"),
+                    ThemeBrushes.ScottPlot("TextBright", "#C3CBD8"),
 
                 // 网格线
                 GridMajorLineColor =
-                    ScottPlot.Color.FromHex("#232C38"),
+                    ThemeBrushes.ScottPlot("PlotGridLineBrush", "#232C38"),
 
                 // 图例
                 LegendBackgroundColor =
-                    ScottPlot.Color.FromHex("#12171E"),
+                    ThemeBrushes.ScottPlot("PanelBackground", "#12171E"),
 
                 LegendFontColor =
-                    ScottPlot.Color.FromHex("#C3CBD8"),
+                    ThemeBrushes.ScottPlot("TextBright", "#C3CBD8"),
 
                 LegendOutlineColor =
-                    ScottPlot.Color.FromHex("#1E2530"),
+                    ThemeBrushes.ScottPlot("BorderBrushSoft", "#1E2530"),
 
                 // 曲线配色
                 Palette =
@@ -1745,10 +1764,10 @@ public partial class MainWindow : Window
     private static void ApplyAxisLabelColors(ScottPlot.Plot scottPlot)
     {
         var tickColor =
-            ScottPlot.Color.FromHex("#C3CBD8");
+            ThemeBrushes.ScottPlot("TextBright", "#C3CBD8");
 
         var axisLabelColor =
-            ScottPlot.Color.FromHex("#8A94A6");
+            ThemeBrushes.ScottPlot("TextSecondary", "#8A94A6");
 
         foreach (var axis in scottPlot.Axes.GetAxes())
         {
@@ -1804,7 +1823,7 @@ public partial class MainWindow : Window
         var thumb = new Border
         {
             Height = 6,
-            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x40)),
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
             Cursor = Cursors.SizeNS,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 2, 0, 2),
@@ -1888,19 +1907,9 @@ public partial class MainWindow : Window
     {
         var outerBorder = new Border
         {
-            Background =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x0E,
-                        0x13,
-                        0x1A)),
+            Background = ThemeBrushes.Card(),
 
-            BorderBrush =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x1E,
-                        0x25,
-                        0x30)),
+            BorderBrush = ThemeBrushes.Border(),
 
             BorderThickness =
                 new Thickness(1),
@@ -1974,7 +1983,7 @@ public partial class MainWindow : Window
         var nameLabel = new TextBlock
         {
             Text = "Plot Name",
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 11,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -2129,7 +2138,7 @@ public partial class MainWindow : Window
         var unitText = new TextBlock
         {
             Text = GetSignalUnit(channel.ChannelId),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 4, 0),
@@ -3314,11 +3323,11 @@ public partial class MainWindow : Window
     }
 
 
-    private static readonly string[] RunAnnotationPalette =
-    {
+    private static string[] RunAnnotationPalette =>
+    [
         "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
-        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
-    };
+        "#5AC8C8", "#E05252", "#D8D84A", ThemeBrushes.Hex("AccentBrush", "#C8A34A")
+    ];
 
     private void OnTestResultsAnnotated(IReadOnlyList<AnnotatedTestRun> runs)
     {
@@ -3492,9 +3501,9 @@ public partial class MainWindow : Window
         scottPlot.HideLegend();
         var legend = scottPlot.ShowLegend(ScottPlot.Edge.Right);
         legend.Legend.FontSize = 10;
-        legend.Legend.FontColor = ScottPlot.Color.FromHex("#C3CBD8");
-        legend.Legend.BackgroundColor = ScottPlot.Color.FromHex("#12171E").WithAlpha(0.88);
-        legend.Legend.OutlineColor = ScottPlot.Color.FromHex("#1E2530");
+        legend.Legend.FontColor = ThemeBrushes.ScottPlot("TextBright", "#C3CBD8");
+        legend.Legend.BackgroundColor = ThemeBrushes.ScottPlot("PanelBackground", "#12171E").WithAlpha(0.88);
+        legend.Legend.OutlineColor = ThemeBrushes.ScottPlot("BorderBrushSoft", "#1E2530");
         legend.Legend.ShadowColor = ScottPlot.Colors.Transparent;
     }
 
@@ -3558,7 +3567,7 @@ public partial class MainWindow : Window
             var label = scottPlot.Add.Annotation(labelText, ScottPlot.Alignment.UpperRight);
             label.LabelFontSize = 14;
             label.LabelFontColor = ScottPlot.Color.FromHex(colorHex);
-            label.LabelBackgroundColor = ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.7);
+            label.LabelBackgroundColor = ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.7);
             label.LabelBorderColor = ScottPlot.Color.FromHex(colorHex);
             label.OffsetX = 10;
             label.OffsetY = 8;
@@ -3611,9 +3620,9 @@ public partial class MainWindow : Window
             var right = Math.Max(sx1, sx2);
             var span = scottPlot.Add.HorizontalSpan(left, right);
             span.FillColor =
-                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.16);
+                ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.16);
             span.LineColor =
-                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.55);
+                ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.55);
             span.LineWidth = 1;
 
             if (!string.IsNullOrEmpty(_lastMeasureText))
@@ -3622,10 +3631,10 @@ public partial class MainWindow : Window
                     _lastMeasureText,
                     ScottPlot.Alignment.LowerLeft);
                 manno.LabelFontSize = 13;
-                manno.LabelFontColor = ScottPlot.Color.FromHex("#C8A34A");
+                manno.LabelFontColor = ThemeBrushes.ScottPlot("AccentBrush");
                 manno.LabelBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.78);
-                manno.LabelBorderColor = ScottPlot.Color.FromHex("#1E2530");
+                    ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.78);
+                manno.LabelBorderColor = ThemeBrushes.ScottPlot("BorderBrushSoft");
                 manno.OffsetX = 10;
                 manno.OffsetY = 10;
             }
@@ -3636,7 +3645,7 @@ public partial class MainWindow : Window
         {
             var vLine = scottPlot.Add.VerticalLine(cursorX);
             vLine.LineColor =
-                ScottPlot.Color.FromHex("#C8A34A");
+                ThemeBrushes.ScottPlot("AccentBrush");
             vLine.LineWidth = 1.5f;
             vLine.LinePattern = ScottPlot.LinePattern.Solid;
 
@@ -3648,11 +3657,11 @@ public partial class MainWindow : Window
                     ScottPlot.Alignment.UpperLeft);
                 anno.LabelFontSize = 18;
                 anno.LabelFontColor =
-                    ScottPlot.Color.FromHex("#C8A34A");
+                    ThemeBrushes.ScottPlot("AccentBrush");
                 anno.LabelBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.72);
+                    ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.72);
                 anno.LabelBorderColor =
-                    ScottPlot.Color.FromHex("#1E2530");
+                    ThemeBrushes.ScottPlot("BorderBrushSoft");
                 anno.LabelBorderWidth = 1;
                 anno.LabelShadowColor =
                     ScottPlot.Colors.Transparent;
@@ -3914,7 +3923,7 @@ public partial class MainWindow : Window
             new SampleSource
             {
                 Label = "Live",
-                ColorHex = "#C8A34A",
+                ColorHex = ThemeBrushes.Hex("AccentBrush", "#C8A34A"),
                 Samples = MathsEnricher.Apply(live, MathsChannelStore.Instance.Definitions)
             }
         };
@@ -4597,8 +4606,7 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    ConnectionDot.Fill =
-                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                    ConnectionDot.Fill = ThemeBrushes.TextSecondary();
                 }
                 catch { /* ignore */ }
             }
@@ -4618,8 +4626,7 @@ public partial class MainWindow : Window
             {
                 try
                 {
-                    ConnectionDot.Fill =
-                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                    ConnectionDot.Fill = ThemeBrushes.TextSecondary();
                 }
                 catch { /* ignore */ }
             }
@@ -4638,15 +4645,15 @@ public partial class MainWindow : Window
         var (label, color) = source.State switch
         {
             DataSourceState.Connected =>
-                ("Online", "#3FBF6F"),
+                ("Online", ThemeBrushes.Hex("SuccessBrush", "#3FBF6F")),
             DataSourceState.Connecting =>
-                ("Connecting…", "#E0B060"),
+                ("Connecting…", ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Reconnecting =>
-                ("Reconnecting…", "#E0B060"),
+                ("Reconnecting…", ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Faulted =>
-                ("Faulted", "#E08A8A"),
+                ("Faulted", ThemeBrushes.Hex("RecordActiveForeground", "#E08A8A")),
             _ =>
-                ("Offline", "#8A94A6")
+                ("Offline", ThemeBrushes.Hex("TextSecondary", "#8A94A6"))
         };
 
         // UDP 无真实会话：保持 Online 语义（绑定成功即视为就绪）
@@ -4658,7 +4665,7 @@ public partial class MainWindow : Window
             if (source.State == DataSourceState.Connected)
             {
                 label = "Online";
-                color = "#3FBF6F";
+                color = ThemeBrushes.Hex("SuccessBrush", "#3FBF6F");
             }
         }
 

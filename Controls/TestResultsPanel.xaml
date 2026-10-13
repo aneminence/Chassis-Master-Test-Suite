@@ -1,18 +1,18 @@
 <UserControl x:Class="Chassis_Master_Test_Suite.Controls.TestResultsPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             Background="#12171E">
+             Background="{DynamicResource PanelBackground}">
 
     <UserControl.Resources>
         <Style x:Key="ResultsDataGridStyle" TargetType="DataGrid">
-            <Setter Property="Background" Value="#0E131A"/>
-            <Setter Property="Foreground" Value="#E6EAF0"/>
-            <Setter Property="BorderBrush" Value="#1E2530"/>
+            <Setter Property="Background" Value="{DynamicResource CardBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="RowBackground" Value="#0E131A"/>
-            <Setter Property="AlternatingRowBackground" Value="#12171E"/>
-            <Setter Property="HorizontalGridLinesBrush" Value="#1E2530"/>
-            <Setter Property="VerticalGridLinesBrush" Value="#1E2530"/>
+            <Setter Property="RowBackground" Value="{DynamicResource CardBackground}"/>
+            <Setter Property="AlternatingRowBackground" Value="{DynamicResource PanelBackground}"/>
+            <Setter Property="HorizontalGridLinesBrush" Value="{DynamicResource BorderBrushSoft}"/>
+            <Setter Property="VerticalGridLinesBrush" Value="{DynamicResource BorderBrushSoft}"/>
             <Setter Property="HeadersVisibility" Value="Column"/>
             <Setter Property="GridLinesVisibility" Value="Horizontal"/>
             <Setter Property="AutoGenerateColumns" Value="False"/>
@@ -26,9 +26,9 @@
         </Style>
 
         <Style TargetType="DataGridColumnHeader">
-            <Setter Property="Background" Value="#1A222D"/>
-            <Setter Property="Foreground" Value="#8A94A6"/>
-            <Setter Property="BorderBrush" Value="#1E2530"/>
+            <Setter Property="Background" Value="{DynamicResource DataGridHeaderBackground}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrushSoft}"/>
             <Setter Property="BorderThickness" Value="0,0,1,1"/>
             <Setter Property="Padding" Value="8,6"/>
             <Setter Property="FontSize" Value="11"/>
@@ -53,21 +53,21 @@
             </Setter>
             <Style.Triggers>
                 <Trigger Property="IsSelected" Value="True">
-                    <Setter Property="Background" Value="#243040"/>
-                    <Setter Property="Foreground" Value="#C8A34A"/>
+                    <Setter Property="Background" Value="{DynamicResource ComboItemSelectedBackground}"/>
+                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
                 </Trigger>
             </Style.Triggers>
         </Style>
 
         <Style x:Key="ParamLabelStyle" TargetType="TextBlock">
-            <Setter Property="Foreground" Value="#8A94A6"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
             <Setter Property="FontSize" Value="11"/>
             <Setter Property="VerticalAlignment" Value="Center"/>
             <Setter Property="Margin" Value="0,0,6,0"/>
         </Style>
     </UserControl.Resources>
 
-    <Border BorderBrush="#1E2530"
+    <Border BorderBrush="{DynamicResource BorderBrushSoft}"
             BorderThickness="1"
             CornerRadius="6"
             Padding="14">
@@ -91,7 +91,7 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
                     <TextBlock Text="Test Results"
-                               Foreground="#E6EAF0"
+                               Foreground="{DynamicResource TextPrimary}"
                                FontSize="14"
                                FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
@@ -116,8 +116,8 @@
                           VerticalScrollBarVisibility="Auto"
                           HorizontalScrollBarVisibility="Disabled">
             <Border
-                    Background="#0E131A"
-                    BorderBrush="#1E2530"
+                    Background="{DynamicResource CardBackground}"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
                     BorderThickness="1"
                     CornerRadius="4"
                     Padding="10,8"
@@ -152,7 +152,7 @@
 
                     
                                         <StackPanel x:Name="GatePickPanel" Margin="0,0,0,6" Visibility="Collapsed">
-                        <TextBlock Text="Start Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBlock Text="Start Condition(s)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
                         <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <TextBlock Text="Start When" Style="{StaticResource ParamLabelStyle}"/>
                             <ComboBox x:Name="GateStartCombo" Width="160" Height="28" Margin="0,0,14,4"
@@ -161,7 +161,7 @@
                                       ToolTip="Start When: named gate"/>
                         </WrapPanel>
 
-                        <TextBlock Text="End Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                        <TextBlock Text="End Condition(s)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="SemiBold" Margin="0,0,0,4"/>
                         <WrapPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <TextBlock Text="End When" Style="{StaticResource ParamLabelStyle}"/>
                             <ComboBox x:Name="GateEndCombo" Width="160" Height="28" Margin="0,0,14,4"
@@ -171,7 +171,7 @@
                         </WrapPanel>
 
                         <Grid Margin="0,0,0,4">
-                            <TextBlock Text="Pass Condition(s)" Foreground="#8A94A6" FontSize="11" FontWeight="SemiBold"
+                            <TextBlock Text="Pass Condition(s)" Foreground="{DynamicResource TextSecondary}" FontSize="11" FontWeight="SemiBold"
                                        VerticalAlignment="Center"/>
                             <Button Content="+ Add Pass" Style="{StaticResource HeaderButtonStyle}"
                                     HorizontalAlignment="Right" Click="AddPassCondition_Click"
@@ -224,7 +224,7 @@
                                  Style="{StaticResource DarkTextBoxStyle}"
                                  VerticalContentAlignment="Center"/>
                         <TextBlock Text="km/h"
-                                   Foreground="#4A5568"
+                                   Foreground="{DynamicResource MapPlaceholderForeground}"
                                    FontSize="11"
                                    VerticalAlignment="Center"
                                    Margin="0,0,14,4"/>
@@ -240,7 +240,7 @@
                                  Style="{StaticResource DarkTextBoxStyle}"
                                  VerticalContentAlignment="Center"/>
                         <TextBlock Text="km/h"
-                                   Foreground="#4A5568"
+                                   Foreground="{DynamicResource MapPlaceholderForeground}"
                                    FontSize="11"
                                    VerticalAlignment="Center"
                                    Margin="0,0,14,4"/>
@@ -271,7 +271,7 @@
                             Click="MathsChannelsButton_Click"
                             ToolTip="Define calculated channels (VBTS-style editor)"/>
                     <TextBlock x:Name="StatusText"
-                               Foreground="#8A94A6"
+                               Foreground="{DynamicResource TextSecondary}"
                                FontSize="11"
                                Margin="0,4,0,0"
                                Text="Compute scans every open VBO. Check rows to overlay-compare on charts."/>
@@ -284,7 +284,7 @@
                           Height="6"
                           HorizontalAlignment="Stretch"
                           VerticalAlignment="Center"
-                          Background="#1E2530"
+                          Background="{DynamicResource BorderBrushSoft}"
                           ResizeDirection="Rows"
                           ResizeBehavior="PreviousAndNext"
                           ShowsPreview="True"
@@ -368,7 +368,7 @@
                                                     ToolTip="{Binding ToolTip}">
                                                 <StackPanel Orientation="Horizontal">
                                                     <TextBlock Text="{Binding Label}"
-                                                               Foreground="#8A94A6"
+                                                               Foreground="{DynamicResource TextSecondary}"
                                                                FontSize="10"
                                                                Margin="0,0,4,0"
                                                                VerticalAlignment="Center"/>
@@ -390,7 +390,7 @@
 
             <TextBlock Grid.Row="4"
                        Margin="0,8,0,0"
-                       Foreground="#39424F"
+                       Foreground="{DynamicResource MapHintForeground}"
                        FontSize="10"
                        Text="Multi-file Compute + checkbox compare (X = seconds from each run start). Single row focus keeps span annotation."/>
         </Grid>
