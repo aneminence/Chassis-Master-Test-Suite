@@ -1090,7 +1090,7 @@ public partial class MainWindow : Window
         var isEn = string.Equals(Loc.Language, Loc.En, StringComparison.OrdinalIgnoreCase);
         LanguageToggleButton.Content = Loc.T(isEn ? "Menu.Lang.ShortEn" : "Menu.Lang.ShortZh");
         LanguageToggleButton.ToolTip = Loc.T("Menu.LangToggleTip");
-        LanguageToggleButton.FontWeight = FontWeights.SemiBold;
+        LanguageToggleButton.FontWeight = FontWeights.Normal;
 
         if (LanguageSplitBorder is not null)
         {
@@ -1149,9 +1149,7 @@ public partial class MainWindow : Window
         // Label: current binary mode; when Custom, still show last Light/Dark target as Dark→toggle to Light.
         ThemeToggleButton.Content = Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
         ThemeToggleButton.ToolTip = Loc.T("Menu.ThemeToggleTip");
-        ThemeToggleButton.FontWeight = isBinary
-            ? FontWeights.SemiBold
-            : FontWeights.Normal;
+        ThemeToggleButton.FontWeight = FontWeights.Normal;
 
         if (ThemeSplitBorder is not null)
         {
