@@ -8,6 +8,7 @@ public enum AppThemeMode
 {
     Dark,
     Light,
+    IconGold,
     Custom
 }
 
@@ -19,6 +20,7 @@ public static class ThemeManager
 {
     public const string DarkUri = "pack://application:,,,/Themes/Theme.Dark.xaml";
     public const string LightUri = "pack://application:,,,/Themes/Theme.Light.xaml";
+    public const string IconGoldUri = "pack://application:,,,/Themes/Theme.IconGold.xaml";
 
     public static AppThemeMode CurrentMode { get; private set; } = AppThemeMode.Dark;
 
@@ -28,6 +30,8 @@ public static class ThemeManager
     {
         if (string.Equals(mode, "Light", StringComparison.OrdinalIgnoreCase))
             return AppThemeMode.Light;
+        if (string.Equals(mode, "IconGold", StringComparison.OrdinalIgnoreCase))
+            return AppThemeMode.IconGold;
         if (string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase))
             return AppThemeMode.Custom;
         return AppThemeMode.Dark;
@@ -36,6 +40,7 @@ public static class ThemeManager
     public static string ToStorage(AppThemeMode mode) => mode switch
     {
         AppThemeMode.Light => "Light",
+        AppThemeMode.IconGold => "IconGold",
         AppThemeMode.Custom => "Custom",
         _ => "Dark"
     };
@@ -46,9 +51,12 @@ public static class ThemeManager
         if (app is null)
             return;
 
-        var dict = mode == AppThemeMode.Light
-            ? LoadDictionary(LightUri)
-            : LoadDictionary(DarkUri);
+        var dict = mode switch
+        {
+            AppThemeMode.Light => LoadDictionary(LightUri),
+            AppThemeMode.IconGold => LoadDictionary(IconGoldUri),
+            _ => LoadDictionary(DarkUri)
+        };
 
         if (mode == AppThemeMode.Custom && custom is not null)
             ApplyCustomOverrides(dict, custom);

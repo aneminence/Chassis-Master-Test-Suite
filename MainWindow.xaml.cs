@@ -1109,7 +1109,7 @@ public partial class MainWindow : Window
 
     private void ThemeToggle_Click(object sender, RoutedEventArgs e)
     {
-        // Left half of split-button: Light ↔ Dark. Custom (or any non-binary) flips to Light.
+        // Left half: Light ↔ Dark only. Named skins (IconGold / Custom) leave to Light.
         var next = ThemeManager.CurrentMode == AppThemeMode.Light
             ? AppThemeMode.Dark
             : AppThemeMode.Light;
@@ -1124,6 +1124,11 @@ public partial class MainWindow : Window
         ThemeMoreButton.ContextMenu.PlacementTarget = ThemeMoreButton;
         ThemeMoreButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
         ThemeMoreButton.ContextMenu.IsOpen = true;
+    }
+
+    private void ThemeIconGold_Click(object sender, RoutedEventArgs e)
+    {
+        AppearanceService.SetTheme(AppThemeMode.IconGold);
     }
 
     // Custom theme is a placeholder in the other-themes menu (IsEnabled=false).
@@ -1157,6 +1162,9 @@ public partial class MainWindow : Window
 
         if (ThemeMoreButton is not null)
             ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
+
+        if (ThemeIconGoldItem is not null)
+            ThemeIconGoldItem.IsChecked = mode == AppThemeMode.IconGold;
     }
 
     private void ApplyLocalizedToolbar()
@@ -1174,6 +1182,11 @@ public partial class MainWindow : Window
             LangEnItem.Header = Loc.T("Menu.Lang.En");
         if (ThemeMoreButton is not null)
             ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
+        if (ThemeIconGoldItem is not null)
+        {
+            ThemeIconGoldItem.Header = Loc.T("Menu.Theme.IconGold");
+            ThemeIconGoldItem.ToolTip = Loc.T("Menu.Theme.IconGoldTip");
+        }
         if (ThemeCustomItem is not null)
         {
             ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");

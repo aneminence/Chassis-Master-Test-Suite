@@ -376,6 +376,12 @@
                                                  Background="{DynamicResource PanelBackground}"
                                                  BorderBrush="{DynamicResource AccentBrush}"
                                                  BorderThickness="1">
+                                        <MenuItem x:Name="ThemeIconGoldItem"
+                                                  Header="图标暖金"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsCheckable="True"
+                                                  Click="ThemeIconGold_Click"
+                                                  ToolTip="Warm gold dark chrome (VI Variant D)"/>
                                         <MenuItem x:Name="ThemeCustomItem"
                                                   Header="自定义…"
                                                   Style="{StaticResource DarkMenuItemStyle}"
