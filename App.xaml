@@ -82,17 +82,17 @@
 
         <!-- Theme split-button: outer chrome (active = Light/Dark binary) -->
         <Style x:Key="ThemeSplitBorderActiveStyle" TargetType="Border">
-            <Setter Property="Background" Value="{DynamicResource NavActiveBackground}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="Background" Value="{DynamicResource ToolButtonBackground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ToolButtonBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="CornerRadius" Value="3"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
         </Style>
         <Style x:Key="ThemeSplitBorderStyle" TargetType="Border">
             <Setter Property="Background" Value="{DynamicResource ToolButtonBackground}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ToolButtonBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="CornerRadius" Value="3"/>
             <Setter Property="SnapsToDevicePixels" Value="True"/>
         </Style>
 

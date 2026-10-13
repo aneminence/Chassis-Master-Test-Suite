@@ -324,7 +324,7 @@
                                 <Button.ContextMenu>
                                     <ContextMenu x:Name="LanguageMoreMenu"
                                                  Background="{DynamicResource PanelBackground}"
-                                                 BorderBrush="{DynamicResource AccentBrush}"
+                                                 BorderBrush="{DynamicResource ToolButtonBorder}"
                                                  BorderThickness="1">
                                         <MenuItem x:Name="LangZhItem"
                                                   Header="中文"
@@ -374,7 +374,7 @@
                                 <Button.ContextMenu>
                                     <ContextMenu x:Name="ThemeMoreMenu"
                                                  Background="{DynamicResource PanelBackground}"
-                                                 BorderBrush="{DynamicResource AccentBrush}"
+                                                 BorderBrush="{DynamicResource ToolButtonBorder}"
                                                  BorderThickness="1">
                                         <MenuItem x:Name="ThemeIconGoldItem"
                                                   Header="图标暖金"
