@@ -1823,12 +1823,12 @@ public partial class MainWindow : Window
         var thumb = new Border
         {
             Height = 6,
-            Background = ThemeBrushes.Brush("SurfaceElevated"),
             Cursor = Cursors.SizeNS,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 2, 0, 2),
             ToolTip = "Drag to resize plot height"
         };
+        thumb.SetResourceReference(Border.BackgroundProperty, "SurfaceElevated");
 
         double startY = 0;
         double startH = 0;
@@ -1907,10 +1907,6 @@ public partial class MainWindow : Window
     {
         var outerBorder = new Border
         {
-            Background = ThemeBrushes.Card(),
-
-            BorderBrush = ThemeBrushes.Border(),
-
             BorderThickness =
                 new Thickness(1),
 
@@ -1927,6 +1923,9 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        // DynamicResource so Light/Dark swap updates plot chrome (not a one-shot ThemeBrushes assign).
+        outerBorder.SetResourceReference(Border.BackgroundProperty, "CardBackground");
+        outerBorder.SetResourceReference(Border.BorderBrushProperty, "BorderBrushSoft");
 
 
         var root = new Grid();
@@ -1983,12 +1982,12 @@ public partial class MainWindow : Window
         var nameLabel = new TextBlock
         {
             Text = "Plot Name",
-            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 11,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 4)
         };
+        nameLabel.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
         chrome.Children.Add(nameLabel);
 
         var nameTextBox = new TextBox
@@ -2017,6 +2016,7 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 12, 4)
         };
+        autoScaleCheckBox.SetResourceReference(Control.ForegroundProperty, "TextPrimary");
         plot.AutoScaleYCheckBox = autoScaleCheckBox;
         autoScaleCheckBox.Checked += (_, _) =>
         {
@@ -2138,12 +2138,12 @@ public partial class MainWindow : Window
         var unitText = new TextBlock
         {
             Text = GetSignalUnit(channel.ChannelId),
-            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 4, 0),
             MinWidth = 36
         };
+        unitText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
 
         comboBox.SelectionChanged += (_, _) =>
         {

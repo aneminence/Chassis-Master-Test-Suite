@@ -41,6 +41,18 @@ public partial class DashboardPanel : UserControl
             DashboardLayoutStore.Instance.Load();
             RebuildFromStore();
         };
+        ThemeManager.ThemeChanged += (_, _) =>
+        {
+            void Refresh()
+            {
+                // Value brushes are assigned in code; chrome uses DynamicResource.
+                RefreshAllValues();
+            }
+            if (!Dispatcher.CheckAccess())
+                Dispatcher.Invoke(Refresh);
+            else
+                Refresh();
+        };
     }
 
     /// <summary>Raised when a multi-vehicle chip is clicked.</summary>
@@ -121,10 +133,7 @@ public partial class DashboardPanel : UserControl
 
             var border = new Border
             {
-                Background = isSelected
-                    ? ThemeBrushes.Brush("ComboItemSelectedBackground")
-                    : ThemeBrushes.Card(),
-                BorderBrush = TryBrush(colorHex) ?? CardBorder,
+                BorderBrush = TryBrush(colorHex) ?? ThemeBrushes.Border(),
                 BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(8, 4, 8, 4),
@@ -133,6 +142,9 @@ public partial class DashboardPanel : UserControl
                 Tag = name,
                 ToolTip = isSelected ? $"Current: {name}" : $"Switch to {name}"
             };
+            border.SetResourceReference(
+                Border.BackgroundProperty,
+                isSelected ? "ComboItemSelectedBackground" : "CardBackground");
 
             border.MouseLeftButtonUp += (_, e) =>
             {
@@ -150,10 +162,9 @@ public partial class DashboardPanel : UserControl
                 Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center
             });
-            stack.Children.Add(new TextBlock
+            var nameTb = new TextBlock
             {
                 Text = name,
-                Foreground = ThemeBrushes.TextBright(),
                 FontSize = 11,
                 FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -161,16 +172,19 @@ public partial class DashboardPanel : UserControl
                 MaxWidth = 120,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsHitTestVisible = false
-            });
-            stack.Children.Add(new TextBlock
+            };
+            nameTb.SetResourceReference(TextBlock.ForegroundProperty, "TextBright");
+            stack.Children.Add(nameTb);
+            var speedTb = new TextBlock
             {
                 Text = $"{speed:0.0} km/h",
-                Foreground = AccentFg,
                 FontSize = 11,
                 FontFamily = new FontFamily("Consolas"),
                 VerticalAlignment = VerticalAlignment.Center,
                 IsHitTestVisible = false
-            });
+            };
+            speedTb.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
+            stack.Children.Add(speedTb);
 
             border.Child = stack;
             MultiVehicleHost.Items.Add(border);
@@ -241,13 +255,13 @@ public partial class DashboardPanel : UserControl
         var titleText = new TextBlock
         {
             Text = layout.Title,
-            Foreground = TitleFg,
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Cursor = Cursors.Hand,
             ToolTip = "Click to change data source"
         };
+        titleText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
 
         var deleteBtn = new Button
         {
@@ -260,11 +274,11 @@ public partial class DashboardPanel : UserControl
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Foreground = TitleFg,
             Cursor = Cursors.Hand,
             ToolTip = "Remove gauge",
             VerticalAlignment = VerticalAlignment.Center
         };
+        deleteBtn.SetResourceReference(Control.ForegroundProperty, "TextSecondary");
 
         var header = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(deleteBtn, Dock.Right);
@@ -274,7 +288,6 @@ public partial class DashboardPanel : UserControl
         var valueText = new TextBlock
         {
             Text = "--",
-            Foreground = AccentFg,
             FontSize = 28,
             FontWeight = FontWeights.SemiBold,
             FontFamily = new FontFamily("Consolas"),
@@ -283,15 +296,16 @@ public partial class DashboardPanel : UserControl
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
+        valueText.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
 
         var unitText = new TextBlock
         {
             Text = layout.Unit,
-            Foreground = UnitFg,
             FontSize = 10,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom
         };
+        unitText.SetResourceReference(TextBlock.ForegroundProperty, "TextMuted");
 
         var body = new Grid { Margin = new Thickness(0, 4, 0, 0) };
         body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -311,16 +325,17 @@ public partial class DashboardPanel : UserControl
             Cursor = Cursors.SizeNWSE,
             ToolTip = "Drag to resize"
         };
-        resizeGrip.Child = new Path
+        var gripPath = new Path
         {
             Data = Geometry.Parse("M0,10 L10,0 M4,10 L10,4 M8,10 L10,8"),
-            Stroke = UnitFg,
             StrokeThickness = 1.2,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 1, 1),
             IsHitTestVisible = false
         };
+        gripPath.SetResourceReference(Shape.StrokeProperty, "TextMuted");
+        resizeGrip.Child = gripPath;
 
         var content = new Grid { Margin = new Thickness(10) };
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -332,8 +347,6 @@ public partial class DashboardPanel : UserControl
 
         var root = new Border
         {
-            Background = CardBg,
-            BorderBrush = CardBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Width = Math.Max(96, layout.Width),
@@ -341,6 +354,8 @@ public partial class DashboardPanel : UserControl
             Cursor = Cursors.SizeAll,
             Child = new Grid()
         };
+        root.SetResourceReference(Border.BackgroundProperty, "CardBackground");
+        root.SetResourceReference(Border.BorderBrushProperty, "BorderBrushSoft");
 
         var overlay = (Grid)root.Child;
         overlay.Children.Add(content);
