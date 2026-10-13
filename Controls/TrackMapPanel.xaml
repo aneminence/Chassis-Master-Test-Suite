@@ -63,7 +63,7 @@
                               Style="{StaticResource DarkComboBoxStyle}"
                               SelectionChanged="GateCombo_SelectionChanged"
                               ToolTip="Select gate"/>
-                    <TextBlock Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
                     <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
                              Text="20" Style="{StaticResource DarkTextBoxStyle}"
                              VerticalContentAlignment="Center"

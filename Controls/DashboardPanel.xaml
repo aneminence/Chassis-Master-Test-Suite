@@ -33,7 +33,8 @@
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
-                    <TextBlock Text="Dashboard"
+                    <TextBlock x:Name="TitleText"
+                               Text="Dashboard"
                                Foreground="{DynamicResource TextPrimary}"
                                FontSize="14"
                                FontWeight="SemiBold"

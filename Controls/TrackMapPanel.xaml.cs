@@ -1456,6 +1456,8 @@ public partial class TrackMapPanel : UserControl
         }
         if (GateCombo is not null)
             GateCombo.ToolTip = Loc.T("Map.SelectGate");
+        if (GateWidthLabel is not null)
+            GateWidthLabel.Text = Loc.T("Map.Width");
         if (GateWidthBox is not null)
             GateWidthBox.ToolTip = Loc.T("Map.WidthTip");
         if (EmptyHint is not null && EmptyHint.Children.Count >= 2)

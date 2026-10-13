@@ -382,7 +382,7 @@ public partial class MainWindow : Window
                 _elapsedTimer?.Stop();
 
                 RecordGlyphText.Text = "●";
-                RecordLabelText.Text = "Start";
+                RecordLabelText.Text = Loc.T("Toolbar.RecordStart");
                 RecordGlyphText.Foreground = ThemeBrushes.RecordActive();
 
                 StopRecordButton.IsEnabled = false;
@@ -392,7 +392,7 @@ public partial class MainWindow : Window
 
             case RecordingState.Recording:
                 RecordGlyphText.Text = "❚❚";
-                RecordLabelText.Text = "Pause";
+                RecordLabelText.Text = Loc.T("Toolbar.RecordPause");
                 RecordGlyphText.Foreground = ThemeBrushes.Accent();
 
                 StopRecordButton.IsEnabled = true;
@@ -402,7 +402,7 @@ public partial class MainWindow : Window
 
             case RecordingState.Paused:
                 RecordGlyphText.Text = "▶";
-                RecordLabelText.Text = "Resume";
+                RecordLabelText.Text = Loc.T("Toolbar.RecordResume");
 
                 StopRecordButton.IsEnabled = true;
                 break;
@@ -1063,6 +1063,50 @@ public partial class MainWindow : Window
     private void LangEn_Click(object sender, RoutedEventArgs e) =>
         AppearanceService.SetLanguage(Loc.En);
 
+    private void LanguageToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // Left half of language split-button: zh-CN ↔ en
+        var next = string.Equals(Loc.Language, Loc.En, StringComparison.OrdinalIgnoreCase)
+            ? Loc.ZhCn
+            : Loc.En;
+        AppearanceService.SetLanguage(next);
+    }
+
+    private void LanguageMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (LanguageMoreButton?.ContextMenu is null)
+            return;
+
+        LanguageMoreButton.ContextMenu.PlacementTarget = LanguageMoreButton;
+        LanguageMoreButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        LanguageMoreButton.ContextMenu.IsOpen = true;
+    }
+
+    private void RefreshLanguageToggleUi()
+    {
+        if (LanguageToggleButton is null)
+            return;
+
+        var isEn = string.Equals(Loc.Language, Loc.En, StringComparison.OrdinalIgnoreCase);
+        LanguageToggleButton.Content = Loc.T(isEn ? "Menu.Lang.ShortEn" : "Menu.Lang.ShortZh");
+        LanguageToggleButton.ToolTip = Loc.T("Menu.LangToggleTip");
+        LanguageToggleButton.FontWeight = FontWeights.SemiBold;
+
+        if (LanguageSplitBorder is not null)
+        {
+            LanguageSplitBorder.Style = (Style)FindResource("ThemeSplitBorderActiveStyle");
+            LanguageSplitBorder.Opacity = 1.0;
+        }
+
+        if (LanguageMoreButton is not null)
+            LanguageMoreButton.ToolTip = Loc.T("Menu.LangMoreTip");
+        if (LangMorePlaceholderItem is not null)
+        {
+            LangMorePlaceholderItem.Header = Loc.T("Menu.Lang.MorePlaceholder");
+            LangMorePlaceholderItem.IsEnabled = false;
+        }
+    }
+
     private void ThemeToggle_Click(object sender, RoutedEventArgs e)
     {
         // Left half of split-button: Light ↔ Dark. Custom (or any non-binary) flips to Light.
@@ -1124,11 +1168,6 @@ public partial class MainWindow : Window
             LayoutMenuRoot.Header = Loc.T("Menu.Layout");
             LayoutMenuRoot.ToolTip = Loc.T("Menu.LayoutTip");
         }
-        if (LanguageMenu is not null)
-        {
-            LanguageMenu.Header = Loc.T("Menu.Language");
-            LanguageMenu.ToolTip = Loc.T("Menu.LanguageTip");
-        }
         if (LangZhItem is not null)
             LangZhItem.Header = Loc.T("Menu.Lang.Zh");
         if (LangEnItem is not null)
@@ -1142,6 +1181,7 @@ public partial class MainWindow : Window
             ThemeCustomItem.IsEnabled = false;
         }
 
+        RefreshLanguageToggleUi();
         RefreshThemeToggleUi();
 
         SetText(LayoutCellDashboard, Loc.T("Layout.Dashboard"), Loc.T("Layout.ToggleDashboard"));
@@ -1187,14 +1227,67 @@ public partial class MainWindow : Window
             StopOnlineButton.Content = Loc.T("Toolbar.Stop");
             StopOnlineButton.ToolTip = Loc.T("Toolbar.StopTip");
         }
-        if (RecordLabelText is not null && RecordButton?.IsEnabled == true)
-        {
-            // Keep Start/Pause state text owned by record state machine; only refresh Stop.
-        }
         if (StopRecordButton is not null)
             StopRecordButton.Content = Loc.T("Toolbar.RecordStop");
-        if (ConnectionStatusText is not null)
-            ConnectionStatusText.ToolTip = Loc.T("Status.ConnectionTip");
+        if (ElapsedLabelText is not null)
+            ElapsedLabelText.Text = Loc.T("Toolbar.Elapsed");
+
+        // Record Start/Pause/Resume follows current recording state machine.
+        RefreshRecordLabelFromState();
+
+        if (CurvesTitleText is not null)
+            CurvesTitleText.Text = Loc.T("Curves.Title");
+        if (XAxisLabelText is not null)
+            XAxisLabelText.Text = Loc.T("Curves.XAxis");
+        if (XAxisAutoScaleCheckBox is not null)
+            XAxisAutoScaleCheckBox.Content = Loc.T("Curves.XAutoScale");
+        if (AddPlotButton is not null)
+            AddPlotButton.Content = Loc.T("Curves.AddPlot");
+        if (ResetViewButton is not null)
+            ResetViewButton.Content = Loc.T("Curves.ResetView");
+        if (FilesLabelText is not null)
+            FilesLabelText.Text = Loc.T("Curves.Files");
+
+        if (ReplayTitleText is not null)
+            ReplayTitleText.Text = Loc.T("Replay.Title");
+        if (ReplayHintText is not null)
+            ReplayHintText.Text = Loc.T("Replay.Hint");
+        if (ReplayPageOpenVboButton is not null)
+            ReplayPageOpenVboButton.Content = Loc.T("Replay.OpenVbo");
+        if (ReplayFileText is not null &&
+            (string.IsNullOrWhiteSpace(ReplayFileText.Text) ||
+             ReplayFileText.Text is "No file loaded" or "未加载文件"))
+            ReplayFileText.Text = Loc.T("Replay.NoFile");
+
+        RefreshPlotChromeLocalization();
+        UpdateConnectionStatusUi();
+    }
+
+    private void RefreshRecordLabelFromState()
+    {
+        if (RecordLabelText is null)
+            return;
+        RecordLabelText.Text = _recordingSession.State switch
+        {
+            RecordingState.Recording => Loc.T("Toolbar.RecordPause"),
+            RecordingState.Paused => Loc.T("Toolbar.RecordResume"),
+            _ => Loc.T("Toolbar.RecordStart")
+        };
+    }
+
+    private void RefreshPlotChromeLocalization()
+    {
+        foreach (var plot in _plots)
+        {
+            if (plot.NameLabel is not null)
+                plot.NameLabel.Text = Loc.T("Curves.PlotName");
+            if (plot.AutoScaleYCheckBox is not null)
+                plot.AutoScaleYCheckBox.Content = Loc.T("Curves.AutoY");
+            if (plot.AddChannelButton is not null)
+                plot.AddChannelButton.Content = Loc.T("Curves.AddChannel");
+            if (plot.RemovePlotButton is not null)
+                plot.RemovePlotButton.Content = Loc.T("Curves.RemovePlot");
+        }
     }
 
     private static void SetText(Border? cell, string label, string tip)
@@ -1996,7 +2089,7 @@ public partial class MainWindow : Window
 
         var removePlotButton = new Button
         {
-            Content = "Remove Plot",
+            Content = Loc.T("Curves.RemovePlot"),
             Height = 26,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Top
@@ -2007,6 +2100,7 @@ public partial class MainWindow : Window
         removePlotButton.Click += (_, _) => RemovePlot(plot);
         DockPanel.SetDock(removePlotButton, Dock.Right);
         header.Children.Add(removePlotButton);
+        plot.RemovePlotButton = removePlotButton;
 
         // Wrap: Plot Name | name box | Auto Y | + Channel | channel chips...
         var chrome = new WrapPanel
@@ -2017,7 +2111,7 @@ public partial class MainWindow : Window
 
         var nameLabel = new TextBlock
         {
-            Text = "Plot Name",
+            Text = Loc.T("Curves.PlotName"),
             FontSize = 11,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Center,
@@ -2025,6 +2119,7 @@ public partial class MainWindow : Window
         };
         nameLabel.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
         chrome.Children.Add(nameLabel);
+        plot.NameLabel = nameLabel;
 
         var nameTextBox = new TextBox
         {
@@ -2047,7 +2142,7 @@ public partial class MainWindow : Window
 
         var autoScaleCheckBox = new CheckBox
         {
-            Content = "Auto Y",
+            Content = Loc.T("Curves.AutoY"),
             IsChecked = plot.AutoScaleY,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 12, 4)
@@ -2072,7 +2167,7 @@ public partial class MainWindow : Window
 
         var addChannelButton = new Button
         {
-            Content = "+ Channel",
+            Content = Loc.T("Curves.AddChannel"),
             Height = 26,
             Margin = new Thickness(0, 0, 8, 4)
         };
@@ -2081,6 +2176,7 @@ public partial class MainWindow : Window
             "ToolButtonStyle");
         addChannelButton.Click += (_, _) => AddChannel(plot);
         chrome.Children.Add(addChannelButton);
+        plot.AddChannelButton = addChannelButton;
 
         foreach (var channel in plot.Channels)
             chrome.Children.Add(CreateChannelControl(plot, channel));
@@ -4633,9 +4729,9 @@ public partial class MainWindow : Window
             {
                 ConnectionStatusText.Text =
                     _offlineFiles.Count > 0
-                        ? "Offline · " + _offlineFiles.Count + " file(s)"
-                        : "Offline";
-                ConnectionStatusText.ToolTip = "Offline VBO replay";
+                        ? Loc.T("Status.OfflineFiles", _offlineFiles.Count)
+                        : Loc.T("Status.Offline");
+                ConnectionStatusText.ToolTip = Loc.T("Status.OfflineTip");
             }
 
             if (ConnectionDot is not null)
@@ -4654,8 +4750,8 @@ public partial class MainWindow : Window
         {
             if (ConnectionStatusText is not null)
             {
-                ConnectionStatusText.Text = "Stopped";
-                ConnectionStatusText.ToolTip = "Online connection stopped";
+                ConnectionStatusText.Text = Loc.T("Status.Stopped");
+                ConnectionStatusText.ToolTip = Loc.T("Status.StoppedTip");
             }
 
             if (ConnectionDot is not null)
@@ -4681,15 +4777,15 @@ public partial class MainWindow : Window
         var (label, color) = source.State switch
         {
             DataSourceState.Connected =>
-                ("Online", ThemeBrushes.Hex("SuccessBrush", "#3FBF6F")),
+                (Loc.T("Status.Online"), ThemeBrushes.Hex("SuccessBrush", "#3FBF6F")),
             DataSourceState.Connecting =>
-                ("Connecting…", ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
+                (Loc.T("Status.Connecting"), ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Reconnecting =>
-                ("Reconnecting…", ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
+                (Loc.T("Status.Reconnecting"), ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Faulted =>
-                ("Faulted", ThemeBrushes.Hex("RecordActiveForeground", "#E08A8A")),
+                (Loc.T("Status.Faulted"), ThemeBrushes.Hex("RecordActiveForeground", "#E08A8A")),
             _ =>
-                ("Offline", ThemeBrushes.Hex("TextSecondary", "#8A94A6"))
+                (Loc.T("Status.Offline"), ThemeBrushes.Hex("TextSecondary", "#8A94A6"))
         };
 
         // UDP 无真实会话：保持 Online 语义（绑定成功即视为就绪）
@@ -4700,7 +4796,7 @@ public partial class MainWindow : Window
             // UdpReceiver StartAsync 后即 Connected；未启动则 Offline
             if (source.State == DataSourceState.Connected)
             {
-                label = "Online";
+                label = Loc.T("Status.Online");
                 color = ThemeBrushes.Hex("SuccessBrush", "#3FBF6F");
             }
         }
@@ -5011,6 +5107,10 @@ public partial class MainWindow : Window
 
         /// <summary>曲线标题栏 Auto Y 复选框，便于手动缩放时同步关闭。</summary>
         public CheckBox? AutoScaleYCheckBox { get; set; }
+
+        public TextBlock? NameLabel { get; set; }
+        public Button? AddChannelButton { get; set; }
+        public Button? RemovePlotButton { get; set; }
 
         /// <summary>
         /// Auto 关闭时锁定的轴范围；10Hz Refresh 不得从数据重算覆盖。

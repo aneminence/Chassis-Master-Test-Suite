@@ -294,27 +294,56 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
 
-                    <!-- Language (top-right outer dropdown) -->
-                    <Menu Background="Transparent"
-                          BorderThickness="0"
-                          Padding="0"
-                          Margin="0,0,4,0"
-                          VerticalAlignment="Center"
-                          Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="LanguageMenu"
-                                  Header="语言 ▾"
-                                  Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="Interface language">
-                            <MenuItem x:Name="LangZhItem"
-                                      Header="中文"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="LangZh_Click"/>
-                            <MenuItem x:Name="LangEnItem"
-                                      Header="English"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="LangEn_Click"/>
-                        </MenuItem>
-                    </Menu>
+                    <!-- Language split-button: left toggles 中↔EN, right chevron = other languages -->
+                    <Border x:Name="LanguageSplitBorder"
+                            Style="{StaticResource ThemeSplitBorderActiveStyle}"
+                            Height="26"
+                            Margin="0,0,4,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="LanguageToggleButton"
+                                    Content="中"
+                                    Style="{StaticResource ThemeSplitPartStyle}"
+                                    FontWeight="SemiBold"
+                                    Height="24"
+                                    MinWidth="28"
+                                    Click="LanguageToggle_Click"
+                                    ToolTip="切换中文 / 英文"
+                                    VerticalAlignment="Center"/>
+                            <Border Width="1"
+                                    Margin="0,4"
+                                    Background="{DynamicResource ToolButtonBorder}"
+                                    VerticalAlignment="Stretch"/>
+                            <Button x:Name="LanguageMoreButton"
+                                    Content="▾"
+                                    Style="{StaticResource ThemeSplitChevronStyle}"
+                                    Height="24"
+                                    Click="LanguageMore_Click"
+                                    ToolTip="其它语言"
+                                    VerticalAlignment="Center">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="LanguageMoreMenu"
+                                                 Background="{DynamicResource PanelBackground}"
+                                                 BorderBrush="{DynamicResource AccentBrush}"
+                                                 BorderThickness="1">
+                                        <MenuItem x:Name="LangZhItem"
+                                                  Header="中文"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  Click="LangZh_Click"/>
+                                        <MenuItem x:Name="LangEnItem"
+                                                  Header="English"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  Click="LangEn_Click"/>
+                                        <Separator/>
+                                        <MenuItem x:Name="LangMorePlaceholderItem"
+                                                  Header="更多语言…"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsEnabled="False"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Border>
 
                     <!-- Theme split-button: left toggles Light↔Dark, right chevron = other themes -->
                     <Border x:Name="ThemeSplitBorder"
@@ -324,7 +353,7 @@
                             VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
                             <Button x:Name="ThemeToggleButton"
-                                    Content="暗黑"
+                                    Content="暗"
                                     Style="{StaticResource ThemeSplitPartStyle}"
                                     FontWeight="SemiBold"
                                     Height="24"
@@ -390,7 +419,8 @@
                             Margin="0,0,14,0"
                             Click="StopRecordButton_Click"/>
 
-                    <TextBlock Text="Elapsed"
+                    <TextBlock x:Name="ElapsedLabelText"
+                               Text="Elapsed"
                                Foreground="{DynamicResource TextMuted}"
                                FontSize="10"
                                VerticalAlignment="Center"
@@ -478,12 +508,14 @@
 
                 <StackPanel Margin="24,20,24,20">
 
-                    <TextBlock Text="▷  Replay"
+                    <TextBlock x:Name="ReplayTitleText"
+                               Text="▷  Replay"
                                FontSize="15"
                                FontWeight="SemiBold"
                                Foreground="{DynamicResource TextPrimary}"/>
 
-                    <TextBlock Text="Load a recorded VBO file and analyse it offline."
+                    <TextBlock x:Name="ReplayHintText"
+                               Text="Load a recorded VBO file and analyse it offline."
                                FontSize="11"
                                Foreground="{DynamicResource TextSecondary}"
                                Margin="0,6,0,18"/>
@@ -577,7 +609,8 @@
                                    Margin="0,0,8,0"
                                    VerticalAlignment="Center"/>
 
-                        <TextBlock Text="Test Data Curves"
+                        <TextBlock x:Name="CurvesTitleText"
+                                   Text="Test Data Curves"
                                    Foreground="{DynamicResource TextPrimary}"
                                    FontSize="14"
                                    FontWeight="SemiBold"
@@ -591,7 +624,8 @@
                                 VerticalAlignment="Center">
 
                         <!-- X Axis -->
-                        <TextBlock Text="X Axis"
+                        <TextBlock x:Name="XAxisLabelText"
+                                   Text="X Axis"
                                    Foreground="{DynamicResource TextSecondary}"
                                    FontSize="11"
                                    VerticalAlignment="Center"
@@ -634,7 +668,8 @@
                            Margin="8,0,8,0"
                            VerticalAlignment="Center"
                            LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Left"
+                    <TextBlock x:Name="FilesLabelText"
+                               DockPanel.Dock="Left"
                                Text="Files"
                                Foreground="{DynamicResource TextMuted}"
                                FontSize="10"

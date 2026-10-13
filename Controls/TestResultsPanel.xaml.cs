@@ -1,4 +1,5 @@
 using Chassis_Master_Test_Suite.Themes;
+using Chassis_Master_Test_Suite.Localization;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.ComponentModel;
@@ -112,6 +113,103 @@ public partial class TestResultsPanel : UserControl
         EnsureDefaultPassCondition();
         if (PassConditionsHost is not null)
             PassConditionsHost.ItemsSource = _passConditions;
+
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+                Dispatcher.Invoke(ApplyLocalizedChrome);
+            else
+                ApplyLocalizedChrome();
+        };
+        ApplyLocalizedChrome();
+    }
+
+    private void ApplyLocalizedChrome()
+    {
+        if (TitleText is not null)
+            TitleText.Text = Loc.T("Results.Title");
+        if (ToggleConditionsButton is not null)
+        {
+            ToggleConditionsButton.Content = Loc.T(
+                _conditionsCollapsed ? "Results.ShowConditions" : "Results.HideConditions");
+            ToggleConditionsButton.ToolTip = Loc.T("Results.ToggleConditionsTip");
+        }
+        if (SessionButton is not null)
+        {
+            SessionButton.Content = Loc.T("Results.Session");
+            SessionButton.ToolTip = Loc.T("Results.SessionTip");
+        }
+        if (TypeLabel is not null)
+            TypeLabel.Text = Loc.T("Results.Type");
+        if (ChannelLabel is not null)
+            ChannelLabel.Text = Loc.T("Results.Channel");
+        if (TypeAccelItem is not null)
+            TypeAccelItem.Content = Loc.T("Results.Accel");
+        if (TypeDecelItem is not null)
+            TypeDecelItem.Content = Loc.T("Results.Decel");
+        if (TypeCustomItem is not null)
+            TypeCustomItem.Content = Loc.T("Results.Custom");
+        if (TypeGateItem is not null)
+            TypeGateItem.Content = Loc.T("Results.Gate");
+        if (StartConditionsLabel is not null)
+            StartConditionsLabel.Text = Loc.T("Results.StartConditions");
+        if (EndConditionsLabel is not null)
+            EndConditionsLabel.Text = Loc.T("Results.EndConditions");
+        if (PassConditionsLabel is not null)
+            PassConditionsLabel.Text = Loc.T("Results.PassConditions");
+        if (StartWhenLabel is not null)
+            StartWhenLabel.Text = Loc.T("Results.StartWhen");
+        if (EndWhenLabel is not null)
+            EndWhenLabel.Text = Loc.T("Results.EndWhen");
+        if (AddPassButton is not null)
+        {
+            AddPassButton.Content = Loc.T("Results.AddPass");
+            AddPassButton.ToolTip = Loc.T("Results.AddPassTip");
+        }
+        if (StartLabel is not null)
+            StartLabel.Text = Loc.T("Results.Start");
+        if (EndLabel is not null)
+            EndLabel.Text = Loc.T("Results.End");
+        if (ComputeButton is not null)
+        {
+            ComputeButton.Content = Loc.T("Results.Compute");
+            ComputeButton.ToolTip = Loc.T("Results.ComputeTip");
+        }
+        if (ExportCsvButton is not null)
+        {
+            ExportCsvButton.Content = Loc.T("Results.ExportCsv");
+            ExportCsvButton.ToolTip = Loc.T("Results.ExportCsvTip");
+        }
+        if (MathsChannelsButton is not null)
+        {
+            MathsChannelsButton.Content = Loc.T("Results.MathsChannels");
+            MathsChannelsButton.ToolTip = Loc.T("Results.MathsChannelsTip");
+        }
+        if (StatusText is not null)
+            StatusText.Text = Loc.T("Results.StatusHint");
+        if (FooterHintText is not null)
+            FooterHintText.Text = Loc.T("Results.FooterHint");
+        if (ConditionsSplitter is not null)
+            ConditionsSplitter.ToolTip = Loc.T("Results.SplitterTip");
+        if (SelectAllCheckBox is not null)
+            SelectAllCheckBox.ToolTip = Loc.T("Results.SelectAllTip");
+
+        if (ColSource is not null)
+            ColSource.Header = Loc.T("Results.Col.Source");
+        if (ColStart is not null)
+            ColStart.Header = Loc.T("Results.Col.Start");
+        if (ColEnd is not null)
+            ColEnd.Header = Loc.T("Results.Col.End");
+        if (ColDuration is not null)
+            ColDuration.Header = Loc.T("Results.Col.Duration");
+        if (ColDeltaV is not null)
+            ColDeltaV.Header = Loc.T("Results.Col.DeltaV");
+        if (ColDist is not null)
+            ColDist.Header = Loc.T("Results.Col.Dist");
+        if (ColPass is not null)
+            ColPass.Header = Loc.T("Results.Col.Pass");
+        if (ColPassValues is not null)
+            ColPassValues.Header = Loc.T("Results.Col.PassValues");
     }
 
     private void PopulateChannelCombo()
@@ -640,7 +738,7 @@ public partial class TestResultsPanel : UserControl
                 ConditionsSplitter.Visibility = Visibility.Collapsed;
             _conditionsCollapsed = true;
             if (ToggleConditionsButton is not null)
-                ToggleConditionsButton.Content = "Show conditions";
+                ToggleConditionsButton.Content = Loc.T("Results.ShowConditions");
         }
         else
         {
@@ -654,7 +752,7 @@ public partial class TestResultsPanel : UserControl
                 ConditionsSplitter.Visibility = Visibility.Visible;
             _conditionsCollapsed = false;
             if (ToggleConditionsButton is not null)
-                ToggleConditionsButton.Content = "Hide conditions";
+                ToggleConditionsButton.Content = Loc.T("Results.HideConditions");
         }
     }
 

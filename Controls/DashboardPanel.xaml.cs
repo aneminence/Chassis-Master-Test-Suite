@@ -4,6 +4,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using Chassis_Master_Test_Suite.Themes;
+using Chassis_Master_Test_Suite.Localization;
 using System.Windows.Shapes;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
@@ -53,6 +54,32 @@ public partial class DashboardPanel : UserControl
             else
                 Refresh();
         };
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+                Dispatcher.Invoke(ApplyLocalizedChrome);
+            else
+                ApplyLocalizedChrome();
+        };
+        ApplyLocalizedChrome();
+    }
+
+    private void ApplyLocalizedChrome()
+    {
+        if (TitleText is not null)
+            TitleText.Text = Loc.T("Dashboard.Title");
+        if (AddGaugeButton is not null)
+        {
+            AddGaugeButton.Content = Loc.T("Dashboard.AddGauge");
+            AddGaugeButton.ToolTip = Loc.T("Dashboard.AddGaugeTip");
+        }
+        if (ResetLayoutButton is not null)
+        {
+            ResetLayoutButton.Content = Loc.T("Dashboard.Reset");
+            ResetLayoutButton.ToolTip = Loc.T("Dashboard.ResetTip");
+        }
+        if (CursorModeText is not null && _cursorFrozen)
+            CursorModeText.Text = Loc.T("Dashboard.Cursor");
     }
 
     /// <summary>Raised when a multi-vehicle chip is clicked.</summary>
@@ -65,7 +92,7 @@ public partial class DashboardPanel : UserControl
     {
         _liveSample = sample;
         _cursorFrozen = cursorFrozen;
-        CursorModeText.Text = cursorFrozen ? "Cursor" : "";
+        CursorModeText.Text = cursorFrozen ? Loc.T("Dashboard.Cursor") : "";
         RefreshAllValues();
     }
 
