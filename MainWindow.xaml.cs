@@ -93,25 +93,18 @@ public partial class MainWindow : Window
     private static readonly GridLength LayoutDefaultTopPanelsHeight =
         new(1.0, GridUnitType.Star);
 
-    private static readonly SolidColorBrush LayoutRegionActiveBg =
-        MakeFrozenBrush(0x1E, 0x28, 0x34);
-    private static readonly SolidColorBrush LayoutRegionActiveBorder =
-        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
-    private static readonly SolidColorBrush LayoutRegionActiveFg =
-        MakeFrozenBrush(0xC8, 0xA3, 0x4A);
-    private static readonly SolidColorBrush LayoutRegionInactiveBg =
-        MakeFrozenBrush(0x12, 0x17, 0x1E);
-    private static readonly SolidColorBrush LayoutRegionInactiveBorder =
-        MakeFrozenBrush(0x3A, 0x45, 0x54);
-    private static readonly SolidColorBrush LayoutRegionInactiveFg =
-        MakeFrozenBrush(0x7A, 0x84, 0x94);
-
-    private static SolidColorBrush MakeFrozenBrush(byte r, byte g, byte b)
-    {
-        var brush = new SolidColorBrush(Color.FromRgb(r, g, b));
-        brush.Freeze();
-        return brush;
-    }
+    private static SolidColorBrush LayoutRegionActiveBg =>
+        ThemeBrushes.Brush("LayoutActiveBackground");
+    private static SolidColorBrush LayoutRegionActiveBorder =>
+        ThemeBrushes.Brush("LayoutActiveBorder");
+    private static SolidColorBrush LayoutRegionActiveFg =>
+        ThemeBrushes.Brush("LayoutActiveForeground");
+    private static SolidColorBrush LayoutRegionInactiveBg =>
+        ThemeBrushes.Brush("LayoutInactiveBackground");
+    private static SolidColorBrush LayoutRegionInactiveBorder =>
+        ThemeBrushes.Brush("LayoutInactiveBorder");
+    private static SolidColorBrush LayoutRegionInactiveFg =>
+        ThemeBrushes.Brush("LayoutInactiveForeground");
 
     /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
     private readonly OfflineFileSet _offlineFiles = new();
@@ -265,6 +258,34 @@ public partial class MainWindow : Window
 
         Closed += MainWindow_Closed;
 
+
+        ThemeManager.ThemeChanged += (_, _) =>
+        {
+            void RefreshThemeChrome()
+            {
+                foreach (var plot in _plots)
+                {
+                    if (plot.WpfPlot is null)
+                        continue;
+                    ApplyDarkPlotStyle(plot.WpfPlot);
+                    plot.WpfPlot.Refresh();
+                }
+
+                SyncLayoutMapVisuals();
+                UpdateConnectionStatusUi();
+                ApplyRecordingState(_recordingSession.State);
+                RefreshThemeToggleUi();
+            }
+
+            if (!Dispatcher.CheckAccess())
+            {
+                Dispatcher.Invoke(RefreshThemeChrome);
+                return;
+            }
+
+            RefreshThemeChrome();
+        };
+
         Loc.LanguageChanged += (_, _) =>
         {
             if (!Dispatcher.CheckAccess())
@@ -361,9 +382,8 @@ public partial class MainWindow : Window
                 _elapsedTimer?.Stop();
 
                 RecordGlyphText.Text = "●";
-                RecordLabelText.Text = "Start";
-                RecordGlyphText.Foreground = new SolidColorBrush(
-                    Color.FromRgb(0xE0, 0x8A, 0x8A));
+                RecordLabelText.Text = Loc.T("Toolbar.RecordStart");
+                RecordGlyphText.Foreground = ThemeBrushes.RecordActive();
 
                 StopRecordButton.IsEnabled = false;
 
@@ -372,9 +392,8 @@ public partial class MainWindow : Window
 
             case RecordingState.Recording:
                 RecordGlyphText.Text = "❚❚";
-                RecordLabelText.Text = "Pause";
-                RecordGlyphText.Foreground = new SolidColorBrush(
-                    Color.FromRgb(0xC8, 0xA3, 0x4A));
+                RecordLabelText.Text = Loc.T("Toolbar.RecordPause");
+                RecordGlyphText.Foreground = ThemeBrushes.Accent();
 
                 StopRecordButton.IsEnabled = true;
 
@@ -383,7 +402,7 @@ public partial class MainWindow : Window
 
             case RecordingState.Paused:
                 RecordGlyphText.Text = "▶";
-                RecordLabelText.Text = "Resume";
+                RecordLabelText.Text = Loc.T("Toolbar.RecordResume");
 
                 StopRecordButton.IsEnabled = true;
                 break;
@@ -593,8 +612,9 @@ public partial class MainWindow : Window
 
             var chip = new Border
             {
-                Background = (Brush)new BrushConverter().ConvertFromString(
-                    isSelected ? "#243040" : "#1A222C")!,
+                Background = isSelected
+                    ? ThemeBrushes.Brush("ComboItemSelectedBackground")
+                    : ThemeBrushes.Brush("LayoutInactiveBackground"),
                 BorderBrush = (Brush)new BrushConverter().ConvertFromString(file.ColorHex)!,
                 BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
@@ -1043,16 +1063,106 @@ public partial class MainWindow : Window
     private void LangEn_Click(object sender, RoutedEventArgs e) =>
         AppearanceService.SetLanguage(Loc.En);
 
-    private void ThemeDark_Click(object sender, RoutedEventArgs e) =>
-        AppearanceService.SetTheme(AppThemeMode.Dark);
+    private void LanguageToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // Left half of language split-button: zh-CN ↔ en
+        var next = string.Equals(Loc.Language, Loc.En, StringComparison.OrdinalIgnoreCase)
+            ? Loc.ZhCn
+            : Loc.En;
+        AppearanceService.SetLanguage(next);
+    }
 
-    private void ThemeLight_Click(object sender, RoutedEventArgs e) =>
-        AppearanceService.SetTheme(AppThemeMode.Light);
+    private void LanguageMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (LanguageMoreButton?.ContextMenu is null)
+            return;
 
-    // Custom theme is a placeholder in the Theme menu (IsEnabled=false).
+        LanguageMoreButton.ContextMenu.PlacementTarget = LanguageMoreButton;
+        LanguageMoreButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        LanguageMoreButton.ContextMenu.IsOpen = true;
+    }
+
+    private void RefreshLanguageToggleUi()
+    {
+        if (LanguageToggleButton is null)
+            return;
+
+        var isEn = string.Equals(Loc.Language, Loc.En, StringComparison.OrdinalIgnoreCase);
+        LanguageToggleButton.Content = Loc.T(isEn ? "Menu.Lang.ShortEn" : "Menu.Lang.ShortZh");
+        LanguageToggleButton.ToolTip = Loc.T("Menu.LangToggleTip");
+        LanguageToggleButton.FontWeight = FontWeights.Normal;
+
+        if (LanguageSplitBorder is not null)
+        {
+            LanguageSplitBorder.Style = (Style)FindResource("ThemeSplitBorderActiveStyle");
+            LanguageSplitBorder.Opacity = 1.0;
+        }
+
+        if (LanguageMoreButton is not null)
+            LanguageMoreButton.ToolTip = Loc.T("Menu.LangMoreTip");
+        if (LangMorePlaceholderItem is not null)
+        {
+            LangMorePlaceholderItem.Header = Loc.T("Menu.Lang.MorePlaceholder");
+            LangMorePlaceholderItem.IsEnabled = false;
+        }
+    }
+
+    private void ThemeToggle_Click(object sender, RoutedEventArgs e)
+    {
+        // Left half: Light ↔ Dark only. Named skins (IconGold / Custom) leave to Light.
+        var next = ThemeManager.CurrentMode == AppThemeMode.Light
+            ? AppThemeMode.Dark
+            : AppThemeMode.Light;
+        AppearanceService.SetTheme(next);
+    }
+
+    private void ThemeMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (ThemeMoreButton?.ContextMenu is null)
+            return;
+
+        ThemeMoreButton.ContextMenu.PlacementTarget = ThemeMoreButton;
+        ThemeMoreButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        ThemeMoreButton.ContextMenu.IsOpen = true;
+    }
+
+    private void ThemeIconGold_Click(object sender, RoutedEventArgs e)
+    {
+        AppearanceService.SetTheme(AppThemeMode.IconGold);
+    }
+
+    // Custom theme is a placeholder in the other-themes menu (IsEnabled=false).
     private void ThemeCustom_Click(object sender, RoutedEventArgs e)
     {
         // Reserved for a future custom-color picker.
+    }
+
+    private void RefreshThemeToggleUi()
+    {
+        if (ThemeToggleButton is null)
+            return;
+
+        var mode = ThemeManager.CurrentMode;
+        var isBinary = mode is AppThemeMode.Light or AppThemeMode.Dark;
+        var showLight = mode == AppThemeMode.Light;
+
+        // Label: current binary mode; when Custom, still show last Light/Dark target as Dark→toggle to Light.
+        ThemeToggleButton.Content = Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
+        ThemeToggleButton.ToolTip = Loc.T("Menu.ThemeToggleTip");
+        ThemeToggleButton.FontWeight = FontWeights.Normal;
+
+        if (ThemeSplitBorder is not null)
+        {
+            ThemeSplitBorder.Style = (Style)FindResource(
+                isBinary ? "ThemeSplitBorderActiveStyle" : "ThemeSplitBorderStyle");
+            ThemeSplitBorder.Opacity = isBinary ? 1.0 : 0.75;
+        }
+
+        if (ThemeMoreButton is not null)
+            ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
+
+        if (ThemeIconGoldItem is not null)
+            ThemeIconGoldItem.IsChecked = mode == AppThemeMode.IconGold;
     }
 
     private void ApplyLocalizedToolbar()
@@ -1064,30 +1174,26 @@ public partial class MainWindow : Window
             LayoutMenuRoot.Header = Loc.T("Menu.Layout");
             LayoutMenuRoot.ToolTip = Loc.T("Menu.LayoutTip");
         }
-        if (LanguageMenu is not null)
-        {
-            LanguageMenu.Header = Loc.T("Menu.Language");
-            LanguageMenu.ToolTip = Loc.T("Menu.LanguageTip");
-        }
-        if (ThemeMenu is not null)
-        {
-            ThemeMenu.Header = Loc.T("Menu.Theme");
-            ThemeMenu.ToolTip = Loc.T("Menu.ThemeTip");
-        }
         if (LangZhItem is not null)
             LangZhItem.Header = Loc.T("Menu.Lang.Zh");
         if (LangEnItem is not null)
             LangEnItem.Header = Loc.T("Menu.Lang.En");
-        if (ThemeLightItem is not null)
-            ThemeLightItem.Header = Loc.T("Menu.Theme.Light");
-        if (ThemeDarkItem is not null)
-            ThemeDarkItem.Header = Loc.T("Menu.Theme.Dark");
+        if (ThemeMoreButton is not null)
+            ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
+        if (ThemeIconGoldItem is not null)
+        {
+            ThemeIconGoldItem.Header = Loc.T("Menu.Theme.IconGold");
+            ThemeIconGoldItem.ToolTip = Loc.T("Menu.Theme.IconGoldTip");
+        }
         if (ThemeCustomItem is not null)
         {
             ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");
             ThemeCustomItem.ToolTip = Loc.T("Menu.Theme.CustomTip");
             ThemeCustomItem.IsEnabled = false;
         }
+
+        RefreshLanguageToggleUi();
+        RefreshThemeToggleUi();
 
         SetText(LayoutCellDashboard, Loc.T("Layout.Dashboard"), Loc.T("Layout.ToggleDashboard"));
         SetText(LayoutCellTestResults, Loc.T("Layout.TestResults"), Loc.T("Layout.ToggleTestResults"));
@@ -1132,14 +1238,67 @@ public partial class MainWindow : Window
             StopOnlineButton.Content = Loc.T("Toolbar.Stop");
             StopOnlineButton.ToolTip = Loc.T("Toolbar.StopTip");
         }
-        if (RecordLabelText is not null && RecordButton?.IsEnabled == true)
-        {
-            // Keep Start/Pause state text owned by record state machine; only refresh Stop.
-        }
         if (StopRecordButton is not null)
             StopRecordButton.Content = Loc.T("Toolbar.RecordStop");
-        if (ConnectionStatusText is not null)
-            ConnectionStatusText.ToolTip = Loc.T("Status.ConnectionTip");
+        if (ElapsedLabelText is not null)
+            ElapsedLabelText.Text = Loc.T("Toolbar.Elapsed");
+
+        // Record Start/Pause/Resume follows current recording state machine.
+        RefreshRecordLabelFromState();
+
+        if (CurvesTitleText is not null)
+            CurvesTitleText.Text = Loc.T("Curves.Title");
+        if (XAxisLabelText is not null)
+            XAxisLabelText.Text = Loc.T("Curves.XAxis");
+        if (XAxisAutoScaleCheckBox is not null)
+            XAxisAutoScaleCheckBox.Content = Loc.T("Curves.XAutoScale");
+        if (AddPlotButton is not null)
+            AddPlotButton.Content = Loc.T("Curves.AddPlot");
+        if (ResetViewButton is not null)
+            ResetViewButton.Content = Loc.T("Curves.ResetView");
+        if (FilesLabelText is not null)
+            FilesLabelText.Text = Loc.T("Curves.Files");
+
+        if (ReplayTitleText is not null)
+            ReplayTitleText.Text = Loc.T("Replay.Title");
+        if (ReplayHintText is not null)
+            ReplayHintText.Text = Loc.T("Replay.Hint");
+        if (ReplayPageOpenVboButton is not null)
+            ReplayPageOpenVboButton.Content = Loc.T("Replay.OpenVbo");
+        if (ReplayFileText is not null &&
+            (string.IsNullOrWhiteSpace(ReplayFileText.Text) ||
+             ReplayFileText.Text is "No file loaded" or "未加载文件"))
+            ReplayFileText.Text = Loc.T("Replay.NoFile");
+
+        RefreshPlotChromeLocalization();
+        UpdateConnectionStatusUi();
+    }
+
+    private void RefreshRecordLabelFromState()
+    {
+        if (RecordLabelText is null)
+            return;
+        RecordLabelText.Text = _recordingSession.State switch
+        {
+            RecordingState.Recording => Loc.T("Toolbar.RecordPause"),
+            RecordingState.Paused => Loc.T("Toolbar.RecordResume"),
+            _ => Loc.T("Toolbar.RecordStart")
+        };
+    }
+
+    private void RefreshPlotChromeLocalization()
+    {
+        foreach (var plot in _plots)
+        {
+            if (plot.NameLabel is not null)
+                plot.NameLabel.Text = Loc.T("Curves.PlotName");
+            if (plot.AutoScaleYCheckBox is not null)
+                plot.AutoScaleYCheckBox.Content = Loc.T("Curves.AutoY");
+            if (plot.AddChannelButton is not null)
+                plot.AddChannelButton.Content = Loc.T("Curves.AddChannel");
+            if (plot.RemovePlotButton is not null)
+                plot.RemovePlotButton.Content = Loc.T("Curves.RemovePlot");
+        }
     }
 
     private static void SetText(Border? cell, string label, string tip)
@@ -1705,29 +1864,29 @@ public partial class MainWindow : Window
             {
                 // 最外层背景（与曲线区卡片一致）
                 FigureBackgroundColor =
-                    ScottPlot.Color.FromHex("#12171E"),
+                    ThemeBrushes.ScottPlot("PanelBackground", "#12171E"),
 
                 // 绘图区背景
                 DataBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A"),
+                    ThemeBrushes.ScottPlot("CardBackground", "#0E131A"),
 
                 // 坐标轴 / 刻度文字（DateTimeTicksBottom 会冲掉，见 ApplyAxisLabelColors）
                 AxisColor =
-                    ScottPlot.Color.FromHex("#C3CBD8"),
+                    ThemeBrushes.ScottPlot("TextBright", "#C3CBD8"),
 
                 // 网格线
                 GridMajorLineColor =
-                    ScottPlot.Color.FromHex("#232C38"),
+                    ThemeBrushes.ScottPlot("PlotGridLineBrush", "#232C38"),
 
                 // 图例
                 LegendBackgroundColor =
-                    ScottPlot.Color.FromHex("#12171E"),
+                    ThemeBrushes.ScottPlot("PanelBackground", "#12171E"),
 
                 LegendFontColor =
-                    ScottPlot.Color.FromHex("#C3CBD8"),
+                    ThemeBrushes.ScottPlot("TextBright", "#C3CBD8"),
 
                 LegendOutlineColor =
-                    ScottPlot.Color.FromHex("#1E2530"),
+                    ThemeBrushes.ScottPlot("BorderBrushSoft", "#1E2530"),
 
                 // 曲线配色
                 Palette =
@@ -1745,10 +1904,10 @@ public partial class MainWindow : Window
     private static void ApplyAxisLabelColors(ScottPlot.Plot scottPlot)
     {
         var tickColor =
-            ScottPlot.Color.FromHex("#C3CBD8");
+            ThemeBrushes.ScottPlot("TextBright", "#C3CBD8");
 
         var axisLabelColor =
-            ScottPlot.Color.FromHex("#8A94A6");
+            ThemeBrushes.ScottPlot("TextSecondary", "#8A94A6");
 
         foreach (var axis in scottPlot.Axes.GetAxes())
         {
@@ -1804,12 +1963,12 @@ public partial class MainWindow : Window
         var thumb = new Border
         {
             Height = 6,
-            Background = new SolidColorBrush(Color.FromRgb(0x2A, 0x33, 0x40)),
             Cursor = Cursors.SizeNS,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Margin = new Thickness(0, 2, 0, 2),
             ToolTip = "Drag to resize plot height"
         };
+        thumb.SetResourceReference(Border.BackgroundProperty, "SurfaceElevated");
 
         double startY = 0;
         double startH = 0;
@@ -1888,20 +2047,6 @@ public partial class MainWindow : Window
     {
         var outerBorder = new Border
         {
-            Background =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x0E,
-                        0x13,
-                        0x1A)),
-
-            BorderBrush =
-                new SolidColorBrush(
-                    Color.FromRgb(
-                        0x1E,
-                        0x25,
-                        0x30)),
-
             BorderThickness =
                 new Thickness(1),
 
@@ -1918,6 +2063,9 @@ public partial class MainWindow : Window
             VerticalAlignment = VerticalAlignment.Stretch,
             HorizontalAlignment = HorizontalAlignment.Stretch
         };
+        // DynamicResource so Light/Dark swap updates plot chrome (not a one-shot ThemeBrushes assign).
+        outerBorder.SetResourceReference(Border.BackgroundProperty, "CardBackground");
+        outerBorder.SetResourceReference(Border.BorderBrushProperty, "BorderBrushSoft");
 
 
         var root = new Grid();
@@ -1952,7 +2100,7 @@ public partial class MainWindow : Window
 
         var removePlotButton = new Button
         {
-            Content = "Remove Plot",
+            Content = Loc.T("Curves.RemovePlot"),
             Height = 26,
             Margin = new Thickness(8, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Top
@@ -1963,6 +2111,7 @@ public partial class MainWindow : Window
         removePlotButton.Click += (_, _) => RemovePlot(plot);
         DockPanel.SetDock(removePlotButton, Dock.Right);
         header.Children.Add(removePlotButton);
+        plot.RemovePlotButton = removePlotButton;
 
         // Wrap: Plot Name | name box | Auto Y | + Channel | channel chips...
         var chrome = new WrapPanel
@@ -1973,14 +2122,15 @@ public partial class MainWindow : Window
 
         var nameLabel = new TextBlock
         {
-            Text = "Plot Name",
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Text = Loc.T("Curves.PlotName"),
             FontSize = 11,
             FontWeight = FontWeights.Bold,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 4)
         };
+        nameLabel.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
         chrome.Children.Add(nameLabel);
+        plot.NameLabel = nameLabel;
 
         var nameTextBox = new TextBox
         {
@@ -2003,11 +2153,12 @@ public partial class MainWindow : Window
 
         var autoScaleCheckBox = new CheckBox
         {
-            Content = "Auto Y",
+            Content = Loc.T("Curves.AutoY"),
             IsChecked = plot.AutoScaleY,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 12, 4)
         };
+        autoScaleCheckBox.SetResourceReference(Control.ForegroundProperty, "TextPrimary");
         plot.AutoScaleYCheckBox = autoScaleCheckBox;
         autoScaleCheckBox.Checked += (_, _) =>
         {
@@ -2027,7 +2178,7 @@ public partial class MainWindow : Window
 
         var addChannelButton = new Button
         {
-            Content = "+ Channel",
+            Content = Loc.T("Curves.AddChannel"),
             Height = 26,
             Margin = new Thickness(0, 0, 8, 4)
         };
@@ -2036,6 +2187,7 @@ public partial class MainWindow : Window
             "ToolButtonStyle");
         addChannelButton.Click += (_, _) => AddChannel(plot);
         chrome.Children.Add(addChannelButton);
+        plot.AddChannelButton = addChannelButton;
 
         foreach (var channel in plot.Channels)
             chrome.Children.Add(CreateChannelControl(plot, channel));
@@ -2129,12 +2281,12 @@ public partial class MainWindow : Window
         var unitText = new TextBlock
         {
             Text = GetSignalUnit(channel.ChannelId),
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(6, 0, 4, 0),
             MinWidth = 36
         };
+        unitText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
 
         comboBox.SelectionChanged += (_, _) =>
         {
@@ -3314,11 +3466,11 @@ public partial class MainWindow : Window
     }
 
 
-    private static readonly string[] RunAnnotationPalette =
-    {
+    private static string[] RunAnnotationPalette =>
+    [
         "#3FBF6F", "#4A9FD8", "#C06AD8", "#E08A4A",
-        "#5AC8C8", "#E05252", "#D8D84A", "#C8A34A"
-    };
+        "#5AC8C8", "#E05252", "#D8D84A", ThemeBrushes.Hex("AccentBrush", "#C8A34A")
+    ];
 
     private void OnTestResultsAnnotated(IReadOnlyList<AnnotatedTestRun> runs)
     {
@@ -3492,9 +3644,9 @@ public partial class MainWindow : Window
         scottPlot.HideLegend();
         var legend = scottPlot.ShowLegend(ScottPlot.Edge.Right);
         legend.Legend.FontSize = 10;
-        legend.Legend.FontColor = ScottPlot.Color.FromHex("#C3CBD8");
-        legend.Legend.BackgroundColor = ScottPlot.Color.FromHex("#12171E").WithAlpha(0.88);
-        legend.Legend.OutlineColor = ScottPlot.Color.FromHex("#1E2530");
+        legend.Legend.FontColor = ThemeBrushes.ScottPlot("TextBright", "#C3CBD8");
+        legend.Legend.BackgroundColor = ThemeBrushes.ScottPlot("PanelBackground", "#12171E").WithAlpha(0.88);
+        legend.Legend.OutlineColor = ThemeBrushes.ScottPlot("BorderBrushSoft", "#1E2530");
         legend.Legend.ShadowColor = ScottPlot.Colors.Transparent;
     }
 
@@ -3558,7 +3710,7 @@ public partial class MainWindow : Window
             var label = scottPlot.Add.Annotation(labelText, ScottPlot.Alignment.UpperRight);
             label.LabelFontSize = 14;
             label.LabelFontColor = ScottPlot.Color.FromHex(colorHex);
-            label.LabelBackgroundColor = ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.7);
+            label.LabelBackgroundColor = ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.7);
             label.LabelBorderColor = ScottPlot.Color.FromHex(colorHex);
             label.OffsetX = 10;
             label.OffsetY = 8;
@@ -3611,9 +3763,9 @@ public partial class MainWindow : Window
             var right = Math.Max(sx1, sx2);
             var span = scottPlot.Add.HorizontalSpan(left, right);
             span.FillColor =
-                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.16);
+                ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.16);
             span.LineColor =
-                ScottPlot.Color.FromHex("#C8A34A").WithAlpha(0.55);
+                ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.55);
             span.LineWidth = 1;
 
             if (!string.IsNullOrEmpty(_lastMeasureText))
@@ -3622,10 +3774,10 @@ public partial class MainWindow : Window
                     _lastMeasureText,
                     ScottPlot.Alignment.LowerLeft);
                 manno.LabelFontSize = 13;
-                manno.LabelFontColor = ScottPlot.Color.FromHex("#C8A34A");
+                manno.LabelFontColor = ThemeBrushes.ScottPlot("AccentBrush");
                 manno.LabelBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.78);
-                manno.LabelBorderColor = ScottPlot.Color.FromHex("#1E2530");
+                    ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.78);
+                manno.LabelBorderColor = ThemeBrushes.ScottPlot("BorderBrushSoft");
                 manno.OffsetX = 10;
                 manno.OffsetY = 10;
             }
@@ -3636,7 +3788,7 @@ public partial class MainWindow : Window
         {
             var vLine = scottPlot.Add.VerticalLine(cursorX);
             vLine.LineColor =
-                ScottPlot.Color.FromHex("#C8A34A");
+                ThemeBrushes.ScottPlot("AccentBrush");
             vLine.LineWidth = 1.5f;
             vLine.LinePattern = ScottPlot.LinePattern.Solid;
 
@@ -3648,11 +3800,11 @@ public partial class MainWindow : Window
                     ScottPlot.Alignment.UpperLeft);
                 anno.LabelFontSize = 18;
                 anno.LabelFontColor =
-                    ScottPlot.Color.FromHex("#C8A34A");
+                    ThemeBrushes.ScottPlot("AccentBrush");
                 anno.LabelBackgroundColor =
-                    ScottPlot.Color.FromHex("#0E131A").WithAlpha(0.72);
+                    ThemeBrushes.ScottPlot("CardBackground").WithAlpha(0.72);
                 anno.LabelBorderColor =
-                    ScottPlot.Color.FromHex("#1E2530");
+                    ThemeBrushes.ScottPlot("BorderBrushSoft");
                 anno.LabelBorderWidth = 1;
                 anno.LabelShadowColor =
                     ScottPlot.Colors.Transparent;
@@ -3914,7 +4066,7 @@ public partial class MainWindow : Window
             new SampleSource
             {
                 Label = "Live",
-                ColorHex = "#C8A34A",
+                ColorHex = ThemeBrushes.Hex("AccentBrush", "#C8A34A"),
                 Samples = MathsEnricher.Apply(live, MathsChannelStore.Instance.Definitions)
             }
         };
@@ -4588,17 +4740,16 @@ public partial class MainWindow : Window
             {
                 ConnectionStatusText.Text =
                     _offlineFiles.Count > 0
-                        ? "Offline · " + _offlineFiles.Count + " file(s)"
-                        : "Offline";
-                ConnectionStatusText.ToolTip = "Offline VBO replay";
+                        ? Loc.T("Status.OfflineFiles", _offlineFiles.Count)
+                        : Loc.T("Status.Offline");
+                ConnectionStatusText.ToolTip = Loc.T("Status.OfflineTip");
             }
 
             if (ConnectionDot is not null)
             {
                 try
                 {
-                    ConnectionDot.Fill =
-                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                    ConnectionDot.Fill = ThemeBrushes.TextSecondary();
                 }
                 catch { /* ignore */ }
             }
@@ -4610,16 +4761,15 @@ public partial class MainWindow : Window
         {
             if (ConnectionStatusText is not null)
             {
-                ConnectionStatusText.Text = "Stopped";
-                ConnectionStatusText.ToolTip = "Online connection stopped";
+                ConnectionStatusText.Text = Loc.T("Status.Stopped");
+                ConnectionStatusText.ToolTip = Loc.T("Status.StoppedTip");
             }
 
             if (ConnectionDot is not null)
             {
                 try
                 {
-                    ConnectionDot.Fill =
-                        (Brush)new BrushConverter().ConvertFromString("#8A94A6")!;
+                    ConnectionDot.Fill = ThemeBrushes.TextSecondary();
                 }
                 catch { /* ignore */ }
             }
@@ -4638,15 +4788,15 @@ public partial class MainWindow : Window
         var (label, color) = source.State switch
         {
             DataSourceState.Connected =>
-                ("Online", "#3FBF6F"),
+                (Loc.T("Status.Online"), ThemeBrushes.Hex("SuccessBrush", "#3FBF6F")),
             DataSourceState.Connecting =>
-                ("Connecting…", "#E0B060"),
+                (Loc.T("Status.Connecting"), ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Reconnecting =>
-                ("Reconnecting…", "#E0B060"),
+                (Loc.T("Status.Reconnecting"), ThemeBrushes.Hex("AccentBrush", "#C8A34A")),
             DataSourceState.Faulted =>
-                ("Faulted", "#E08A8A"),
+                (Loc.T("Status.Faulted"), ThemeBrushes.Hex("RecordActiveForeground", "#E08A8A")),
             _ =>
-                ("Offline", "#8A94A6")
+                (Loc.T("Status.Offline"), ThemeBrushes.Hex("TextSecondary", "#8A94A6"))
         };
 
         // UDP 无真实会话：保持 Online 语义（绑定成功即视为就绪）
@@ -4657,8 +4807,8 @@ public partial class MainWindow : Window
             // UdpReceiver StartAsync 后即 Connected；未启动则 Offline
             if (source.State == DataSourceState.Connected)
             {
-                label = "Online";
-                color = "#3FBF6F";
+                label = Loc.T("Status.Online");
+                color = ThemeBrushes.Hex("SuccessBrush", "#3FBF6F");
             }
         }
 
@@ -4968,6 +5118,10 @@ public partial class MainWindow : Window
 
         /// <summary>曲线标题栏 Auto Y 复选框，便于手动缩放时同步关闭。</summary>
         public CheckBox? AutoScaleYCheckBox { get; set; }
+
+        public TextBlock? NameLabel { get; set; }
+        public Button? AddChannelButton { get; set; }
+        public Button? RemovePlotButton { get; set; }
 
         /// <summary>
         /// Auto 关闭时锁定的轴范围；10Hz Refresh 不得从数据重算覆盖。

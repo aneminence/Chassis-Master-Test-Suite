@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Chassis_Master_Test_Suite.Themes;
 using Chassis_Master_Test_Suite.Session;
 
 namespace Chassis_Master_Test_Suite.Controls;
@@ -19,7 +20,7 @@ public static class SessionEditDialog
             Width = 420,
             Height = 520,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = new SolidColorBrush(Color.FromRgb(0x12, 0x17, 0x1E)),
+            Background = ThemeBrushes.Panel(),
             ResizeMode = ResizeMode.NoResize
         };
 
@@ -33,7 +34,7 @@ public static class SessionEditDialog
             stack.Children.Add(new TextBlock
             {
                 Text = label,
-                Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+                Foreground = ThemeBrushes.TextSecondary(),
                 FontSize = 11,
                 Margin = new Thickness(0, 6, 0, 2)
             });
@@ -41,10 +42,10 @@ public static class SessionEditDialog
             {
                 Text = value,
                 Height = 28,
-                Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
-                Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
-                CaretBrush = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
+                Background = ThemeBrushes.Card(),
+                Foreground = ThemeBrushes.TextPrimary(),
+                BorderBrush = ThemeBrushes.Border(),
+                CaretBrush = ThemeBrushes.Accent(),
                 VerticalContentAlignment = VerticalAlignment.Center,
                 Padding = new Thickness(6, 0, 6, 0)
             };

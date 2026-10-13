@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using Chassis_Master_Test_Suite.Themes;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
 
@@ -32,7 +33,7 @@ public sealed class GaugeBindingPickerDialog : Window
         Width = 420;
         Height = 520;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = new SolidColorBrush(Color.FromRgb(0x12, 0x17, 0x1E));
+        Background = ThemeBrushes.Panel();
         ResizeMode = ResizeMode.CanResizeWithGrip;
 
         var root = new Grid { Margin = new Thickness(14) };
@@ -66,7 +67,7 @@ public sealed class GaugeBindingPickerDialog : Window
         var hint = new TextBlock
         {
             Text = "Live channels  路  Test Results  路  Pass conditions",
-            Foreground = new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6)),
+            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 11,
             Margin = new Thickness(0, 0, 0, 6)
         };
@@ -75,9 +76,9 @@ public sealed class GaugeBindingPickerDialog : Window
 
         _list = new ListBox
         {
-            Background = new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A)),
-            BorderBrush = new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30)),
-            Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0))
+            Background = ThemeBrushes.Card(),
+            BorderBrush = ThemeBrushes.Border(),
+            Foreground = ThemeBrushes.TextPrimary()
         };
         Grid.SetRow(_list, 2);
         root.Children.Add(_list);
@@ -145,7 +146,7 @@ public sealed class GaugeBindingPickerDialog : Window
                 Content = new TextBlock
                 {
                     Text = text,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A)),
+                    Foreground = ThemeBrushes.Accent(),
                     FontWeight = FontWeights.SemiBold,
                     FontSize = 12,
                     Margin = new Thickness(0, 6, 0, 2)
@@ -159,7 +160,7 @@ public sealed class GaugeBindingPickerDialog : Window
             row.Children.Add(new TextBlock
             {
                 Text = label,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0)),
+                Foreground = ThemeBrushes.TextPrimary(),
                 FontSize = 13
             });
             if (!string.IsNullOrWhiteSpace(detail))
@@ -167,7 +168,7 @@ public sealed class GaugeBindingPickerDialog : Window
                 row.Children.Add(new TextBlock
                 {
                     Text = detail,
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x5A, 0x64, 0x74)),
+                    Foreground = ThemeBrushes.TextMuted(),
                     FontSize = 11
                 });
             }
@@ -252,7 +253,7 @@ public sealed class GaugeBindingPickerDialog : Window
                 Content = new TextBlock
                 {
                     Text = "(Compute a Gate test with Pass conditions to list them here)",
-                    Foreground = new SolidColorBrush(Color.FromRgb(0x5A, 0x64, 0x74)),
+                    Foreground = ThemeBrushes.TextMuted(),
                     FontSize = 11,
                     FontStyle = FontStyles.Italic,
                     TextWrapping = TextWrapping.Wrap

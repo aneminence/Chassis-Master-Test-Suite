@@ -4,6 +4,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Media;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
+using Chassis_Master_Test_Suite.Themes;
 
 namespace Chassis_Master_Test_Suite.Controls;
 
@@ -30,7 +31,7 @@ public sealed class MathsChannelsDialog : Window
         MinWidth = 560;
         MinHeight = 360;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        Background = Brush(0x12, 0x17, 0x1E);
+        Background = ThemeBrushes.Panel();
         ResizeMode = ResizeMode.CanResizeWithGrip;
 
         var root = new Grid { Margin = new Thickness(12) };
@@ -54,12 +55,12 @@ public sealed class MathsChannelsDialog : Window
             Margin = new Thickness(0, 0, 0, 6)
         };
         var addBtn = MakeToolButton("+", "Add maths channel");
-        addBtn.Foreground = Brush(0x4C, 0xAF, 0x50);
+        addBtn.Foreground = ThemeBrushes.Success();
         addBtn.FontWeight = FontWeights.Bold;
         addBtn.FontSize = 16;
         addBtn.Click += (_, _) => AddDraft();
         var delBtn = MakeToolButton("×", "Delete selected");
-        delBtn.Foreground = Brush(0xE5, 0x73, 0x73);
+        delBtn.Foreground = ThemeBrushes.Danger();
         delBtn.FontWeight = FontWeights.Bold;
         delBtn.FontSize = 16;
         delBtn.Click += (_, _) => DeleteSelected();
@@ -70,9 +71,9 @@ public sealed class MathsChannelsDialog : Window
 
         _list = new ListBox
         {
-            Background = Brush(0x0E, 0x13, 0x1A),
-            BorderBrush = Brush(0x1E, 0x25, 0x30),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
+            Background = ThemeBrushes.Card(),
+            BorderBrush = ThemeBrushes.Border(),
+            Foreground = ThemeBrushes.TextPrimary(),
             Padding = new Thickness(2)
         };
         _list.SelectionChanged += (_, _) => OnListSelectionChanged();
@@ -99,9 +100,9 @@ public sealed class MathsChannelsDialog : Window
             Content = "Channels ▾",
             Padding = new Thickness(10, 4, 10, 4),
             Margin = new Thickness(0, 0, 6, 0),
-            Background = Brush(0x1A, 0x22, 0x2E),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x2A, 0x34, 0x44),
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder"),
             ToolTip = "Insert a live channel Id into the formula"
         };
         channelsBtn.Click += ChannelsButton_Click;
@@ -111,9 +112,9 @@ public sealed class MathsChannelsDialog : Window
             Content = "fx Functions ▾",
             Padding = new Thickness(10, 4, 10, 4),
             Margin = new Thickness(0, 0, 6, 0),
-            Background = Brush(0x1A, 0x22, 0x2E),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x2A, 0x34, 0x44),
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder"),
             ToolTip = "Insert operators / stubs"
         };
         functionsBtn.Click += FunctionsButton_Click;
@@ -141,10 +142,10 @@ public sealed class MathsChannelsDialog : Window
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
             FontFamily = new FontFamily("Consolas"),
             FontSize = 14,
-            Background = Brush(0x0E, 0x13, 0x1A),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0xC8, 0xA3, 0x4A),
-            CaretBrush = Brush(0xC8, 0xA3, 0x4A),
+            Background = ThemeBrushes.Card(),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Accent(),
+            CaretBrush = ThemeBrushes.Accent(),
             Padding = new Thickness(8),
             ToolTip = "Example: velocity * 1.16"
         };
@@ -162,7 +163,7 @@ public sealed class MathsChannelsDialog : Window
         var nameLabel = new TextBlock
         {
             Text = "Channel Name",
-            Foreground = Brush(0x8A, 0x94, 0xA6),
+            Foreground = ThemeBrushes.TextSecondary(),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 8, 0)
         };
@@ -175,7 +176,7 @@ public sealed class MathsChannelsDialog : Window
         var unitLabel = new TextBlock
         {
             Text = "Unit",
-            Foreground = Brush(0x8A, 0x94, 0xA6),
+            Foreground = ThemeBrushes.TextSecondary(),
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(12, 0, 8, 0)
         };
@@ -199,7 +200,7 @@ public sealed class MathsChannelsDialog : Window
         var hint = new TextBlock
         {
             Text = "Insert channel Ids via Channels. Operators: +  -  *  /  ( ). Accumulate / Integrate coming later.",
-            Foreground = Brush(0x5A, 0x64, 0x74),
+            Foreground = ThemeBrushes.TextMuted(),
             FontSize = 11,
             Margin = new Thickness(0, 8, 0, 0),
             TextWrapping = TextWrapping.Wrap
@@ -214,7 +215,7 @@ public sealed class MathsChannelsDialog : Window
 
         _status = new TextBlock
         {
-            Foreground = Brush(0xC8, 0xA3, 0x4A),
+            Foreground = ThemeBrushes.Accent(),
             FontSize = 11,
             Margin = new Thickness(0, 8, 0, 0),
             TextWrapping = TextWrapping.Wrap
@@ -235,9 +236,9 @@ public sealed class MathsChannelsDialog : Window
             Height = 28,
             Margin = new Thickness(0, 0, 8, 0),
             IsDefault = true,
-            Background = Brush(0x1A, 0x22, 0x2E),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x2A, 0x34, 0x44)
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder")
         };
         var cancel = new Button
         {
@@ -245,9 +246,9 @@ public sealed class MathsChannelsDialog : Window
             Width = 88,
             Height = 28,
             IsCancel = true,
-            Background = Brush(0x1A, 0x22, 0x2E),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x2A, 0x34, 0x44)
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder")
         };
         ok.Click += (_, _) => Accept();
         cancel.Click += (_, _) => { DialogResult = false; Close(); };
@@ -327,14 +328,14 @@ public sealed class MathsChannelsDialog : Window
         var name = new TextBlock
         {
             Text = string.IsNullOrWhiteSpace(d.DisplayName) ? d.Id : d.DisplayName,
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
+            Foreground = ThemeBrushes.TextPrimary(),
             FontSize = 13,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
         var unit = new TextBlock
         {
             Text = d.Unit ?? "",
-            Foreground = Brush(0x8A, 0x94, 0xA6),
+            Foreground = ThemeBrushes.TextSecondary(),
             FontSize = 12,
             Margin = new Thickness(8, 0, 0, 0)
         };
@@ -477,8 +478,8 @@ public sealed class MathsChannelsDialog : Window
         {
             PlacementTarget = sender as UIElement,
             Placement = PlacementMode.Bottom,
-            Background = Brush(0x1A, 0x22, 0x2E),
-            BorderBrush = Brush(0x2A, 0x34, 0x44)
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder")
         };
 
         foreach (var ch in ChannelRegistry.Instance.AvailablePlotChannels)
@@ -495,7 +496,7 @@ public sealed class MathsChannelsDialog : Window
             {
                 Header = label,
                 Tag = ch.Id,
-                Foreground = Brush(0xE6, 0xEA, 0xF0)
+                Foreground = ThemeBrushes.TextPrimary()
             };
             item.Click += (_, _) =>
             {
@@ -511,7 +512,7 @@ public sealed class MathsChannelsDialog : Window
             {
                 Header = "(no live channels)",
                 IsEnabled = false,
-                Foreground = Brush(0x5A, 0x64, 0x74)
+                Foreground = ThemeBrushes.TextMuted()
             });
         }
 
@@ -530,8 +531,8 @@ public sealed class MathsChannelsDialog : Window
         {
             PlacementTarget = sender as UIElement,
             Placement = PlacementMode.Bottom,
-            Background = Brush(0x1A, 0x22, 0x2E),
-            BorderBrush = Brush(0x2A, 0x34, 0x44)
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder")
         };
 
         void AddInsert(string header, string insert)
@@ -539,7 +540,7 @@ public sealed class MathsChannelsDialog : Window
             var item = new MenuItem
             {
                 Header = header,
-                Foreground = Brush(0xE6, 0xEA, 0xF0)
+                Foreground = ThemeBrushes.TextPrimary()
             };
             item.Click += (_, _) => InsertAtCaret(insert);
             menu.Items.Add(item);
@@ -551,7 +552,7 @@ public sealed class MathsChannelsDialog : Window
             {
                 Header = header,
                 IsEnabled = false,
-                Foreground = Brush(0x5A, 0x64, 0x74)
+                Foreground = ThemeBrushes.TextMuted()
             });
         }
 
@@ -678,9 +679,9 @@ public sealed class MathsChannelsDialog : Window
             Content = content,
             Padding = new Thickness(10, 4, 10, 4),
             Margin = new Thickness(0, 0, 6, 0),
-            Background = Brush(0x1A, 0x22, 0x2E),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x2A, 0x34, 0x44),
+            Background = ThemeBrushes.Brush("SurfaceElevated"),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Brush("LayoutInactiveBorder"),
             ToolTip = tip
         };
 
@@ -688,16 +689,14 @@ public sealed class MathsChannelsDialog : Window
         new()
         {
             Height = 28,
-            Background = Brush(0x0E, 0x13, 0x1A),
-            Foreground = Brush(0xE6, 0xEA, 0xF0),
-            BorderBrush = Brush(0x1E, 0x25, 0x30),
-            CaretBrush = Brush(0xC8, 0xA3, 0x4A),
+            Background = ThemeBrushes.Card(),
+            Foreground = ThemeBrushes.TextPrimary(),
+            BorderBrush = ThemeBrushes.Border(),
+            CaretBrush = ThemeBrushes.Accent(),
             VerticalContentAlignment = VerticalAlignment.Center,
             Padding = new Thickness(6, 0, 6, 0)
         };
 
-    private static SolidColorBrush Brush(byte r, byte g, byte b) =>
-        new(Color.FromRgb(r, g, b));
 
     private sealed class Draft
     {

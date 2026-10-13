@@ -28,7 +28,7 @@
 
                 <TextBlock Grid.Column="0"
                            Text="◎"
-                           Foreground="#8A94A6"
+                           Foreground="{DynamicResource TextSecondary}"
                            FontSize="14"
                            Margin="0,0,8,0"
                            VerticalAlignment="Center"/>
@@ -63,13 +63,13 @@
                               Style="{StaticResource DarkComboBoxStyle}"
                               SelectionChanged="GateCombo_SelectionChanged"
                               ToolTip="Select gate"/>
-                    <TextBlock Text="W" Foreground="#8A94A6" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
                     <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
                              Text="20" Style="{StaticResource DarkTextBoxStyle}"
                              VerticalContentAlignment="Center"
                              ToolTip="Gate width (meters)"
                              LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
-                    <TextBlock Text="m" Foreground="#5A6474" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="m" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
                             Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
                     <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
@@ -86,7 +86,7 @@
             <!-- 地图区 -->
             <Border Grid.Row="1"
                     Background="{DynamicResource MapCanvasBackground}"
-                    BorderBrush="#1E2530"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
                     BorderThickness="1"
                     CornerRadius="4"
                     ClipToBounds="True">
@@ -114,8 +114,8 @@
                             HorizontalAlignment="Left"
                             VerticalAlignment="Top"
                             Margin="10,10,0,0"
-                            Background="#E612171E"
-                            BorderBrush="#1E2530"
+                            Background="{DynamicResource OverlayScrim}"
+                            BorderBrush="{DynamicResource BorderBrushSoft}"
                             BorderThickness="1"
                             CornerRadius="4"
                             Padding="8,6"
@@ -123,7 +123,7 @@
                             MaxWidth="200">
                         <StackPanel>
                             <TextBlock Text="Gates"
-                                       Foreground="#8A94A6"
+                                       Foreground="{DynamicResource TextSecondary}"
                                        FontSize="10"
                                        FontWeight="SemiBold"
                                        Margin="0,0,0,4"/>
@@ -136,8 +136,8 @@
                     <Border x:Name="HoverTip"
                             Visibility="Collapsed"
                             IsHitTestVisible="False"
-                            Background="#CC161D26"
-                            BorderBrush="#C8A34A"
+                            Background="{DynamicResource HudBackground}"
+                            BorderBrush="{DynamicResource AccentBrush}"
                             BorderThickness="1"
                             CornerRadius="3"
                             Padding="7,3"
@@ -145,7 +145,7 @@
                             VerticalAlignment="Top">
 
                         <TextBlock x:Name="HoverTipText"
-                                   Foreground="#E6EAF0"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="11"
                                    FontFamily="Consolas"/>
                     </Border>
@@ -157,13 +157,13 @@
                                 IsHitTestVisible="False">
 
                         <TextBlock Text="Track Map"
-                                   Foreground="#4A5568"
+                                   Foreground="{DynamicResource MapPlaceholderForeground}"
                                    FontSize="18"
                                    FontWeight="SemiBold"
                                    HorizontalAlignment="Center"/>
 
                         <TextBlock Text="Waiting for GPS data"
-                                   Foreground="#39424F"
+                                   Foreground="{DynamicResource MapHintForeground}"
                                    FontSize="11"
                                    Margin="0,8,0,0"
                                    HorizontalAlignment="Center"/>
@@ -180,13 +180,13 @@
                                     HorizontalAlignment="Right">
 
                             <TextBlock Text="Lat"
-                                       Foreground="#5A6474"
+                                       Foreground="{DynamicResource TextMuted}"
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
                             <TextBlock x:Name="LatText"
                                        Text="--"
-                                       Foreground="#8A94A6"
+                                       Foreground="{DynamicResource TextSecondary}"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
 
@@ -197,13 +197,13 @@
                                     Margin="0,3,0,0">
 
                             <TextBlock Text="Lon"
-                                       Foreground="#5A6474"
+                                       Foreground="{DynamicResource TextMuted}"
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
                             <TextBlock x:Name="LonText"
                                        Text="--"
-                                       Foreground="#8A94A6"
+                                       Foreground="{DynamicResource TextSecondary}"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
 
@@ -214,13 +214,13 @@
                                     Margin="0,3,0,0">
 
                             <TextBlock Text="Alt"
-                                       Foreground="#5A6474"
+                                       Foreground="{DynamicResource TextMuted}"
                                        FontSize="10"
                                        Margin="0,0,6,0"/>
 
                             <TextBlock x:Name="AltText"
                                        Text="--"
-                                       Foreground="#8A94A6"
+                                       Foreground="{DynamicResource TextSecondary}"
                                        FontSize="10"
                                        FontFamily="Consolas"/>
 

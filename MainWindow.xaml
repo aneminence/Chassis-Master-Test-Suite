@@ -76,7 +76,7 @@
 
                     <Border Width="1"
                             Height="20"
-                            Background="#26303C"
+                            Background="{DynamicResource ToolButtonBorder}"
                             Margin="12,0,10,0"
                             VerticalAlignment="Center"/>
 
@@ -95,8 +95,8 @@
                                       StaysOpenOnClick="True"
                                       Focusable="False">
                                 <MenuItem.Header>
-                                    <Border Background="#0E1319"
-                                            BorderBrush="#26303C"
+                                    <Border Background="{DynamicResource MenuDropdownBackground}"
+                                            BorderBrush="{DynamicResource ToolButtonBorder}"
                                             BorderThickness="0"
                                             Padding="6"
                                             Width="252">
@@ -175,15 +175,15 @@
                                             <!-- Reset -->
                                             <Border x:Name="LayoutCellReset"
                                                     Grid.Row="4"
-                                                    Background="#1A222C"
-                                                    BorderBrush="#3A4554"
+                                                    Background="{DynamicResource LayoutInactiveBackground}"
+                                                    BorderBrush="{DynamicResource LayoutInactiveBorder}"
                                                     BorderThickness="1"
                                                     CornerRadius="2"
                                                     Cursor="Hand"
                                                     ToolTip="Reset layout to default sizes and visibility"
                                                     MouseLeftButtonUp="LayoutReset_Click">
                                                 <TextBlock Text="Reset"
-                                                           Foreground="#A8B0BC"
+                                                           Foreground="{DynamicResource LayoutInactiveForeground}"
                                                            FontSize="11"
                                                            FontStyle="Italic"
                                                            HorizontalAlignment="Center"
@@ -222,7 +222,7 @@
                     <Button x:Name="ClearOfflineButton"
                             Content="Clear"
                             Style="{StaticResource ToolButtonStyle}"
-                            Foreground="#E08A8A"
+                            Foreground="{DynamicResource DangerHoverForeground}"
                             Margin="0,0,8,0"
                             Click="CloseAllVboButton_Click"
                             ToolTip="Close all opened VBO files"/>
@@ -234,7 +234,7 @@
 
                         <Border Width="1"
                                 Height="18"
-                                Background="#26303C"
+                                Background="{DynamicResource ToolButtonBorder}"
                                 Margin="0,0,8,0"
                                 VerticalAlignment="Center"/>
 
@@ -261,7 +261,7 @@
                         <Button x:Name="StopOnlineButton"
                                 Content="Stop"
                                 Style="{StaticResource ToolButtonStyle}"
-                                Foreground="#E08A8A"
+                                Foreground="{DynamicResource DangerHoverForeground}"
                                 Click="StopOnlineButton_Click"
                                 ToolTip="Stop the current online data source"/>
                     </StackPanel>
@@ -276,13 +276,13 @@
                     <Ellipse x:Name="ConnectionDot"
                              Width="7"
                              Height="7"
-                             Fill="#3FBF6F"
+                             Fill="{DynamicResource SuccessBrush}"
                              VerticalAlignment="Center"
                              Margin="0,0,6,0"/>
 
                     <TextBlock x:Name="ConnectionStatusText"
                                Text="Offline"
-                               Foreground="#8A94A6"
+                               Foreground="{DynamicResource TextSecondary}"
                                FontSize="11"
                                VerticalAlignment="Center"
                                ToolTip="数据源连接状态"/>
@@ -294,66 +294,115 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
 
-                    <!-- Language (top-right outer dropdown) -->
-                    <Menu Background="Transparent"
-                          BorderThickness="0"
-                          Padding="0"
-                          Margin="0,0,4,0"
-                          VerticalAlignment="Center"
-                          Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="LanguageMenu"
-                                  Header="语言 ▾"
-                                  Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="Interface language">
-                            <MenuItem x:Name="LangZhItem"
-                                      Header="中文"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="LangZh_Click"/>
-                            <MenuItem x:Name="LangEnItem"
-                                      Header="English"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="LangEn_Click"/>
-                        </MenuItem>
-                    </Menu>
+                    <!-- Language split-button: left toggles 中↔EN, right chevron = other languages -->
+                    <Border x:Name="LanguageSplitBorder"
+                            Style="{StaticResource ThemeSplitBorderActiveStyle}"
+                            Height="26"
+                            Margin="0,0,4,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="LanguageToggleButton"
+                                    Content="中"
+                                    Style="{StaticResource ThemeSplitPartStyle}"
+                                    Height="24"
+                                    Width="40"
+                                    Click="LanguageToggle_Click"
+                                    ToolTip="切换中文 / 英文"
+                                    VerticalAlignment="Center"/>
+                            <Border Width="1"
+                                    Margin="0,4"
+                                    Background="{DynamicResource ToolButtonBorder}"
+                                    VerticalAlignment="Stretch"/>
+                            <Button x:Name="LanguageMoreButton"
+                                    Content="▾"
+                                    Style="{StaticResource ThemeSplitChevronStyle}"
+                                    Height="24"
+                                    Click="LanguageMore_Click"
+                                    ToolTip="其它语言"
+                                    VerticalAlignment="Center">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="LanguageMoreMenu"
+                                                 Background="{DynamicResource PanelBackground}"
+                                                 BorderBrush="{DynamicResource ToolButtonBorder}"
+                                                 BorderThickness="1">
+                                        <MenuItem x:Name="LangZhItem"
+                                                  Header="中文"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  Click="LangZh_Click"/>
+                                        <MenuItem x:Name="LangEnItem"
+                                                  Header="English"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  Click="LangEn_Click"/>
+                                        <Separator/>
+                                        <MenuItem x:Name="LangMorePlaceholderItem"
+                                                  Header="更多语言…"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsEnabled="False"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Border>
 
-                    <!-- Theme (top-right outer dropdown) -->
-                    <Menu Background="Transparent"
-                          BorderThickness="0"
-                          Padding="0"
-                          Margin="0,0,10,0"
-                          VerticalAlignment="Center"
-                          Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="ThemeMenu"
-                                  Header="主题 ▾"
-                                  Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="UI theme">
-                            <MenuItem x:Name="ThemeLightItem"
-                                      Header="明亮"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="ThemeLight_Click"/>
-                            <MenuItem x:Name="ThemeDarkItem"
-                                      Header="暗黑"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      Click="ThemeDark_Click"/>
-                            <Separator Style="{StaticResource DarkMenuSeparatorStyle}"/>
-                            <MenuItem x:Name="ThemeCustomItem"
-                                      Header="自定义…"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      IsEnabled="False"
-                                      ToolTip="Custom theme colors (placeholder)"/>
-                        </MenuItem>
-                    </Menu>
+                    <!-- Theme split-button: left toggles Light↔Dark, right chevron = other themes -->
+                    <Border x:Name="ThemeSplitBorder"
+                            Style="{StaticResource ThemeSplitBorderActiveStyle}"
+                            Height="26"
+                            Margin="0,0,10,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ThemeToggleButton"
+                                    Content="暗"
+                                    Style="{StaticResource ThemeSplitPartStyle}"
+                                    Height="24"
+                                    Width="44"
+                                    Click="ThemeToggle_Click"
+                                    ToolTip="切换明亮 / 暗黑"
+                                    VerticalAlignment="Center"/>
+                            <Border Width="1"
+                                    Margin="0,4"
+                                    Background="{DynamicResource ToolButtonBorder}"
+                                    VerticalAlignment="Stretch"/>
+                            <Button x:Name="ThemeMoreButton"
+                                    Content="▾"
+                                    Style="{StaticResource ThemeSplitChevronStyle}"
+                                    Height="24"
+                                    Click="ThemeMore_Click"
+                                    ToolTip="其它主题"
+                                    VerticalAlignment="Center">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="ThemeMoreMenu"
+                                                 Background="{DynamicResource PanelBackground}"
+                                                 BorderBrush="{DynamicResource ToolButtonBorder}"
+                                                 BorderThickness="1">
+                                        <MenuItem x:Name="ThemeIconGoldItem"
+                                                  Header="图标暖金"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsCheckable="True"
+                                                  Click="ThemeIconGold_Click"
+                                                  ToolTip="Warm gold dark chrome (VI Variant D)"/>
+                                        <MenuItem x:Name="ThemeCustomItem"
+                                                  Header="自定义…"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsEnabled="False"
+                                                  Click="ThemeCustom_Click"
+                                                  ToolTip="Custom theme colors (placeholder)"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Border>
 
                     <Border Width="1"
                             Height="18"
-                            Background="#26303C"
+                            Background="{DynamicResource ToolButtonBorder}"
                             Margin="0,0,10,0"
                             VerticalAlignment="Center"/>
 
                     <Button x:Name="RecordButton"
 
                             Style="{StaticResource ToolButtonStyle}"
-                            Foreground="#E08A8A"
+                            Foreground="{DynamicResource DangerHoverForeground}"
                             Margin="0,0,6,0"
                             Click="RecordButton_Click">
                         <StackPanel Orientation="Horizontal">
@@ -370,28 +419,33 @@
                     <Button x:Name="StopRecordButton"
                             Content="■ Stop"
                             Style="{StaticResource ToolButtonStyle}"
-                            Foreground="#8A94A6"
+                            Foreground="{DynamicResource TextSecondary}"
                             IsEnabled="False"
                             Margin="0,0,14,0"
                             Click="StopRecordButton_Click"/>
 
-                    <TextBlock Text="Elapsed"
-                               Foreground="#5A6474"
+                    <TextBlock x:Name="ElapsedLabelText"
+                               Text="Elapsed"
+                               Foreground="{DynamicResource TextMuted}"
                                FontSize="10"
+                               Width="54"
+                               TextAlignment="Right"
                                VerticalAlignment="Center"
                                Margin="0,0,5,0"/>
 
                     <TextBlock x:Name="ElapsedTimeText"
                                Text="--"
-                               Foreground="#8A94A6"
+                               Foreground="{DynamicResource TextSecondary}"
                                FontSize="12"
                                FontFamily="Consolas"
+                               Width="78"
+                               TextAlignment="Left"
                                VerticalAlignment="Center"
                                Margin="0,0,14,0"/>
 
                     <TextBlock x:Name="ClockText"
                                Text="--"
-                               Foreground="#C3CBD8"
+                               Foreground="{DynamicResource TextBright}"
                                FontSize="12"
                                FontFamily="Consolas"
                                VerticalAlignment="Center"/>
@@ -454,8 +508,8 @@
 
             <!-- Replay 页 -->
             <Border x:Name="ReplayPage"
-                    Background="#12171E"
-                    BorderBrush="#1E2530"
+                    Background="{DynamicResource PanelBackground}"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
                     BorderThickness="1"
                     CornerRadius="6"
                     Visibility="Collapsed"
@@ -463,14 +517,16 @@
 
                 <StackPanel Margin="24,20,24,20">
 
-                    <TextBlock Text="▷  Replay"
+                    <TextBlock x:Name="ReplayTitleText"
+                               Text="▷  Replay"
                                FontSize="15"
                                FontWeight="SemiBold"
-                               Foreground="#E6EAF0"/>
+                               Foreground="{DynamicResource TextPrimary}"/>
 
-                    <TextBlock Text="Load a recorded VBO file and analyse it offline."
+                    <TextBlock x:Name="ReplayHintText"
+                               Text="Load a recorded VBO file and analyse it offline."
                                FontSize="11"
-                               Foreground="#8A94A6"
+                               Foreground="{DynamicResource TextSecondary}"
                                Margin="0,6,0,18"/>
 
                     <StackPanel Orientation="Horizontal">
@@ -486,7 +542,7 @@
                                    VerticalAlignment="Center"
                                    Margin="16,0,0,0"
                                    FontSize="11"
-                                   Foreground="#8A94A6"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    Text="No file loaded"/>
 
                     </StackPanel>
@@ -494,7 +550,7 @@
                     <TextBlock x:Name="ReplayInfoText"
                                Margin="0,16,0,0"
                                FontSize="11"
-                               Foreground="#8A94A6"
+                               Foreground="{DynamicResource TextSecondary}"
                                Text=""/>
 
                 </StackPanel>
@@ -525,8 +581,8 @@
 
         <Border x:Name="CurvesPanelBorder"
                 Grid.Row="3"
-                Background="#12171E"
-                BorderBrush="#1E2530"
+                Background="{DynamicResource PanelBackground}"
+                BorderBrush="{DynamicResource BorderBrushSoft}"
                 BorderThickness="1"
                 CornerRadius="6"
                 Padding="14,10">
@@ -557,13 +613,14 @@
                                 Margin="0,0,32,0">
 
                         <TextBlock Text="⌁"
-                                   Foreground="#8A94A6"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    FontSize="14"
                                    Margin="0,0,8,0"
                                    VerticalAlignment="Center"/>
 
-                        <TextBlock Text="Test Data Curves"
-                                   Foreground="#E6EAF0"
+                        <TextBlock x:Name="CurvesTitleText"
+                                   Text="Test Data Curves"
+                                   Foreground="{DynamicResource TextPrimary}"
                                    FontSize="14"
                                    FontWeight="SemiBold"
                                    VerticalAlignment="Center"/>
@@ -576,8 +633,9 @@
                                 VerticalAlignment="Center">
 
                         <!-- X Axis -->
-                        <TextBlock Text="X Axis"
-                                   Foreground="#8A94A6"
+                        <TextBlock x:Name="XAxisLabelText"
+                                   Text="X Axis"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    FontSize="11"
                                    VerticalAlignment="Center"
                                    Margin="0,0,6,0"/>
@@ -619,9 +677,10 @@
                            Margin="8,0,8,0"
                            VerticalAlignment="Center"
                            LastChildFill="True">
-                    <TextBlock DockPanel.Dock="Left"
+                    <TextBlock x:Name="FilesLabelText"
+                               DockPanel.Dock="Left"
                                Text="Files"
-                               Foreground="#5A6474"
+                               Foreground="{DynamicResource TextMuted}"
                                FontSize="10"
                                VerticalAlignment="Center"
                                Margin="0,0,8,0"/>
@@ -638,42 +697,42 @@
                                 VerticalAlignment="Center">
 
                         <TextBlock Text="Rx"
-                                   Foreground="#5A6474"
+                                   Foreground="{DynamicResource TextMuted}"
                                    FontSize="10"
                                    VerticalAlignment="Center"
                                    Margin="0,0,4,0"/>
 
                         <TextBlock x:Name="ReceivedPacketsText"
                                    Text="0"
-                                   Foreground="#8A94A6"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    FontSize="10"
                                    FontFamily="Consolas"
                                    VerticalAlignment="Center"
                                    Margin="0,0,10,0"/>
 
                         <TextBlock Text="Lost"
-                                   Foreground="#5A6474"
+                                   Foreground="{DynamicResource TextMuted}"
                                    FontSize="10"
                                    VerticalAlignment="Center"
                                    Margin="0,0,4,0"/>
 
                         <TextBlock x:Name="LostPacketsText"
                                    Text="0"
-                                   Foreground="#8A94A6"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    FontSize="10"
                                    FontFamily="Consolas"
                                    VerticalAlignment="Center"
                                    Margin="0,0,10,0"/>
 
                         <TextBlock Text="OOO"
-                                   Foreground="#5A6474"
+                                   Foreground="{DynamicResource TextMuted}"
                                    FontSize="10"
                                    VerticalAlignment="Center"
                                    Margin="0,0,4,0"/>
 
                         <TextBlock x:Name="OutOfOrderPacketsText"
                                    Text="0"
-                                   Foreground="#8A94A6"
+                                   Foreground="{DynamicResource TextSecondary}"
                                    FontSize="10"
                                    FontFamily="Consolas"
                                    VerticalAlignment="Center"/>
@@ -690,8 +749,8 @@
                 <!--  曲线容器（独立滚动）  -->
 
                 <Border Grid.Row="1"
-                        Background="#0E131A"
-                        BorderBrush="#1E2530"
+                        Background="{DynamicResource CardBackground}"
+                        BorderBrush="{DynamicResource BorderBrushSoft}"
                         BorderThickness="1"
                         CornerRadius="4"
                         ClipToBounds="True">

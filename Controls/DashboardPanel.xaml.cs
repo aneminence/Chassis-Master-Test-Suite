@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using Chassis_Master_Test_Suite.Themes;
+using Chassis_Master_Test_Suite.Localization;
 using System.Windows.Shapes;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
@@ -22,24 +24,15 @@ public partial class DashboardPanel : UserControl
     private bool _cursorFrozen;
     private bool _suspendPersist;
 
-    private static readonly Brush CardBg =
-        new SolidColorBrush(Color.FromRgb(0x0E, 0x13, 0x1A));
-    private static readonly Brush CardBorder =
-        new SolidColorBrush(Color.FromRgb(0x1E, 0x25, 0x30));
-    private static readonly Brush CardBorderActive =
-        new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A));
-    private static readonly Brush TitleFg =
-        new SolidColorBrush(Color.FromRgb(0x8A, 0x94, 0xA6));
-    private static readonly Brush ValueFg =
-        new SolidColorBrush(Color.FromRgb(0xE6, 0xEA, 0xF0));
-    private static readonly Brush AccentFg =
-        new SolidColorBrush(Color.FromRgb(0xC8, 0xA3, 0x4A));
-    private static readonly Brush UnitFg =
-        new SolidColorBrush(Color.FromRgb(0x5A, 0x64, 0x74));
-    private static readonly Brush PassFg =
-        new SolidColorBrush(Color.FromRgb(0x3F, 0xBF, 0x6F));
-    private static readonly Brush FailFg =
-        new SolidColorBrush(Color.FromRgb(0xE0, 0x52, 0x52));
+    private static Brush CardBg => ThemeBrushes.Card();
+    private static Brush CardBorder => ThemeBrushes.Border();
+    private static Brush CardBorderActive => ThemeBrushes.Accent();
+    private static Brush TitleFg => ThemeBrushes.TextSecondary();
+    private static Brush ValueFg => ThemeBrushes.TextPrimary();
+    private static Brush AccentFg => ThemeBrushes.Accent();
+    private static Brush UnitFg => ThemeBrushes.TextMuted();
+    private static Brush PassFg => ThemeBrushes.Success();
+    private static Brush FailFg => ThemeBrushes.Danger();
 
     public DashboardPanel()
     {
@@ -49,6 +42,44 @@ public partial class DashboardPanel : UserControl
             DashboardLayoutStore.Instance.Load();
             RebuildFromStore();
         };
+        ThemeManager.ThemeChanged += (_, _) =>
+        {
+            void Refresh()
+            {
+                // Value brushes are assigned in code; chrome uses DynamicResource.
+                RefreshAllValues();
+            }
+            if (!Dispatcher.CheckAccess())
+                Dispatcher.Invoke(Refresh);
+            else
+                Refresh();
+        };
+        Loc.LanguageChanged += (_, _) =>
+        {
+            if (!Dispatcher.CheckAccess())
+                Dispatcher.Invoke(ApplyLocalizedChrome);
+            else
+                ApplyLocalizedChrome();
+        };
+        ApplyLocalizedChrome();
+    }
+
+    private void ApplyLocalizedChrome()
+    {
+        if (TitleText is not null)
+            TitleText.Text = Loc.T("Dashboard.Title");
+        if (AddGaugeButton is not null)
+        {
+            AddGaugeButton.Content = Loc.T("Dashboard.AddGauge");
+            AddGaugeButton.ToolTip = Loc.T("Dashboard.AddGaugeTip");
+        }
+        if (ResetLayoutButton is not null)
+        {
+            ResetLayoutButton.Content = Loc.T("Dashboard.Reset");
+            ResetLayoutButton.ToolTip = Loc.T("Dashboard.ResetTip");
+        }
+        if (CursorModeText is not null && _cursorFrozen)
+            CursorModeText.Text = Loc.T("Dashboard.Cursor");
     }
 
     /// <summary>Raised when a multi-vehicle chip is clicked.</summary>
@@ -61,7 +92,7 @@ public partial class DashboardPanel : UserControl
     {
         _liveSample = sample;
         _cursorFrozen = cursorFrozen;
-        CursorModeText.Text = cursorFrozen ? "Cursor" : "";
+        CursorModeText.Text = cursorFrozen ? Loc.T("Dashboard.Cursor") : "";
         RefreshAllValues();
     }
 
@@ -129,11 +160,7 @@ public partial class DashboardPanel : UserControl
 
             var border = new Border
             {
-                Background = new SolidColorBrush(
-                    isSelected
-                        ? Color.FromRgb(0x24, 0x30, 0x40)
-                        : Color.FromRgb(0x0E, 0x13, 0x1A)),
-                BorderBrush = TryBrush(colorHex) ?? CardBorder,
+                BorderBrush = TryBrush(colorHex) ?? ThemeBrushes.Border(),
                 BorderThickness = new Thickness(isSelected ? 2 : 1),
                 CornerRadius = new CornerRadius(4),
                 Padding = new Thickness(8, 4, 8, 4),
@@ -142,6 +169,9 @@ public partial class DashboardPanel : UserControl
                 Tag = name,
                 ToolTip = isSelected ? $"Current: {name}" : $"Switch to {name}"
             };
+            border.SetResourceReference(
+                Border.BackgroundProperty,
+                isSelected ? "ComboItemSelectedBackground" : "CardBackground");
 
             border.MouseLeftButtonUp += (_, e) =>
             {
@@ -159,10 +189,9 @@ public partial class DashboardPanel : UserControl
                 Margin = new Thickness(0, 0, 6, 0),
                 VerticalAlignment = VerticalAlignment.Center
             });
-            stack.Children.Add(new TextBlock
+            var nameTb = new TextBlock
             {
                 Text = name,
-                Foreground = new SolidColorBrush(Color.FromRgb(0xC3, 0xCB, 0xD8)),
                 FontSize = 11,
                 FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -170,16 +199,19 @@ public partial class DashboardPanel : UserControl
                 MaxWidth = 120,
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 IsHitTestVisible = false
-            });
-            stack.Children.Add(new TextBlock
+            };
+            nameTb.SetResourceReference(TextBlock.ForegroundProperty, "TextBright");
+            stack.Children.Add(nameTb);
+            var speedTb = new TextBlock
             {
                 Text = $"{speed:0.0} km/h",
-                Foreground = AccentFg,
                 FontSize = 11,
                 FontFamily = new FontFamily("Consolas"),
                 VerticalAlignment = VerticalAlignment.Center,
                 IsHitTestVisible = false
-            });
+            };
+            speedTb.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
+            stack.Children.Add(speedTb);
 
             border.Child = stack;
             MultiVehicleHost.Items.Add(border);
@@ -250,13 +282,13 @@ public partial class DashboardPanel : UserControl
         var titleText = new TextBlock
         {
             Text = layout.Title,
-            Foreground = TitleFg,
             FontSize = 11,
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
             Cursor = Cursors.Hand,
             ToolTip = "Click to change data source"
         };
+        titleText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondary");
 
         var deleteBtn = new Button
         {
@@ -269,11 +301,11 @@ public partial class DashboardPanel : UserControl
             Padding = new Thickness(0),
             Background = Brushes.Transparent,
             BorderThickness = new Thickness(0),
-            Foreground = TitleFg,
             Cursor = Cursors.Hand,
             ToolTip = "Remove gauge",
             VerticalAlignment = VerticalAlignment.Center
         };
+        deleteBtn.SetResourceReference(Control.ForegroundProperty, "TextSecondary");
 
         var header = new DockPanel { LastChildFill = true };
         DockPanel.SetDock(deleteBtn, Dock.Right);
@@ -283,7 +315,6 @@ public partial class DashboardPanel : UserControl
         var valueText = new TextBlock
         {
             Text = "--",
-            Foreground = AccentFg,
             FontSize = 28,
             FontWeight = FontWeights.SemiBold,
             FontFamily = new FontFamily("Consolas"),
@@ -292,15 +323,16 @@ public partial class DashboardPanel : UserControl
             TextAlignment = TextAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis
         };
+        valueText.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush");
 
         var unitText = new TextBlock
         {
             Text = layout.Unit,
-            Foreground = UnitFg,
             FontSize = 10,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom
         };
+        unitText.SetResourceReference(TextBlock.ForegroundProperty, "TextMuted");
 
         var body = new Grid { Margin = new Thickness(0, 4, 0, 0) };
         body.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
@@ -320,16 +352,17 @@ public partial class DashboardPanel : UserControl
             Cursor = Cursors.SizeNWSE,
             ToolTip = "Drag to resize"
         };
-        resizeGrip.Child = new Path
+        var gripPath = new Path
         {
             Data = Geometry.Parse("M0,10 L10,0 M4,10 L10,4 M8,10 L10,8"),
-            Stroke = UnitFg,
             StrokeThickness = 1.2,
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 1, 1),
             IsHitTestVisible = false
         };
+        gripPath.SetResourceReference(Shape.StrokeProperty, "TextMuted");
+        resizeGrip.Child = gripPath;
 
         var content = new Grid { Margin = new Thickness(10) };
         content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -341,8 +374,6 @@ public partial class DashboardPanel : UserControl
 
         var root = new Border
         {
-            Background = CardBg,
-            BorderBrush = CardBorder,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(4),
             Width = Math.Max(96, layout.Width),
@@ -350,6 +381,8 @@ public partial class DashboardPanel : UserControl
             Cursor = Cursors.SizeAll,
             Child = new Grid()
         };
+        root.SetResourceReference(Border.BackgroundProperty, "CardBackground");
+        root.SetResourceReference(Border.BorderBrushProperty, "BorderBrushSoft");
 
         var overlay = (Grid)root.Child;
         overlay.Children.Add(content);
