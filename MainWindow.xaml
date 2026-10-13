@@ -305,7 +305,7 @@
                                     Content="中"
                                     Style="{StaticResource ThemeSplitPartStyle}"
                                     Height="24"
-                                    Width="32"
+                                    Width="40"
                                     Click="LanguageToggle_Click"
                                     ToolTip="切换中文 / 英文"
                                     VerticalAlignment="Center"/>
