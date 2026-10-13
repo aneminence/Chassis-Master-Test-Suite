@@ -80,6 +80,60 @@
             </Setter>
         </Style>
 
+        <!-- Theme split-button: outer chrome (active = Light/Dark binary) -->
+        <Style x:Key="ThemeSplitBorderActiveStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource NavActiveBackground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+        </Style>
+        <Style x:Key="ThemeSplitBorderStyle" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource ToolButtonBackground}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ToolButtonBorder}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+        </Style>
+
+        <!-- Flat parts inside the split chrome (no own border) -->
+        <Style x:Key="ThemeSplitPartStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="10,0"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Root"
+                                Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource NavHoverBackground}"/>
+                                <Setter Property="Foreground" Value="{DynamicResource TextPrimary}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Root" Property="Background" Value="{DynamicResource SurfaceElevated}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="ThemeSplitChevronStyle"
+               TargetType="Button"
+               BasedOn="{StaticResource ThemeSplitPartStyle}">
+            <Setter Property="Padding" Value="6,0"/>
+            <Setter Property="MinWidth" Value="22"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextSecondary}"/>
+        </Style>
+
         <!-- ============================================================
              工具栏按钮（普通）
              ============================================================ -->

@@ -316,35 +316,48 @@
                         </MenuItem>
                     </Menu>
 
-                    <!-- Theme: single Light/Dark toggle + other themes dropdown -->
-                    <Button x:Name="ThemeToggleButton"
-                            Content="暗黑"
-                            Style="{StaticResource NavButtonActiveStyle}"
+                    <!-- Theme split-button: left toggles Light↔Dark, right chevron = other themes -->
+                    <Border x:Name="ThemeSplitBorder"
+                            Style="{StaticResource ThemeSplitBorderActiveStyle}"
                             Height="26"
-                            Padding="10,0"
-                            Margin="0,0,4,0"
-                            FontSize="11"
-                            Click="ThemeToggle_Click"
-                            ToolTip="切换明亮 / 暗黑"
-                            VerticalAlignment="Center"/>
-
-                    <Menu Background="Transparent"
-                          BorderThickness="0"
-                          Padding="0"
-                          Margin="0,0,10,0"
-                          VerticalAlignment="Center"
-                          Style="{StaticResource DarkMenuStyle}">
-                        <MenuItem x:Name="ThemeMoreMenu"
-                                  Header="其它 ▾"
-                                  Style="{StaticResource DarkTopMenuItemStyle}"
-                                  ToolTip="其它主题">
-                            <MenuItem x:Name="ThemeCustomItem"
-                                      Header="自定义…"
-                                      Style="{StaticResource DarkMenuItemStyle}"
-                                      IsEnabled="False"
-                                      ToolTip="Custom theme colors (placeholder)"/>
-                        </MenuItem>
-                    </Menu>
+                            Margin="0,0,10,0"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="ThemeToggleButton"
+                                    Content="暗黑"
+                                    Style="{StaticResource ThemeSplitPartStyle}"
+                                    FontWeight="SemiBold"
+                                    Height="24"
+                                    Click="ThemeToggle_Click"
+                                    ToolTip="切换明亮 / 暗黑"
+                                    VerticalAlignment="Center"/>
+                            <Border Width="1"
+                                    Margin="0,4"
+                                    Background="{DynamicResource ToolButtonBorder}"
+                                    VerticalAlignment="Stretch"/>
+                            <Button x:Name="ThemeMoreButton"
+                                    Content="▾"
+                                    Style="{StaticResource ThemeSplitChevronStyle}"
+                                    Height="24"
+                                    Click="ThemeMore_Click"
+                                    ToolTip="其它主题"
+                                    VerticalAlignment="Center">
+                                <Button.ContextMenu>
+                                    <ContextMenu x:Name="ThemeMoreMenu"
+                                                 Background="{DynamicResource PanelBackground}"
+                                                 BorderBrush="{DynamicResource AccentBrush}"
+                                                 BorderThickness="1">
+                                        <MenuItem x:Name="ThemeCustomItem"
+                                                  Header="自定义…"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsEnabled="False"
+                                                  Click="ThemeCustom_Click"
+                                                  ToolTip="Custom theme colors (placeholder)"/>
+                                    </ContextMenu>
+                                </Button.ContextMenu>
+                            </Button>
+                        </StackPanel>
+                    </Border>
 
                     <Border Width="1"
                             Height="18"

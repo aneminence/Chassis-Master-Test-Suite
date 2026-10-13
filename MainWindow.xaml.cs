@@ -1065,11 +1065,21 @@ public partial class MainWindow : Window
 
     private void ThemeToggle_Click(object sender, RoutedEventArgs e)
     {
-        // Single toggle: Light ↔ Dark. Custom (or any non-binary) flips to Light.
+        // Left half of split-button: Light ↔ Dark. Custom (or any non-binary) flips to Light.
         var next = ThemeManager.CurrentMode == AppThemeMode.Light
             ? AppThemeMode.Dark
             : AppThemeMode.Light;
         AppearanceService.SetTheme(next);
+    }
+
+    private void ThemeMore_Click(object sender, RoutedEventArgs e)
+    {
+        if (ThemeMoreButton?.ContextMenu is null)
+            return;
+
+        ThemeMoreButton.ContextMenu.PlacementTarget = ThemeMoreButton;
+        ThemeMoreButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        ThemeMoreButton.ContextMenu.IsOpen = true;
     }
 
     // Custom theme is a placeholder in the other-themes menu (IsEnabled=false).
@@ -1087,11 +1097,22 @@ public partial class MainWindow : Window
         var isBinary = mode is AppThemeMode.Light or AppThemeMode.Dark;
         var showLight = mode == AppThemeMode.Light;
 
+        // Label: current binary mode; when Custom, still show last Light/Dark target as Dark→toggle to Light.
         ThemeToggleButton.Content = Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
         ThemeToggleButton.ToolTip = Loc.T("Menu.ThemeToggleTip");
-        ThemeToggleButton.Style = (Style)FindResource(
-            isBinary ? "NavButtonActiveStyle" : "NavButtonStyle");
-        ThemeToggleButton.Opacity = isBinary ? 1.0 : 0.55;
+        ThemeToggleButton.FontWeight = isBinary
+            ? FontWeights.SemiBold
+            : FontWeights.Normal;
+
+        if (ThemeSplitBorder is not null)
+        {
+            ThemeSplitBorder.Style = (Style)FindResource(
+                isBinary ? "ThemeSplitBorderActiveStyle" : "ThemeSplitBorderStyle");
+            ThemeSplitBorder.Opacity = isBinary ? 1.0 : 0.75;
+        }
+
+        if (ThemeMoreButton is not null)
+            ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
     }
 
     private void ApplyLocalizedToolbar()
@@ -1108,15 +1129,12 @@ public partial class MainWindow : Window
             LanguageMenu.Header = Loc.T("Menu.Language");
             LanguageMenu.ToolTip = Loc.T("Menu.LanguageTip");
         }
-        if (ThemeMoreMenu is not null)
-        {
-            ThemeMoreMenu.Header = Loc.T("Menu.ThemeMore");
-            ThemeMoreMenu.ToolTip = Loc.T("Menu.ThemeMoreTip");
-        }
         if (LangZhItem is not null)
             LangZhItem.Header = Loc.T("Menu.Lang.Zh");
         if (LangEnItem is not null)
             LangEnItem.Header = Loc.T("Menu.Lang.En");
+        if (ThemeMoreButton is not null)
+            ThemeMoreButton.ToolTip = Loc.T("Menu.ThemeMoreTip");
         if (ThemeCustomItem is not null)
         {
             ThemeCustomItem.Header = Loc.T("Menu.Theme.Custom");
