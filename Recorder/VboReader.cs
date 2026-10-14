@@ -37,6 +37,12 @@ public sealed class VboReader
 
     private bool _columnIndexBuilt;
 
+    /// <summary>
+    /// GSpot / iCell Studio VBO (comments contain "GSpot" or "iCell").
+    /// Lat/long are not Racelogic arc-minutes.
+    /// </summary>
+    private bool _isGSpotFormat;
+
     public VboReader(string filePath)
     {
         FilePath = filePath;
@@ -126,6 +132,12 @@ public sealed class VboReader
             {
                 case "comments":
                     Comments.Add(trimmed);
+
+                    if (trimmed.Contains("GSpot", StringComparison.OrdinalIgnoreCase) ||
+                        trimmed.Contains("iCell", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _isGSpotFormat = true;
+                    }
 
                     if (trimmed.StartsWith(
                             "Log Rate",
@@ -263,11 +275,9 @@ public sealed class VboReader
         var vertAcc = Raw("Z_Accel") * StandardGravity;
         var yawRate = Raw("Yaw_Rate");
         var heading = Raw("heading");
-        var latitude = Raw("lat") / 60.0;
-
-        // Racelogic 的 VBO 里经度符号与常规约定相反：
-        // 负值是东经、正值是西经。取负号规范成“正 = 东经”。
-        var longitude = -Raw("long") / 60.0;
+        var rawLat = Raw("lat");
+        var rawLong = Raw("long");
+        DecodeLatLong(rawLat, rawLong, _isGSpotFormat, out var latitude, out var longitude);
         var altitude = Raw("height");
 
         // 核心通道写入 CMTS 内部单位，覆盖原始 g / arcmin。
@@ -321,6 +331,86 @@ public sealed class VboReader
     /// 回放时用它计算经过时间，
     /// 不能当作绝对时间使用。
     /// </summary>
+    /// <summary>
+    /// Decode VBO lat/long into east-positive decimal degrees.
+    /// Racelogic: arc-minutes, file long is +West (negate).
+    /// GSpot/iCell: lat typically deg*10, long typically deg*1e7 (east positive).
+    /// When the Racelogic decode is out of range, fall back to GSpot scaling
+    /// even if comments did not identify the file.
+    /// </summary>
+    private static void DecodeLatLong(
+        double rawLat,
+        double rawLong,
+        bool preferGSpot,
+        out double latitude,
+        out double longitude)
+    {
+        var racelogicLat = rawLat / 60.0;
+        var racelogicLon = -rawLong / 60.0;
+        var gspotLat = rawLat / 10.0;
+        var gspotLon = rawLong / 1.0e7;
+
+        if (preferGSpot)
+        {
+            if (IsPlausibleWgs84(gspotLat, gspotLon))
+            {
+                latitude = gspotLat;
+                longitude = gspotLon;
+                return;
+            }
+
+            // Some exports may already store latitude in degrees.
+            if (IsPlausibleWgs84(rawLat, gspotLon))
+            {
+                latitude = rawLat;
+                longitude = gspotLon;
+                return;
+            }
+        }
+
+        if (IsPlausibleWgs84(racelogicLat, racelogicLon))
+        {
+            latitude = racelogicLat;
+            longitude = racelogicLon;
+            return;
+        }
+
+        if (IsPlausibleWgs84(gspotLat, gspotLon))
+        {
+            latitude = gspotLat;
+            longitude = gspotLon;
+            return;
+        }
+
+        if (IsPlausibleWgs84(rawLat, gspotLon))
+        {
+            latitude = rawLat;
+            longitude = gspotLon;
+            return;
+        }
+
+        // Preserve prior Racelogic mapping when nothing is plausible
+        // (TrackMap will drop via IsValidGps).
+        latitude = racelogicLat;
+        longitude = racelogicLon;
+    }
+
+    private static bool IsPlausibleWgs84(double latitude, double longitude)
+    {
+        if (double.IsNaN(latitude) || double.IsNaN(longitude) ||
+            double.IsInfinity(latitude) || double.IsInfinity(longitude))
+        {
+            return false;
+        }
+
+        if (Math.Abs(latitude) < 1e-5 && Math.Abs(longitude) < 1e-5)
+        {
+            return false;
+        }
+
+        return latitude >= -90.0 && latitude <= 90.0 &&
+               longitude >= -180.0 && longitude <= 180.0;
+    }
     private static long ParseTimeColumn(double timeValue)
     {
         if (double.IsNaN(timeValue) ||
