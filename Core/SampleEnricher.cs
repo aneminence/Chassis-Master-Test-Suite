@@ -25,11 +25,7 @@ public static class SampleEnricher
         {
             if (prev is not null)
             {
-                distanceM += HaversineMeters(
-                    prev.Latitude,
-                    prev.Longitude,
-                    sample.Latitude,
-                    sample.Longitude);
+                distanceM += StepDistanceMeters(prev, sample);
             }
 
             var elapsedS = Math.Max(0, (sample.Timestamp - originTs) / 1000.0);
@@ -51,11 +47,7 @@ public static class SampleEnricher
     {
         if (previous is not null)
         {
-            cumulativeDistanceM += HaversineMeters(
-                previous.Latitude,
-                previous.Longitude,
-                sample.Latitude,
-                sample.Longitude);
+            cumulativeDistanceM += StepDistanceMeters(previous, sample);
         }
 
         var elapsedS = Math.Max(
@@ -95,6 +87,34 @@ public static class SampleEnricher
         };
     }
 
+    /// <summary>
+    /// Prefer Haversine; when a GPS jump is discarded (> 500 m, e.g. coarse
+    /// GSpot lat quantization), fall back to speed * dt so Distance Traveled
+    /// still accumulates for road logs.
+    /// </summary>
+    public static double StepDistanceMeters(
+        VehicleSample previous,
+        VehicleSample sample)
+    {
+        var hav = HaversineMeters(
+            previous.Latitude,
+            previous.Longitude,
+            sample.Latitude,
+            sample.Longitude);
+
+        if (hav > 0)
+            return hav;
+
+        var dtS = (sample.Timestamp - previous.Timestamp) / 1000.0;
+        if (dtS <= 0 || dtS > 5.0)
+            return 0;
+
+        var speedKph = previous.SpeedKph;
+        if (double.IsNaN(speedKph) || speedKph < 0 || speedKph > 400)
+            return 0;
+
+        return speedKph / 3.6 * dtS;
+    }
     public static double HaversineMeters(
         double lat1Deg,
         double lon1Deg,

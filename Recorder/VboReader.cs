@@ -269,18 +269,47 @@ public sealed class VboReader
             }
         }
 
-        var speed = Raw("velocity");
+        var rawLat = Raw("lat");
+        var rawLong = Raw("long");
+        var preferGSpot = _isGSpotFormat || LooksLikeGSpotLayout(Raw("sats"), Raw("velocity"), rawLong);
+        DecodeLatLong(rawLat, rawLong, preferGSpot, out var latitude, out var longitude);
+
+        double speed;
+        double heading;
+        double altitude;
+        long timestampMs;
+
+        if (preferGSpot)
+        {
+            // GSpot_G4 / iCell Studio: [column names] use Racelogic labels but
+            // the data columns are shifted / differently typed:
+            //   sats     -> speed km/h
+            //   time     -> heading deg
+            //   lat/long -> deg*10 / deg*1e7 (see DecodeLatLong)
+            //   velocity -> elapsed time milliseconds
+            //   heading  -> unused / unknown (0..70)
+            //   height   -> centimetres -> metres
+            speed = Raw("sats");
+            heading = Raw("time");
+            timestampMs = (long)Math.Round(Raw("velocity"));
+            if (timestampMs < 0)
+                timestampMs = 0;
+            altitude = DecodeGSpotHeight(Raw("height"));
+        }
+        else
+        {
+            speed = Raw("velocity");
+            heading = Raw("heading");
+            timestampMs = ParseTimeColumn(Raw("time"));
+            altitude = Raw("height");
+        }
+
         var longAcc = Raw("Longacc") * StandardGravity;
         var latAcc = Raw("Latacc") * StandardGravity;
         var vertAcc = Raw("Z_Accel") * StandardGravity;
         var yawRate = Raw("Yaw_Rate");
-        var heading = Raw("heading");
-        var rawLat = Raw("lat");
-        var rawLong = Raw("long");
-        DecodeLatLong(rawLat, rawLong, _isGSpotFormat, out var latitude, out var longitude);
-        var altitude = Raw("height");
 
-        // 核心通道写入 CMTS 内部单位，覆盖原始 g / arcmin。
+        // Canonical CMTS channels in internal units (not raw VBO arcmin / g).
         channels[ChannelIds.Velocity] = speed;
         channels[ChannelIds.Longacc] = longAcc;
         channels[ChannelIds.Latacc] = latAcc;
@@ -291,13 +320,13 @@ public sealed class VboReader
         channels[ChannelIds.Longitude] = longitude;
         channels[ChannelIds.Height] = altitude;
 
-        // IMU 加速度列同样按 g → m/s²（与 Longacc/Latacc/Z_Accel 一致）。
+        // IMU accel: same g -> m/s2 conversion as Longacc/Latacc/Z_Accel.
         ConvertGIfPresent(channels, "X_Accel");
         ConvertGIfPresent(channels, "Y_Accel");
 
         return new VehicleSample
         {
-            Timestamp = ParseTimeColumn(Raw("time")),
+            Timestamp = timestampMs,
             Sequence = sequence,
             SpeedKph = speed,
             LongitudinalAcceleration = longAcc,
@@ -338,6 +367,37 @@ public sealed class VboReader
     /// When the Racelogic decode is out of range, fall back to GSpot scaling
     /// even if comments did not identify the file.
     /// </summary>
+    /// <summary>
+    /// Heuristic when comments omit GSpot/iCell: velocity column holds elapsed ms
+    /// (often > 1000) and longitude is deg*1e7 magnitude, not arc-minutes.
+    /// </summary>
+    private static bool LooksLikeGSpotLayout(
+        double rawSatsOrSpeed,
+        double rawVelocityOrElapsedMs,
+        double rawLong)
+    {
+        // Racelogic velocity is km/h; GSpot's "velocity" column is elapsed ms.
+        if (rawVelocityOrElapsedMs <= 500)
+            return false;
+
+        // Longitude in arc-minutes cannot exceed ~10800 for valid WGS84.
+        if (Math.Abs(rawLong) <= 180.0 * 60.0)
+            return false;
+
+        _ = rawSatsOrSpeed;
+        return true;
+    }
+
+    /// <summary>
+    /// GSpot height column is typically centimetres; values already in metres
+    /// (small AGL) are left unchanged.
+    /// </summary>
+        private static double DecodeGSpotHeight(double rawHeight)
+    {
+        // GSpot_G4 stores height in centimetres (0..7000+ observed).
+        return rawHeight / 100.0;
+    }
+
     private static void DecodeLatLong(
         double rawLat,
         double rawLong,
