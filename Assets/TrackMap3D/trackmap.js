@@ -26,6 +26,10 @@
   let sceneState = { tracks: [], altitudeMode: "recorded", exaggeration: 1 };
   let cursorEntity;
   let lastDatasetKey = "";
+  let trackEntityIds = new Set();
+  let cameraMoving = false;
+  let pendingTrackPayload;
+  let imageryGeneration = 0;
 
   function post(type, message) {
     if (window.chrome && window.chrome.webview)
@@ -43,13 +47,12 @@
     return track.baseline + (point[2] - track.baseline) * sceneState.exaggeration;
   }
 
-  function rebuildTracks() {
+  function updateTracks() {
     if (!viewer) return;
-    viewer.entities.removeAll();
-    cursorEntity = undefined;
 
     let drawable = 0;
     let missingAltitude = 0;
+    const nextEntityIds = new Set();
     const datasetKey = (sceneState.tracks || []).map(track => {
       const first = track.points && track.points.length ? track.points[0] : [];
       return `${track.id}:${first[0]}:${first[1]}`;
@@ -62,23 +65,32 @@
       for (const point of track.points)
         degrees.push(point[0], point[1], displayHeight(point, track));
 
-      viewer.entities.add({
-        id: `track-${track.id}`,
-        name: track.name,
-        polyline: {
-          positions: Cesium.Cartesian3.fromDegreesArrayHeights(degrees),
-          width: 5,
-          clampToGround: sceneState.altitudeMode === "ground" || !track.hasAltitude,
-          material: Cesium.Color.fromCssColorString(track.color || "#42A5F5"),
-          depthFailMaterial: Cesium.Color.fromCssColorString(track.color || "#42A5F5").withAlpha(.45)
-        }
-      });
+      const trackId = `track-${track.id}`;
+      const color = Cesium.Color.fromCssColorString(track.color || "#42A5F5");
+      let entity = viewer.entities.getById(trackId);
+      if (!entity) {
+        entity = viewer.entities.add({ id: trackId, name: track.name, polyline: {} });
+      }
+      entity.name = track.name;
+      entity.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(degrees);
+      entity.polyline.width = 5;
+      entity.polyline.clampToGround = sceneState.altitudeMode === "ground" || !track.hasAltitude;
+      entity.polyline.material = color;
+      entity.polyline.depthFailMaterial = color.withAlpha(.45);
+      nextEntityIds.add(trackId);
 
       const first = track.points[0];
       const last = track.points[track.points.length - 1];
-      addEndpoint(`start-${track.id}`, "S", first, track, "#49c878");
-      addEndpoint(`end-${track.id}`, "E", last, track, "#f0b44d");
+      upsertEndpoint(`start-${track.id}`, "S", first, track, "#49c878");
+      upsertEndpoint(`end-${track.id}`, "E", last, track, "#f0b44d");
+      nextEntityIds.add(`start-${track.id}`);
+      nextEntityIds.add(`end-${track.id}`);
     }
+
+    for (const id of trackEntityIds) {
+      if (!nextEntityIds.has(id)) viewer.entities.removeById(id);
+    }
+    trackEntityIds = nextEntityIds;
 
     if (!drawable) {
       setNotice(text.waiting);
@@ -87,17 +99,56 @@
     setNotice(missingAltitude ? text.missing(missingAltitude) : "");
     if (datasetKey !== lastDatasetKey) fit();
     lastDatasetKey = datasetKey;
+    viewer.scene.requestRender();
   }
 
-  function addEndpoint(id, text, point, track, color) {
-    viewer.entities.add({
-      id,
-      position: Cesium.Cartesian3.fromDegrees(point[0], point[1], displayHeight(point, track)),
-      point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(color), outlineColor: Cesium.Color.BLACK, outlineWidth: 2 },
-      label: { text, font: "bold 12px Segoe UI", pixelOffset: new Cesium.Cartesian2(0, -18),
-        fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: Number.POSITIVE_INFINITY }
-    });
+  function upsertEndpoint(id, labelText, point, track, color) {
+    const position = Cesium.Cartesian3.fromDegrees(point[0], point[1], displayHeight(point, track));
+    let entity = viewer.entities.getById(id);
+    if (!entity) {
+      entity = viewer.entities.add({
+        id,
+        position,
+        point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(color), outlineColor: Cesium.Color.BLACK, outlineWidth: 2 },
+        label: { text: labelText, font: "bold 12px Segoe UI", pixelOffset: new Cesium.Cartesian2(0, -18),
+          fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: Number.POSITIVE_INFINITY }
+      });
+    } else {
+      entity.position = position;
+    }
+  }
+
+  function quadKey(x, y, level) {
+    let result = "";
+    for (let i = level; i > 0; i--) {
+      let digit = 0;
+      const mask = 1 << (i - 1);
+      if ((x & mask) !== 0) digit++;
+      if ((y & mask) !== 0) digit += 2;
+      result += digit;
+    }
+    return result;
+  }
+
+  async function setImagery(source) {
+    if (!viewer || !source || !source.url) return;
+    const generation = ++imageryGeneration;
+    try {
+      const provider = new Cesium.UrlTemplateImageryProvider({
+        url: source.url,
+        subdomains: ["0", "1", "2", "3"],
+        maximumLevel: source.maximumLevel || 19,
+        credit: source.attribution || "",
+        customTags: { q: (_provider, x, y, level) => quadKey(x, y, level) }
+      });
+      if (generation !== imageryGeneration) return;
+      viewer.imageryLayers.removeAll(true);
+      viewer.imageryLayers.addImageryProvider(provider);
+      viewer.scene.requestRender();
+    } catch (error) {
+      setNotice(error && error.message ? error.message : String(error));
+    }
   }
 
   function setCursor(point) {
@@ -119,6 +170,7 @@
     } else {
       cursorEntity.position = position;
     }
+    viewer.scene.requestRender();
   }
 
   function fit() {
@@ -129,8 +181,14 @@
   function handleMessage(event) {
     const data = event.data || {};
     if (data.type === "tracks") {
-      sceneState = data.payload || sceneState;
-      rebuildTracks();
+      if (cameraMoving) {
+        pendingTrackPayload = data.payload;
+      } else {
+        sceneState = data.payload || sceneState;
+        updateTracks();
+      }
+    } else if (data.type === "imagery") {
+      setImagery(data.payload);
     } else if (data.type === "cursor") {
       setCursor(data.payload);
     } else if (data.type === "fit") {
@@ -138,7 +196,9 @@
     } else if (data.type === "clear") {
       sceneState.tracks = [];
       lastDatasetKey = "";
+      trackEntityIds.clear();
       viewer.entities.removeAll();
+      cursorEntity = undefined;
       setNotice(text.waiting);
     }
   }
@@ -157,19 +217,34 @@
     }
     viewer = new Cesium.Viewer("cesiumContainer", {
       terrainProvider,
-      baseLayer: Cesium.ImageryLayer.fromProviderAsync(
-        Cesium.ArcGisMapServerImageryProvider.fromUrl(
-          "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer")),
+      baseLayer: false,
       animation: false, timeline: false, fullscreenButton: false, homeButton: false,
       sceneModePicker: false, baseLayerPicker: false, geocoder: false,
-      navigationHelpButton: false, infoBox: false, selectionIndicator: false
+      navigationHelpButton: false, infoBox: false, selectionIndicator: false,
+      requestRenderMode: true,
+      maximumRenderTimeChange: Number.POSITIVE_INFINITY
     });
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.globe.enableLighting = !terrainFallback;
+    viewer.scene.globe.enableLighting = false;
+    viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#8FC7F2");
+    viewer.scene.skyBox.show = false;
+    viewer.scene.sun.show = false;
+    viewer.scene.moon.show = false;
+    viewer.scene.skyAtmosphere.show = true;
+    viewer.scene.fog.enabled = true;
     const cameraController = viewer.scene.screenSpaceCameraController;
     cameraController.enableCollisionDetection = true;
     cameraController.minimumZoomDistance = 5.0;
     cameraController.maximumTiltAngle = Math.PI / 2.0;
+    viewer.camera.moveStart.addEventListener(() => { cameraMoving = true; });
+    viewer.camera.moveEnd.addEventListener(() => {
+      cameraMoving = false;
+      if (pendingTrackPayload) {
+        sceneState = pendingTrackPayload;
+        pendingTrackPayload = undefined;
+        updateTracks();
+      }
+    });
     badge.textContent = terrainFallback ? text.badgeFallback : text.badge;
     setNotice(terrainFallback ? text.terrainError : "");
     window.chrome.webview.addEventListener("message", handleMessage);

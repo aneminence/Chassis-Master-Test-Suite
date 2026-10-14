@@ -2,6 +2,7 @@ using System.IO;
 using System.Text.Json;
 using System.Diagnostics;
 using Chassis_Master_Test_Suite.Core;
+using Chassis_Master_Test_Suite.Map;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
@@ -31,6 +32,7 @@ internal sealed class TrackMap3DController
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
     private int[] _lastSentCounts = Array.Empty<int>();
     private (double Latitude, double Longitude)? _lastSentAnchor;
+    private MapTileSource _mapSource = MapTileSources.Resolve(MapTileSources.DefaultId, null);
 
     public TrackMap3DController(WebView2 webView)
     {
@@ -104,6 +106,7 @@ internal sealed class TrackMap3DController
         {
             _lastSentCounts = Array.Empty<int>();
             _lastSentAnchor = null;
+            SendImagery();
             SendScene();
             SetCursor(_cursor);
         }
@@ -142,6 +145,13 @@ internal sealed class TrackMap3DController
         }
     }
 
+    public void SetImagery(MapTileSource source)
+    {
+        _mapSource = source;
+        if (_active)
+            SendImagery();
+    }
+
     public void Fit() => Post(new { type = "fit" });
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -160,6 +170,7 @@ internal sealed class TrackMap3DController
                     StatusChanged?.Invoke(string.Empty);
                     if (_active)
                     {
+                        SendImagery();
                         SendScene();
                         SetCursor(_cursor);
                     }
@@ -195,6 +206,27 @@ internal sealed class TrackMap3DController
                 tracks = payload,
                 altitudeMode = _altitudeMode,
                 exaggeration = _exaggeration
+            }
+        });
+    }
+
+    private void SendImagery()
+    {
+        var url = _mapSource.UrlTemplate
+            .Replace("{Z}", "{z}", StringComparison.Ordinal)
+            .Replace("{X}", "{x}", StringComparison.Ordinal)
+            .Replace("{Y}", "{y}", StringComparison.Ordinal)
+            .Replace("{S}", "{s}", StringComparison.Ordinal)
+            .Replace("{Q}", "{q}", StringComparison.Ordinal);
+        Post(new
+        {
+            type = "imagery",
+            payload = new
+            {
+                id = _mapSource.Id,
+                url,
+                maximumLevel = _mapSource.MaxZoom,
+                attribution = _mapSource.Attribution
             }
         });
     }
