@@ -1,0 +1,27 @@
+﻿File created on 19/05/2026 @ 01:42:32
+
+[header]
+satellites
+time
+latitude
+longitude
+velocity kmh
+heading
+height
+
+[channel units]
+
+
+[comments]
+version: 20260509-GSpot_G4_2.0
+(c) iCell Studio
+Serial number : 4679
+GPS : G1
+
+[column names]
+sats time lat long velocity heading height
+
+[data]
+0.05 0 431.900 1094232194 13964 0 0
+50.2 180.0 431.905 1094232500 728490 36 60.76
+100.0 90.0 431.910 1094232800 1028890 41.3 59.56

@@ -131,3 +131,6 @@ packages/
 # 调试跟踪
 *.log
 *.trace
+
+# Test fixtures may include tiny .vbo samples
+!ChassisMasterTestSuite.Tests/Fixtures/*.vbo
