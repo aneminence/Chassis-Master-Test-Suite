@@ -3640,11 +3640,22 @@ public partial class MainWindow : Window
         if (plot.WpfPlot is null) return;
         ApplyDarkPlotStyle(plot.WpfPlot);
         scottPlot.Title(plot.Name + " — Compare");
-        scottPlot.XLabel("Run time (s)");
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var useRelativeTime = string.Equals(
+            xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+        var useRelativeDistance = string.Equals(
+            xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+        plot.IsTimeAxis = false;
+        scottPlot.XLabel(useRelativeTime
+            ? "Run time (s)"
+            : useRelativeDistance
+                ? "Lap distance (m)"
+                : GetAxisLabel(xSignal));
         scottPlot.YLabel("Value");
 
         double minY = double.MaxValue;
         double maxY = double.MinValue;
+        double minX = double.MaxValue;
         double maxX = 0;
 
         var channels = selectedChannels.Count > 0
@@ -3666,7 +3677,9 @@ public partial class MainWindow : Window
             if (i1 < i0)
                 (i0, i1) = (i1, i0);
 
-            var t0 = samples[i0].Timestamp;
+            var xOrigin = useRelativeDistance
+                ? GetSignalValue(samples[i0], xSignal)
+                : 0.0;
             var colorHex = string.IsNullOrWhiteSpace(annotated.ColorHex)
                 ? RunAnnotationPalette[(run.RunNumber - 1) % RunAnnotationPalette.Length]
                 : annotated.ColorHex;
@@ -3677,7 +3690,9 @@ public partial class MainWindow : Window
                 var ys = new List<double>();
                 for (var i = i0; i <= i1; i++)
                 {
-                    var x = (samples[i].Timestamp - t0) / 1000.0;
+                    var x = useRelativeTime
+                        ? (samples[i].Timestamp - run.StartTimestampMs) / 1000.0
+                        : GetSignalValue(samples[i], xSignal) - (useRelativeDistance ? xOrigin : 0.0);
                     var y = GetSignalValue(samples[i], channel.ChannelId);
                     if (double.IsNaN(y) || double.IsInfinity(y))
                         continue;
@@ -3685,6 +3700,7 @@ public partial class MainWindow : Window
                     ys.Add(y);
                     if (y < minY) minY = y;
                     if (y > maxY) maxY = y;
+                    if (x < minX) minX = x;
                     if (x > maxX) maxX = x;
                 }
 
@@ -3712,7 +3728,16 @@ public partial class MainWindow : Window
         ApplyCompareEdgeLegend(scottPlot);
 
         // Respect Auto X/Y + LockedLimits (same as normal mode). Never force-fit every frame.
-        var limitXs = new[] { 0.0, Math.Max(maxX, 0.1) };
+        if (minX > maxX)
+        {
+            minX = 0;
+            maxX = 0.1;
+        }
+        var limitXs = new[]
+        {
+            useRelativeTime || useRelativeDistance ? Math.Min(0, minX) : minX,
+            maxX > minX ? maxX : minX + 0.1
+        };
         ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
 
         plot.LastXs = Array.Empty<double>();
