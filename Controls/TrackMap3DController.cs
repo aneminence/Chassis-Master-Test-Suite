@@ -33,6 +33,7 @@ internal sealed class TrackMap3DController
     private double _exaggeration = 1.0;
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
     private int[] _lastSentCounts = Array.Empty<int>();
+    private TrackMapPanel.TrackLayer[] _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
     private (double Latitude, double Longitude)? _lastSentAnchor;
     private MapTileSource _mapSource = MapTileSources.Resolve(MapTileSources.DefaultId, null);
 
@@ -86,17 +87,30 @@ internal sealed class TrackMap3DController
         var anchor = tracks.SelectMany(track => track.Samples)
             .FirstOrDefault(TrackProjection.IsValidGps);
         var counts = tracks.Select(track => track.Samples.Count).ToArray();
-        var changedSource = anchor is not null &&
-            (_lastSentAnchor is null
-             || Math.Abs(_lastSentAnchor.Value.Latitude - anchor.Latitude) > 1e-9
-             || Math.Abs(_lastSentAnchor.Value.Longitude - anchor.Longitude) > 1e-9
-             || counts.Length != _lastSentCounts.Length
-             || counts.Zip(_lastSentCounts, (current, previous) => current < previous || current - previous > 500).Any(changed => changed));
+        var sameTrackObjects = tracks.Count == _lastSentTracks.Length
+            && tracks.Zip(_lastSentTracks, (current, previous) => current.Equals(previous))
+                .All(same => same);
+        var sameAnchor = anchor is null
+            ? _lastSentAnchor is null
+            : _lastSentAnchor is not null
+              && Math.Abs(_lastSentAnchor.Value.Latitude - anchor.Latitude) <= 1e-9
+              && Math.Abs(_lastSentAnchor.Value.Longitude - anchor.Longitude) <= 1e-9;
+        var sameCounts = counts.SequenceEqual(_lastSentCounts);
 
-        if (!changedSource && _sendStopwatch.ElapsedMilliseconds < 1_000)
+        // Offline tracks are repeatedly presented by the UI refresh path. Do not
+        // rebuild a large Cesium polyline when its source and sample counts did
+        // not change. Live tracks still append samples and are batched to 1 Hz.
+        if (sameTrackObjects && sameAnchor && sameCounts)
+            return;
+
+        var appendOnly = sameTrackObjects && sameAnchor
+            && counts.Length == _lastSentCounts.Length
+            && counts.Zip(_lastSentCounts, (current, previous) => current >= previous).All(value => value);
+        if (appendOnly && _sendStopwatch.ElapsedMilliseconds < 1_000)
             return;
 
         _lastSentCounts = counts;
+        _lastSentTracks = tracks.ToArray();
         _lastSentAnchor = anchor is null ? null : (anchor.Latitude, anchor.Longitude);
         _sendStopwatch.Restart();
         RebuildSampleLocations();
@@ -109,6 +123,7 @@ internal sealed class TrackMap3DController
         if (active)
         {
             _lastSentCounts = Array.Empty<int>();
+            _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
             _lastSentAnchor = null;
             RebuildSampleLocations();
             SendImagery();
@@ -123,6 +138,7 @@ internal sealed class TrackMap3DController
         _sampleLocations.Clear();
         _cursor = null;
         _lastSentCounts = Array.Empty<int>();
+        _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
         _lastSentAnchor = null;
         Post(new { type = "clear" });
     }

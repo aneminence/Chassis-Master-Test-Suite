@@ -31,6 +31,7 @@
   let cameraMoving = false;
   let pendingTrackPayload;
   let imageryGeneration = 0;
+  const recordedTrackLiftMeters = 1.5;
 
   function post(type, message) {
     if (window.chrome && window.chrome.webview)
@@ -45,7 +46,11 @@
   function displayHeight(point, track) {
     if (sceneState.altitudeMode === "ground" || !track.hasAltitude)
       return 0;
-    return track.baseline + (point[2] - track.baseline) * sceneState.exaggeration;
+    // Keep the visual line just above the DEM. Recorded GNSS altitude and the
+    // terrain mesh often differ by less than a metre, which otherwise causes
+    // depth-buffer z-fighting while orbiting the camera.
+    return track.baseline + (point[2] - track.baseline) * sceneState.exaggeration
+      + recordedTrackLiftMeters;
   }
 
   function updateTracks() {
@@ -77,7 +82,7 @@
       entity.polyline.width = 5;
       entity.polyline.clampToGround = sceneState.altitudeMode === "ground" || !track.hasAltitude;
       entity.polyline.material = color;
-      entity.polyline.depthFailMaterial = color.withAlpha(.45);
+      entity.polyline.depthFailMaterial = color;
       nextEntityIds.add(trackId);
 
       const first = track.points[0];
@@ -167,7 +172,8 @@
       ? 0
       : track
         ? track.baseline + (point.altitude - track.baseline) * sceneState.exaggeration
-        : point.altitude;
+          + recordedTrackLiftMeters
+        : point.altitude + recordedTrackLiftMeters;
     const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
     if (!cursorEntity) {
       cursorEntity = viewer.entities.add({
