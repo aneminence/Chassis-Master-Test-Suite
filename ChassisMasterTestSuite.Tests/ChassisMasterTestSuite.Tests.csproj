@@ -34,6 +34,7 @@
     <Compile Include="..\Core\SampleHistoryBuffer.cs" Link="Linked\Core\SampleHistoryBuffer.cs" />
     <Compile Include="..\Core\VehicleSample.cs" Link="Linked\Core\VehicleSample.cs" />
     <Compile Include="..\Core\SampleEnricher.cs" Link="Linked\Core\SampleEnricher.cs" />
+    <Compile Include="..\Core\SlopeEnricher.cs" Link="Linked\Core\SlopeEnricher.cs" />
     <Compile Include="..\Core\DashboardGaugeModels.cs" Link="Linked\Core\DashboardGaugeModels.cs" />
     <Compile Include="..\Core\SessionMemoryStore.cs" Link="Linked\Core\SessionMemoryStore.cs" />
     <Compile Include="..\Core\AppPreferencesStore.cs" Link="Linked\Core\AppPreferencesStore.cs" />

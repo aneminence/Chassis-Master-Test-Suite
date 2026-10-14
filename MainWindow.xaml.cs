@@ -491,7 +491,7 @@ public partial class MainWindow : Window
             if (raw.Count == 0)
                 return 0;
 
-            var samples = SampleEnricher.EnrichAll(raw);
+            var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
             var columnNames = samples[0].Channels.Keys.ToList();
             _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name);
             ApplyOfflineDataset();
@@ -531,11 +531,14 @@ public partial class MainWindow : Window
                 TestResultsPanelControl.RefreshSessionSummary();
             }
 
-            var samples = SampleEnricher.EnrichAll(raw);
+            var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
 
             var columnNames = reader.Columns.Count > 0
-                ? reader.Columns
+                ? reader.Columns.ToList()
                 : samples[0].Channels.Keys.ToList();
+            // SlopeEnricher writes slope_pct into Channels; VBO column headers do not list it.
+            if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
+                columnNames.Add(ChannelIds.SlopePct);
 
             var entry = _offlineFiles.Add(filePath, samples, columnNames);
             ApplyOfflineDataset();

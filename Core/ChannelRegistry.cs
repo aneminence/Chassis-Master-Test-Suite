@@ -23,6 +23,9 @@ public sealed class ChannelRegistry
     public static ChannelInfo DistanceTraveled { get; } =
         new(ChannelIds.DistanceTraveled, "Distance Traveled", "m");
 
+    public static ChannelInfo SlopePct { get; } =
+        new(ChannelIds.SlopePct, "Slope %", "%");
+
     public static ChannelRegistry Instance { get; } = new();
 
     private readonly Dictionary<string, ChannelInfo> _catalog =
@@ -190,6 +193,7 @@ public sealed class ChannelRegistry
     {
         _catalog[ChannelIds.ElapsedTest] = ElapsedTest;
         _catalog[ChannelIds.DistanceTraveled] = DistanceTraveled;
+        _catalog[ChannelIds.SlopePct] = SlopePct;
     }
 
     private void SeedCatalogFromOnsShot7()
@@ -206,6 +210,7 @@ public sealed class ChannelRegistry
         Add(ChannelIds.Velocity, "Speed", "km/h");
         Add(ChannelIds.Heading, "Heading", "deg");
         Add(ChannelIds.Height, "Altitude", "m");
+        Add(ChannelIds.SlopePct, "Slope %", "%");
         Add("vert-vel", "Vertical Velocity", "km/h");
         Add(ChannelIds.Longacc, "Longitudinal Accel", "m/s²");
         Add(ChannelIds.Latacc, "Lateral Accel", "m/s²");

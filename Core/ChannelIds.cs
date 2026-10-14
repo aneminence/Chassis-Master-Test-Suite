@@ -15,6 +15,9 @@ public static class ChannelIds
     /// <summary>行驶距离（米，累计 Haversine）。</summary>
     public const string DistanceTraveled = "__distance_m__";
 
+    /// <summary>坡度（%）：100 * Δh / Δs，基于 DistanceTraveled 窗口。</summary>
+    public const string SlopePct = "slope_pct";
+
     public const string Velocity = "velocity";
     public const string Longacc = "Longacc";
     public const string Latacc = "Latacc";
