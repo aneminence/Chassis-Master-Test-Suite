@@ -224,4 +224,41 @@ public class SessionMemoryStoreTests
         Assert.Equal("A", store.StartGate!.Name);
         Assert.Equal("B", store.EndGate!.Name);
     }
+
+    [Fact]
+    public void Snapshot_KmlPaths_RoundTrip_InVboFilesList()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cmts-session-kml-" + Guid.NewGuid().ToString("N") + ".json");
+        var prev = SessionMemoryStore.StoragePathOverride;
+        try
+        {
+            SessionMemoryStore.StoragePathOverride = path;
+            var snap = new SessionMemorySnapshot
+            {
+                IsOfflineMode = true,
+                VboFiles =
+                {
+                    @"D:\CMTS\drive.vbo",
+                    @"D:\CMTS\phone.kml",
+                    @"D:\CMTS\overlay.kmz"
+                },
+                ActiveVboPath = @"D:\CMTS\phone.kml",
+            };
+
+            SessionMemoryStore.Save(snap);
+            var loaded = SessionMemoryStore.Load();
+
+            Assert.NotNull(loaded);
+            Assert.Equal(3, loaded!.VboFiles.Count);
+            Assert.Contains(@"D:\CMTS\phone.kml", loaded.VboFiles);
+            Assert.Contains(@"D:\CMTS\overlay.kmz", loaded.VboFiles);
+            Assert.Equal(@"D:\CMTS\phone.kml", loaded.ActiveVboPath);
+        }
+        finally
+        {
+            SessionMemoryStore.StoragePathOverride = prev;
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
 }

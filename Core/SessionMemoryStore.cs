@@ -7,7 +7,7 @@ using Chassis_Master_Test_Suite.Analysis;
 namespace Chassis_Master_Test_Suite.Core;
 
 /// <summary>
-/// Persisted session snapshot: open VBOs, gates / last .vbts, Test Results UI, maths.
+/// Persisted session snapshot: open offline tracks (VBO + KML/KMZ), gates / last .vbts, Test Results UI, maths.
 /// Stored under %LocalAppData%\CMTS\session-memory.json (same folder as dashboard-layout.json).
 /// </summary>
 public sealed class SessionMemorySnapshot
@@ -16,8 +16,13 @@ public sealed class SessionMemorySnapshot
 
     public bool IsOfflineMode { get; set; }
 
+    /// <summary>
+    /// Offline track file paths to reopen on launch (historically named VboFiles).
+    /// May include <c>.vbo</c>, <c>.kml</c>, and <c>.kmz</c>; restore dispatches by extension.
+    /// </summary>
     public List<string> VboFiles { get; set; } = new();
 
+    /// <summary>Selected offline track path (VBO or KML/KMZ).</summary>
     public string? ActiveVboPath { get; set; }
 
     public string? LastVbtsPath { get; set; }

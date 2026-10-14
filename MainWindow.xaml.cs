@@ -5007,7 +5007,7 @@ public partial class MainWindow : Window
 
         _uiTimer.Start();
 
-        // Restore last session (VBOs / gates / Test Results / maths) when files still exist.
+        // Restore last session (VBO/KML/KMZ / gates / Test Results / maths) when files still exist.
         try
         {
             await RestoreSessionMemoryAsync();
@@ -5207,6 +5207,7 @@ public partial class MainWindow : Window
             Curves = CaptureCurvesSettings(),
         };
 
+        // Offline overlays: VBO and KML/KMZ paths share VboFiles for backward-compatible JSON.
         foreach (var f in _offlineFiles.Files)
             snap.VboFiles.Add(f.FilePath);
 
@@ -5286,8 +5287,9 @@ public partial class MainWindow : Window
             if (existing.Count > 0)
             {
                 await EnterOfflineModeAsync(stopOnline: true);
+                // VboFiles list holds all offline tracks (VBO and KML/KMZ).
                 foreach (var path in existing)
-                    LoadVboFile(path);
+                    LoadOfflineTrackFile(path);
 
                 if (!string.IsNullOrWhiteSpace(snap.ActiveVboPath))
                 {
