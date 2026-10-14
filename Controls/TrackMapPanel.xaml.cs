@@ -61,6 +61,11 @@ public partial class TrackMapPanel : UserControl
         string ColorHex,
         IReadOnlyList<VehicleSample> Samples);
 
+    public readonly record struct CompareCursor(
+        VehicleSample Sample,
+        string ColorHex,
+        int RunNumber);
+
     private readonly ScottPlot.WPF.WpfPlot _wpfPlot = new();
     private readonly List<TrackLayer> _tracks = new();
     /// <summary>所有轨迹样本展平，供点选/悬停；与 _sampleTrackIndex 对齐。</summary>
@@ -86,6 +91,8 @@ public partial class TrackMapPanel : UserControl
 
     /// <summary>曲线光标对应的车辆位置标记。</summary>
     private ScottPlot.Plottables.Marker? _cursorMarker;
+    private readonly List<ScottPlot.Plottables.Marker> _compareCursorMarkers = new();
+    private IReadOnlyList<CompareCursor> _compareCursors = Array.Empty<CompareCursor>();
 
     /// <summary>当前光标样本；null 表示跟最新点。</summary>
     private VehicleSample? _cursorSample;
@@ -477,13 +484,24 @@ public partial class TrackMapPanel : UserControl
     public void SetCursorSample(VehicleSample? sample)
     {
         // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
-        if (ReferenceEquals(_cursorSample, sample))
+        if (ReferenceEquals(_cursorSample, sample) && _compareCursors.Count == 0)
             return;
 
         _cursorSample = sample;
+        _compareCursors = Array.Empty<CompareCursor>();
         UpdateCursorMarker(refresh: true);
         UpdateCoordinateReadout();
+        _map3D?.SetCompareCursors(Array.Empty<CompareCursor>());
         _map3D?.SetCursor(sample);
+    }
+
+    public void SetCompareCursorSamples(IReadOnlyList<CompareCursor> cursors)
+    {
+        _compareCursors = cursors ?? Array.Empty<CompareCursor>();
+        _cursorSample = _compareCursors.Count > 0 ? _compareCursors[0].Sample : null;
+        UpdateCursorMarker(refresh: true);
+        UpdateCoordinateReadout();
+        _map3D?.SetCompareCursors(_compareCursors);
     }
 
     private void Mode2DButton_Click(object sender, RoutedEventArgs e) => SetMapMode(false);
@@ -846,6 +864,29 @@ public partial class TrackMapPanel : UserControl
         {
             _wpfPlot.Plot.Remove(_cursorMarker);
             _cursorMarker = null;
+        }
+        foreach (var marker in _compareCursorMarkers)
+            _wpfPlot.Plot.Remove(marker);
+        _compareCursorMarkers.Clear();
+
+        if (_projection is not null && _hasData && _compareCursors.Count > 0)
+        {
+            foreach (var cursor in _compareCursors)
+            {
+                if (!TrackProjection.IsValidGps(cursor.Sample))
+                    continue;
+                var (cx, cy) = _projection.ToMeters(cursor.Sample.Latitude, cursor.Sample.Longitude);
+                var marker = _wpfPlot.Plot.Add.Marker(cx, cy);
+                marker.Size = 17;
+                marker.Shape = ScottPlot.MarkerShape.FilledCircle;
+                marker.Color = ScottPlot.Color.FromHex(cursor.ColorHex);
+                marker.MarkerLineColor = ScottPlot.Colors.Black.WithAlpha(0.9);
+                marker.MarkerLineWidth = 2;
+                _compareCursorMarkers.Add(marker);
+            }
+            if (refresh)
+                _wpfPlot.Refresh();
+            return;
         }
 
         if (_cursorSample is null ||

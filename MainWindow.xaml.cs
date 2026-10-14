@@ -4711,8 +4711,10 @@ public partial class MainWindow : Window
 
     private void UpdateNumericDisplay()
     {
-        var cursorSample =
-            TryGetCursorSample();
+        var compareCursors = TryGetCompareCursorSamples();
+        var cursorSample = compareCursors.Count > 0
+            ? compareCursors[0].Sample
+            : TryGetCursorSample();
 
         var sample =
             cursorSample ?? _latestSample;
@@ -4765,7 +4767,54 @@ public partial class MainWindow : Window
         }
 
         // 光标移动时 Track Map 车辆位置跟着走；清除光标后回到实时最新点
-        TrackMapPanelControl.SetCursorSample(cursorSample);
+        if (IsCompareModeActive)
+            TrackMapPanelControl.SetCompareCursorSamples(compareCursors);
+        else
+            TrackMapPanelControl.SetCursorSample(cursorSample);
+    }
+
+    private IReadOnlyList<TrackMapPanel.CompareCursor> TryGetCompareCursorSamples()
+    {
+        if (!IsCompareModeActive || _cursorSourcePlot?.CursorX is not double cursorX)
+            return Array.Empty<TrackMapPanel.CompareCursor>();
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var relativeTime = string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+        var relativeDistance = string.Equals(xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+        var result = new List<TrackMapPanel.CompareCursor>(_compareRuns.Count);
+
+        foreach (var annotated in _compareRuns)
+        {
+            var run = annotated.Result;
+            var samples = annotated.Samples;
+            if (samples.Count == 0)
+                continue;
+            var i0 = Math.Clamp(run.StartSampleIndex, 0, samples.Count - 1);
+            var i1 = Math.Clamp(run.EndSampleIndex, i0, samples.Count - 1);
+            var origin = relativeDistance ? GetSignalValue(samples[i0], xSignal) : 0.0;
+            var bestIndex = -1;
+            var bestDelta = double.PositiveInfinity;
+            for (var i = i0; i <= i1; i++)
+            {
+                var x = relativeTime
+                    ? (samples[i].Timestamp - run.StartTimestampMs) / 1000.0
+                    : GetSignalValue(samples[i], xSignal) - (relativeDistance ? origin : 0.0);
+                if (!double.IsFinite(x))
+                    continue;
+                var delta = Math.Abs(x - cursorX);
+                if (delta >= bestDelta)
+                    continue;
+                bestDelta = delta;
+                bestIndex = i;
+            }
+            if (bestIndex < 0)
+                continue;
+            result.Add(new TrackMapPanel.CompareCursor(
+                samples[bestIndex],
+                annotated.ColorHex,
+                run.RunNumber));
+        }
+        return result;
     }
 
 

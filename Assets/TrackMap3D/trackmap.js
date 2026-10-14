@@ -26,6 +26,8 @@
   let sceneState = { tracks: [], altitudeMode: "recorded", exaggeration: 1 };
   let cursorEntity;
   let cursorPoint;
+  let compareCursorPoints = [];
+  const compareCursorEntities = new Map();
   let lastDatasetKey = "";
   let trackEntityIds = new Set();
   let cameraMoving = false;
@@ -106,6 +108,7 @@
     if (datasetKey !== lastDatasetKey) fit();
     lastDatasetKey = datasetKey;
     if (cursorPoint) setCursor(cursorPoint);
+    if (compareCursorPoints.length) setCursors(compareCursorPoints);
     viewer.scene.requestRender();
   }
 
@@ -161,6 +164,7 @@
   function setCursor(point) {
     if (!viewer) return;
     cursorPoint = point;
+    clearCompareCursorEntities();
     if (!point) {
       if (cursorEntity) viewer.entities.remove(cursorEntity);
       cursorEntity = undefined;
@@ -192,6 +196,64 @@
     viewer.scene.requestRender();
   }
 
+  function cursorPosition(point) {
+    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
+    const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
+    const height = useGround
+      ? 0
+      : track
+        ? track.baseline + (point.altitude - track.baseline) * sceneState.exaggeration
+          + recordedTrackLiftMeters
+        : point.altitude + recordedTrackLiftMeters;
+    return { position: Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height), useGround };
+  }
+
+  function clearCompareCursorEntities() {
+    for (const entity of compareCursorEntities.values())
+      viewer.entities.remove(entity);
+    compareCursorEntities.clear();
+    compareCursorPoints = [];
+  }
+
+  function setCursors(points) {
+    if (!viewer) return;
+    compareCursorPoints = Array.isArray(points) ? points : [];
+    cursorPoint = undefined;
+    if (cursorEntity) {
+      viewer.entities.remove(cursorEntity);
+      cursorEntity = undefined;
+    }
+    const keep = new Set();
+    compareCursorPoints.forEach((point, index) => {
+      const id = `cmts-compare-cursor-${point.runNumber || index}`;
+      keep.add(id);
+      const resolved = cursorPosition(point);
+      const color = Cesium.Color.fromCssColorString(point.color || "#FFD54F");
+      let entity = compareCursorEntities.get(id);
+      if (!entity) {
+        entity = viewer.entities.add({
+          id,
+          position: resolved.position,
+          point: { pixelSize: 15, color, outlineColor: Cesium.Color.BLACK,
+            outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            heightReference: resolved.useGround ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE }
+        });
+        compareCursorEntities.set(id, entity);
+      } else {
+        entity.position = resolved.position;
+        entity.point.color = color;
+        entity.point.heightReference = resolved.useGround
+          ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE;
+      }
+    });
+    for (const [id, entity] of compareCursorEntities) {
+      if (keep.has(id)) continue;
+      viewer.entities.remove(entity);
+      compareCursorEntities.delete(id);
+    }
+    viewer.scene.requestRender();
+  }
+
   function fit() {
     if (viewer && viewer.entities.values.length)
       viewer.zoomTo(viewer.entities, new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-38), 0));
@@ -210,6 +272,8 @@
       setImagery(data.payload);
     } else if (data.type === "cursor") {
       setCursor(data.payload);
+    } else if (data.type === "cursors") {
+      setCursors(data.payload);
     } else if (data.type === "fit") {
       fit();
     } else if (data.type === "clear") {
@@ -219,6 +283,8 @@
       viewer.entities.removeAll();
       cursorEntity = undefined;
       cursorPoint = undefined;
+      compareCursorPoints = [];
+      compareCursorEntities.clear();
       setNotice(text.waiting);
     }
   }

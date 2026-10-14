@@ -29,6 +29,7 @@ internal sealed class TrackMap3DController
     private readonly Dictionary<VehicleSample, (int TrackId, int SampleIndex)> _sampleLocations =
         new(ReferenceEqualityComparer.Instance);
     private VehicleSample? _cursor;
+    private IReadOnlyList<TrackMapPanel.CompareCursor> _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
     private string _altitudeMode = "recorded";
     private double _exaggeration = 1.0;
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
@@ -128,7 +129,10 @@ internal sealed class TrackMap3DController
             RebuildSampleLocations();
             SendImagery();
             SendScene();
-            SetCursor(_cursor);
+            if (_compareCursors.Count > 0)
+                SetCompareCursors(_compareCursors);
+            else
+                SetCursor(_cursor);
         }
     }
 
@@ -137,6 +141,7 @@ internal sealed class TrackMap3DController
         _tracks = Array.Empty<TrackMapPanel.TrackLayer>();
         _sampleLocations.Clear();
         _cursor = null;
+        _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
         _lastSentCounts = Array.Empty<int>();
         _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
         _lastSentAnchor = null;
@@ -146,6 +151,7 @@ internal sealed class TrackMap3DController
     public void SetCursor(VehicleSample? sample)
     {
         _cursor = sample;
+        _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
         if (!_pageReady || !_active)
             return;
 
@@ -156,6 +162,22 @@ internal sealed class TrackMap3DController
         });
     }
 
+    public void SetCompareCursors(IReadOnlyList<TrackMapPanel.CompareCursor> cursors)
+    {
+        _compareCursors = cursors ?? Array.Empty<TrackMapPanel.CompareCursor>();
+        _cursor = null;
+        if (!_pageReady || !_active)
+            return;
+        Post(new
+        {
+            type = "cursors",
+            payload = _compareCursors.Select(cursor =>
+                ToCursorPoint(cursor.Sample, cursor.ColorHex, cursor.RunNumber))
+                .Where(point => point is not null)
+                .ToArray()
+        });
+    }
+
     public void SetDisplay(string altitudeMode, double exaggeration)
     {
         _altitudeMode = altitudeMode == "ground" ? "ground" : "recorded";
@@ -163,7 +185,10 @@ internal sealed class TrackMap3DController
         if (_active)
         {
             SendScene();
-            SetCursor(_cursor);
+            if (_compareCursors.Count > 0)
+                SetCompareCursors(_compareCursors);
+            else
+                SetCursor(_cursor);
         }
     }
 
@@ -204,7 +229,10 @@ internal sealed class TrackMap3DController
                     {
                         SendImagery();
                         SendScene();
-                        SetCursor(_cursor);
+                        if (_compareCursors.Count > 0)
+                            SetCompareCursors(_compareCursors);
+                        else
+                            SetCursor(_cursor);
                     }
                     Ready?.Invoke();
                     break;
@@ -325,7 +353,10 @@ internal sealed class TrackMap3DController
         return result;
     }
 
-    private object? ToCursorPoint(VehicleSample? sample)
+    private object? ToCursorPoint(
+        VehicleSample? sample,
+        string? color = null,
+        int? runNumber = null)
     {
         if (sample is null || !TrackProjection.IsValidGps(sample))
             return null;
@@ -339,7 +370,9 @@ internal sealed class TrackMap3DController
             sampleIndex = location.Item2,
             longitude = sample.Longitude,
             latitude = sample.Latitude,
-            altitude = double.IsFinite(sample.Altitude) ? sample.Altitude : 0.0
+            altitude = double.IsFinite(sample.Altitude) ? sample.Altitude : 0.0,
+            color,
+            runNumber
         };
     }
 
