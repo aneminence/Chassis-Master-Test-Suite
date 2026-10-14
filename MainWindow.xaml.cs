@@ -157,6 +157,8 @@ public partial class MainWindow : Window
     /// 中键平移 / 右键缩放进行中：跳过 RefreshPlot，避免 10 Hz Clear 把手势锁死。
     /// </summary>
     private int _activeManualAxisGestures;
+    private PlotDefinition? _manualAxisGesturePlot;
+    private bool _syncingSharedX;
 
     /// <summary>
     /// SuspendAutoScale 时程序化改勾选，不要顺带触发 RefreshAllPlots。
@@ -2938,6 +2940,9 @@ public partial class MainWindow : Window
                 plot.LockedLimits = limits;
             }
 
+            // Keep siblings on the same X so yellow cursors stay screen-aligned.
+            SyncSharedXAxis(plot);
+
             wpfPlot.Refresh();
             e.Handled = true;
         };
@@ -2951,7 +2956,7 @@ public partial class MainWindow : Window
             {
                 // 立刻取消 Auto，并在手势期间跳过 RefreshPlot
                 SuspendAutoScaleForUserInteraction(plot);
-                BeginManualAxisGesture();
+                BeginManualAxisGesture(plot);
                 return;
             }
 
@@ -2988,6 +2993,12 @@ public partial class MainWindow : Window
 
         wpfPlot.MouseMove += (_, e) =>
         {
+            if (e.MiddleButton == MouseButtonState.Pressed ||
+                e.RightButton == MouseButtonState.Pressed)
+            {
+                SyncSharedXAxis(plot);
+            }
+
             if (plot.IsDraggingCursor &&
                 e.LeftButton == MouseButtonState.Pressed)
             {
@@ -3144,8 +3155,9 @@ public partial class MainWindow : Window
     }
 
 
-    private void BeginManualAxisGesture()
+    private void BeginManualAxisGesture(PlotDefinition plot)
     {
+        _manualAxisGesturePlot = plot;
         _activeManualAxisGestures++;
     }
 
@@ -3158,6 +3170,9 @@ public partial class MainWindow : Window
         // 手势结束立刻锁定当前轴范围，避免下一帧 Refresh 读到被冲掉的 GetLimits
         if (_activeManualAxisGestures == 0)
         {
+            if (_manualAxisGesturePlot is not null)
+                SyncSharedXAxis(_manualAxisGesturePlot);
+            _manualAxisGesturePlot = null;
             CaptureLockedLimitsFromPlots();
             // 视野变了但样本指纹可能未变：强制下一拍按新可见窗降采样
             _forcePlotRebuild = true;
@@ -3165,8 +3180,75 @@ public partial class MainWindow : Window
     }
 
 
+    /// <summary>
+    /// Copy source plot X limits (Left/Right) to every other plot; keep each plot's Y.
+    /// Updates LockedLimits so 10 Hz refresh and yellow cursors stay X-aligned.
+    /// </summary>
+    private void SyncSharedXAxis(PlotDefinition source)
+    {
+        if (_syncingSharedX || source.WpfPlot is null || _plots.Count < 2)
+            return;
+
+        var srcLimits = source.WpfPlot.Plot.Axes.GetLimits();
+        if (double.IsInfinity(srcLimits.Left) ||
+            double.IsInfinity(srcLimits.Right) ||
+            double.IsNaN(srcLimits.Left) ||
+            double.IsNaN(srcLimits.Right) ||
+            srcLimits.Right <= srcLimits.Left)
+        {
+            return;
+        }
+
+        _syncingSharedX = true;
+        try
+        {
+            source.LockedLimits = srcLimits;
+
+            foreach (var plot in _plots)
+            {
+                if (plot.WpfPlot is null)
+                    continue;
+
+                if (ReferenceEquals(plot, source))
+                {
+                    ApplyPlotOverlays(plot);
+                    continue;
+                }
+
+                var cur = plot.WpfPlot.Plot.Axes.GetLimits();
+                var bottom = cur.Bottom;
+                var top = cur.Top;
+                if (double.IsInfinity(bottom) || double.IsInfinity(top) ||
+                    double.IsNaN(bottom) || double.IsNaN(top) || top <= bottom)
+                {
+                    bottom = srcLimits.Bottom;
+                    top = srcLimits.Top;
+                }
+
+                plot.WpfPlot.Plot.Axes.SetLimits(
+                    srcLimits.Left,
+                    srcLimits.Right,
+                    bottom,
+                    top);
+                plot.LockedLimits = new ScottPlot.AxisLimits(
+                    srcLimits.Left,
+                    srcLimits.Right,
+                    bottom,
+                    top);
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot.Refresh();
+            }
+        }
+        finally
+        {
+            _syncingSharedX = false;
+        }
+    }
+
+
     private void CaptureLockedLimitsFromPlots()
     {
+        PlotDefinition? xSource = null;
         foreach (var plot in _plots)
         {
             if (plot.WpfPlot is null)
@@ -3183,7 +3265,12 @@ public partial class MainWindow : Window
             }
 
             plot.LockedLimits = limits;
+            xSource ??= plot;
         }
+
+        // Ensure every plot locks the same X span (Y remains per-plot).
+        if (xSource is not null)
+            SyncSharedXAxis(xSource);
     }
 
 
