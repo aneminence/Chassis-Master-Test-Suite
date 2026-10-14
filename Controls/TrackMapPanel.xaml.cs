@@ -122,12 +122,27 @@ public partial class TrackMapPanel : UserControl
 
     private MapTileLayerController? _tileLayer;
     private bool _suppressBasemapSourceChanged;
+    private TrackMap3DController? _map3D;
+    private bool _is3DMode;
 
     public TrackMapPanel()
     {
         InitializeComponent();
 
         BuildPlot();
+        _map3D = new TrackMap3DController(Map3DWebView);
+        _map3D.StatusChanged += message => Dispatcher.Invoke(() => Show3DStatus(message));
+        _map3D.SampleSelected += (trackIndex, sampleIndex) => Dispatcher.Invoke(() =>
+        {
+            if (trackIndex < 0 || trackIndex >= _tracks.Count)
+                return;
+            var samples = _tracks[trackIndex].Samples;
+            if (sampleIndex < 0 || sampleIndex >= samples.Count)
+                return;
+            var sample = samples[sampleIndex];
+            SetCursorSample(sample);
+            SampleSelected?.Invoke(sample, trackIndex);
+        });
 
         GateStore.Instance.Changed += (_, _) =>
         {
@@ -359,6 +374,7 @@ public partial class TrackMapPanel : UserControl
 
         _refreshStopwatch.Restart();
         Rebuild(valid);
+        _map3D?.SetTracks(valid);
     }
 
     /// <summary>
@@ -393,6 +409,7 @@ public partial class TrackMapPanel : UserControl
         AltText.Text = "--";
 
         _wpfPlot.Refresh();
+        _map3D?.Clear();
     }
 
     /// <summary>
@@ -400,6 +417,12 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public void AutoFit()
     {
+        if (_is3DMode)
+        {
+            _map3D?.Fit();
+            return;
+        }
+
         if (_projection is null || _samples.Count == 0)
         {
             return;
@@ -460,6 +483,57 @@ public partial class TrackMapPanel : UserControl
         _cursorSample = sample;
         UpdateCursorMarker(refresh: true);
         UpdateCoordinateReadout();
+        _map3D?.SetCursor(sample);
+    }
+
+    private void Mode2DButton_Click(object sender, RoutedEventArgs e) => SetMapMode(false);
+
+    private async void Mode3DButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetMapMode(true);
+        Show3DStatus(Loc.T("Map.ThreeDLoading"));
+        if (_map3D is not null)
+            await _map3D.EnsureInitializedAsync();
+    }
+
+    private void SetMapMode(bool use3D)
+    {
+        _is3DMode = use3D;
+        Map2DHost.Visibility = use3D ? Visibility.Collapsed : Visibility.Visible;
+        Map3DHost.Visibility = use3D ? Visibility.Visible : Visibility.Collapsed;
+        Map2DToolbar.Visibility = use3D ? Visibility.Collapsed : Visibility.Visible;
+        Map3DToolbar.Visibility = use3D ? Visibility.Visible : Visibility.Collapsed;
+        Mode2DButton.IsEnabled = use3D;
+        Mode3DButton.IsEnabled = !use3D;
+        _map3D?.SetActive(use3D);
+        if (!use3D)
+            _tileLayer?.Invalidate(force: true);
+    }
+
+    private void AltitudeModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Apply3DDisplayOptions();
+
+    private void ExaggerationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Apply3DDisplayOptions();
+
+    private void Apply3DDisplayOptions()
+    {
+        if (_map3D is null)
+            return;
+        var mode = (AltitudeModeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "recorded";
+        var raw = (ExaggerationCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
+        if (!double.TryParse(raw, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var exaggeration))
+            exaggeration = 1.0;
+        _map3D.SetDisplay(mode, exaggeration);
+    }
+
+    private void Fit3DButton_Click(object sender, RoutedEventArgs e) => _map3D?.Fit();
+
+    private void Show3DStatus(string message)
+    {
+        Map3DStatusText.Text = message;
+        Map3DStatusPanel.Visibility = string.IsNullOrWhiteSpace(message)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     // ============================================================
@@ -1365,16 +1439,21 @@ public partial class TrackMapPanel : UserControl
         try
         {
             BasemapSourceCombo.Items.Clear();
+            Map3DSourceCombo.Items.Clear();
             var lang = Loc.Language;
             foreach (var src in MapTileSources.Presets)
             {
                 BasemapSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(lang)));
+                Map3DSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(lang)));
             }
 
             var prefs = AppearanceService.Preferences.Map;
             var match = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
                 .FirstOrDefault(i => string.Equals(i.Id, prefs.SourceId, StringComparison.OrdinalIgnoreCase));
             BasemapSourceCombo.SelectedItem = match ?? BasemapSourceCombo.Items[0];
+            Map3DSourceCombo.SelectedItem = Map3DSourceCombo.Items.Cast<BasemapSourceItem>()
+                .FirstOrDefault(i => string.Equals(i.Id, prefs.SourceId, StringComparison.OrdinalIgnoreCase))
+                ?? Map3DSourceCombo.Items[0];
 
             if (BasemapCheck is not null)
                 BasemapCheck.IsChecked = prefs.BasemapEnabled;
@@ -1390,6 +1469,7 @@ public partial class TrackMapPanel : UserControl
     private void ApplyBasemapFromPreferences()
     {
         _tileLayer?.ApplyPreferences();
+        _map3D?.SetImagery(AppearanceService.CurrentMapSource());
         // Dim scale grid when basemap is on so tiles stay readable.
         if (GridOverlay is not null)
             GridOverlay.Opacity = AppearanceService.Preferences.Map.BasemapEnabled ? 0.35 : 1.0;
@@ -1400,6 +1480,28 @@ public partial class TrackMapPanel : UserControl
         // Title texts in XAML that we can reach by name where present.
         if (TitleText is not null)
             TitleText.Text = Loc.T("Map.Title");
+        if (Mode2DButton is not null)
+            Mode2DButton.ToolTip = Loc.T("Map.Mode2DTip");
+        if (Mode3DButton is not null)
+            Mode3DButton.ToolTip = Loc.T("Map.Mode3DTip");
+        if (AltitudeModeLabel is not null)
+            AltitudeModeLabel.Text = Loc.T("Map.HeightMode");
+        if (ExaggerationLabel is not null)
+            ExaggerationLabel.Text = Loc.T("Map.Exaggeration");
+        if (Map3DSourceLabel is not null)
+            Map3DSourceLabel.Text = Loc.T("Map.Source");
+        if (Map3DSourceCombo is not null)
+            Map3DSourceCombo.ToolTip = Loc.T("Map.SourceTip");
+        if (Fit3DButton is not null)
+        {
+            Fit3DButton.Content = Loc.T("Map.Fit");
+            Fit3DButton.ToolTip = Loc.T("Map.FitTip");
+        }
+        if (AltitudeModeCombo is not null && AltitudeModeCombo.Items.Count >= 2)
+        {
+            ((ComboBoxItem)AltitudeModeCombo.Items[0]).Content = Loc.T("Map.HeightRecorded");
+            ((ComboBoxItem)AltitudeModeCombo.Items[1]).Content = Loc.T("Map.HeightGround");
+        }
         if (AddGateButton is not null)
         {
             AddGateButton.Content = Loc.T("Map.AddGate");
@@ -1448,6 +1550,14 @@ public partial class TrackMapPanel : UserControl
                     BasemapSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(Loc.Language)));
                 BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
                     .FirstOrDefault(i => i.Id == selectedId) ?? BasemapSourceCombo.Items[0];
+                if (Map3DSourceCombo is not null)
+                {
+                    Map3DSourceCombo.Items.Clear();
+                    foreach (var src in MapTileSources.Presets)
+                        Map3DSourceCombo.Items.Add(new BasemapSourceItem(src.Id, src.DisplayName(Loc.Language)));
+                    Map3DSourceCombo.SelectedItem = Map3DSourceCombo.Items.Cast<BasemapSourceItem>()
+                        .FirstOrDefault(i => i.Id == selectedId) ?? Map3DSourceCombo.Items[0];
+                }
             }
             finally
             {
@@ -1482,6 +1592,20 @@ public partial class TrackMapPanel : UserControl
         if (_suppressBasemapSourceChanged || BasemapSourceCombo?.SelectedItem is not BasemapSourceItem item)
             return;
 
+        ApplyMapSourceSelection(item);
+    }
+
+    private void Map3DSourceCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressBasemapSourceChanged || Map3DSourceCombo?.SelectedItem is not BasemapSourceItem item)
+            return;
+
+        ApplyMapSourceSelection(item);
+    }
+
+    private void ApplyMapSourceSelection(BasemapSourceItem item)
+    {
+
         string? customUrl = AppearanceService.Preferences.Map.CustomUrlTemplate;
         string? tiandituKey = AppearanceService.Preferences.Map.TiandituKey;
 
@@ -1515,6 +1639,24 @@ public partial class TrackMapPanel : UserControl
         AppearanceService.SetMapSource(item.Id, customUrl, tiandituKey);
         _tileLayer?.SetSource(AppearanceService.CurrentMapSource());
         _tileLayer?.Invalidate(force: true);
+        _map3D?.SetImagery(AppearanceService.CurrentMapSource());
+        SyncMapSourceSelections(item.Id);
+    }
+
+    private void SyncMapSourceSelections(string sourceId)
+    {
+        _suppressBasemapSourceChanged = true;
+        try
+        {
+            BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
+                .FirstOrDefault(i => i.Id == sourceId) ?? BasemapSourceCombo.Items[0];
+            Map3DSourceCombo.SelectedItem = Map3DSourceCombo.Items.Cast<BasemapSourceItem>()
+                .FirstOrDefault(i => i.Id == sourceId) ?? Map3DSourceCombo.Items[0];
+        }
+        finally
+        {
+            _suppressBasemapSourceChanged = false;
+        }
     }
 
     private void RevertBasemapSelection()
@@ -1527,6 +1669,11 @@ public partial class TrackMapPanel : UserControl
             {
                 BasemapSourceCombo.SelectedItem = BasemapSourceCombo.Items.Cast<BasemapSourceItem>()
                     .FirstOrDefault(i => i.Id == prev) ?? BasemapSourceCombo.Items[0];
+            }
+            if (Map3DSourceCombo is not null)
+            {
+                Map3DSourceCombo.SelectedItem = Map3DSourceCombo.Items.Cast<BasemapSourceItem>()
+                    .FirstOrDefault(i => i.Id == prev) ?? Map3DSourceCombo.Items[0];
             }
         }
         finally

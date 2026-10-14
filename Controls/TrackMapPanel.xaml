@@ -1,6 +1,7 @@
 ﻿<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
              Background="{DynamicResource PanelBackground}">
 
     <Border BorderBrush="{DynamicResource BorderBrushSoft}"
@@ -41,7 +42,14 @@
                            FontWeight="SemiBold"
                            VerticalAlignment="Center"/>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+                    <Button x:Name="Mode2DButton" Content="2D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
+                            Click="Mode2DButton_Click" ToolTip="Use the classic 2D track map"/>
+                    <Button x:Name="Mode3DButton" Content="3D" Style="{StaticResource HeaderButtonStyle}"
+                            Click="Mode3DButton_Click" ToolTip="Use the interactive 3D globe"/>
+                </StackPanel>
+
+                <StackPanel x:Name="Map2DToolbar" Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,4,0">
                     <CheckBox x:Name="BasemapCheck"
                               Content="Basemap"
                               Margin="0,0,8,0"
@@ -81,6 +89,33 @@
                     <Button x:Name="ExportGatesButton" Content="Export" Style="{StaticResource HeaderButtonStyle}"
                             Click="ExportGatesButton_Click" ToolTip="Export gates (.spl) — coming soon"/>
                 </StackPanel>
+
+                <StackPanel x:Name="Map3DToolbar" Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center"
+                            Margin="0,0,4,0" Visibility="Collapsed">
+                    <TextBlock x:Name="Map3DSourceLabel" Text="Source" Foreground="{DynamicResource TextSecondary}"
+                               FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <ComboBox x:Name="Map3DSourceCombo" Width="175" Height="26" Margin="0,0,8,0"
+                              Style="{StaticResource DarkComboBoxStyle}"
+                              SelectionChanged="Map3DSourceCombo_SelectionChanged"/>
+                    <TextBlock x:Name="AltitudeModeLabel" Text="Height" Foreground="{DynamicResource TextSecondary}"
+                               FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <ComboBox x:Name="AltitudeModeCombo" Width="120" Height="26" Margin="0,0,8,0"
+                              Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="AltitudeModeCombo_SelectionChanged">
+                        <ComboBoxItem Tag="recorded" Content="Recorded" IsSelected="True"/>
+                        <ComboBoxItem Tag="ground" Content="Ground"/>
+                    </ComboBox>
+                    <TextBlock x:Name="ExaggerationLabel" Text="Exaggeration" Foreground="{DynamicResource TextSecondary}"
+                               FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                    <ComboBox x:Name="ExaggerationCombo" Width="62" Height="26" Margin="0,0,8,0"
+                              Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="ExaggerationCombo_SelectionChanged">
+                        <ComboBoxItem Tag="1" Content="1×" IsSelected="True"/>
+                        <ComboBoxItem Tag="2" Content="2×"/>
+                        <ComboBoxItem Tag="5" Content="5×"/>
+                        <ComboBoxItem Tag="10" Content="10×"/>
+                    </ComboBox>
+                    <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
+                            Click="Fit3DButton_Click"/>
+                </StackPanel>
             </Grid>
 
             <!-- 地图区 -->
@@ -92,6 +127,8 @@
                     ClipToBounds="True">
 
                 <Grid x:Name="MapHost">
+
+                    <Grid x:Name="Map2DHost">
 
                     <!-- 第 0 层：在线地图瓦片（轨迹 / Gate 之下） -->
                     <Canvas x:Name="TileCanvas"
@@ -227,6 +264,19 @@
                         </StackPanel>
 
                     </StackPanel>
+
+                    </Grid>
+
+                    <Grid x:Name="Map3DHost" Visibility="Collapsed">
+                        <wv2:WebView2 x:Name="Map3DWebView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        <Border x:Name="Map3DStatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Background="{DynamicResource HudBackground}" BorderBrush="{DynamicResource BorderBrushSoft}"
+                                BorderThickness="1" CornerRadius="4" Padding="14,10" IsHitTestVisible="False">
+                            <TextBlock x:Name="Map3DStatusText" Text="Loading 3D map…"
+                                       Foreground="{DynamicResource TextSecondary}" FontSize="12" TextWrapping="Wrap"
+                                       MaxWidth="360" TextAlignment="Center"/>
+                        </Border>
+                    </Grid>
 
                 </Grid>
 
