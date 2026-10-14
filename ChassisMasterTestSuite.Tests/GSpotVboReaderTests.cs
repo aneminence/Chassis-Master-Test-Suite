@@ -142,4 +142,41 @@ public class GSpotVboReaderTests
                 File.Delete(path);
         }
     }
+
+    [Fact]
+    public void GSpot_WithStandardRacelogicColumns_DoesNotUseShiftedMapping()
+    {
+        var path = Path.Combine(
+            Path.GetTempPath(),
+            "cmts-vbo-gspot-standard-" + Guid.NewGuid().ToString("N") + ".vbo");
+
+        try
+        {
+            File.WriteAllText(path, """
+                [comments]
+                version: 20250521-GSpot_G4_2.0
+                (c) iCell Studio
+
+                [column names]
+                sats time lat long velocity heading height
+
+                [data]
+                009 162349.00 +1829.516840 -6266.009450 47.544544 108.7 421.8
+                """);
+
+            var sample = new VboReader(path).ReadAll().Single();
+
+            Assert.Equal(30.4919473, sample.Latitude, precision: 5);
+            Assert.Equal(104.4334908, sample.Longitude, precision: 5);
+            Assert.Equal(47.544544, sample.SpeedKph, precision: 5);
+            Assert.Equal(108.7, sample.Heading, precision: 2);
+            Assert.Equal(421.8, sample.Altitude, precision: 2);
+            Assert.Equal(59_029_000, sample.Timestamp);
+        }
+        finally
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
 }

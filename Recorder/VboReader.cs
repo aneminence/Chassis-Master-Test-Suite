@@ -37,12 +37,6 @@ public sealed class VboReader
 
     private bool _columnIndexBuilt;
 
-    /// <summary>
-    /// GSpot / iCell Studio VBO (comments contain "GSpot" or "iCell").
-    /// Lat/long are not Racelogic arc-minutes.
-    /// </summary>
-    private bool _isGSpotFormat;
-
     public VboReader(string filePath)
     {
         FilePath = filePath;
@@ -132,12 +126,6 @@ public sealed class VboReader
             {
                 case "comments":
                     Comments.Add(trimmed);
-
-                    if (trimmed.Contains("GSpot", StringComparison.OrdinalIgnoreCase) ||
-                        trimmed.Contains("iCell", StringComparison.OrdinalIgnoreCase))
-                    {
-                        _isGSpotFormat = true;
-                    }
 
                     if (trimmed.StartsWith(
                             "Log Rate",
@@ -271,15 +259,20 @@ public sealed class VboReader
 
         var rawLat = Raw("lat");
         var rawLong = Raw("long");
-        var preferGSpot = _isGSpotFormat || LooksLikeGSpotLayout(Raw("sats"), Raw("velocity"), rawLong);
-        DecodeLatLong(rawLat, rawLong, preferGSpot, out var latitude, out var longitude);
+        // iCell/GSpot exports exist in at least two layouts. Newer files can use
+        // the ordinary Racelogic columns/units even though their comments still
+        // contain "GSpot_G4". Only select the shifted layout when the row itself
+        // has its distinctive deg*1e7 longitude + elapsed-ms velocity values.
+        var usesShiftedGSpotLayout = LooksLikeGSpotLayout(
+            Raw("sats"), Raw("velocity"), rawLong);
+        DecodeLatLong(rawLat, rawLong, usesShiftedGSpotLayout, out var latitude, out var longitude);
 
         double speed;
         double heading;
         double altitude;
         long timestampMs;
 
-        if (preferGSpot)
+        if (usesShiftedGSpotLayout)
         {
             // GSpot_G4 / iCell Studio: [column names] use Racelogic labels but
             // the data columns are shifted / differently typed:
