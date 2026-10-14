@@ -279,7 +279,9 @@
                                    FontSize="11"
                                    VerticalAlignment="Center"
                                    Margin="0,0,14,4"/>
+                    </WrapPanel>
 
+                    <WrapPanel x:Name="ResultActionsPanel" Orientation="Horizontal">
                         <Button x:Name="ComputeButton"
                                 Content="Compute"
                                 Style="{StaticResource ToolButtonStyle}"
