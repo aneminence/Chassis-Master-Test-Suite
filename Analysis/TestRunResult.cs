@@ -48,8 +48,19 @@ public sealed class TestRunResult
     public IReadOnlyList<PassConditionMeasurement> PassMeasurements { get; init; } =
         Array.Empty<PassConditionMeasurement>();
 
+    /// <summary>Ordered sector durations for lap-time results.</summary>
+    public IReadOnlyList<SectorTimeResult> SectorTimes { get; init; } =
+        Array.Empty<SectorTimeResult>();
+
     /// <summary>Inclusive sample indices in the source buffer.</summary>
     public int StartSampleIndex { get; init; }
 
     public int EndSampleIndex { get; init; }
+}
+
+public sealed class SectorTimeResult
+{
+    public string Name { get; init; } = "";
+    public Guid? EndGateId { get; init; }
+    public double DurationSeconds { get; init; }
 }

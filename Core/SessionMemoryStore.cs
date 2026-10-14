@@ -72,7 +72,7 @@ public sealed class SessionMathsDto
 
 public sealed class TestResultsSettingsDto
 {
-    /// <summary>Accel | Decel | Custom | Gate</summary>
+    /// <summary>Accel | Decel | Custom | Gate | LapTime</summary>
     public string Type { get; set; } = "Accel";
 
     public string StartThreshold { get; set; } = "0";
@@ -84,6 +84,10 @@ public sealed class TestResultsSettingsDto
     public bool ConditionsCollapsed { get; set; }
 
     public List<PassConditionSettingsDto> PassConditions { get; set; } = new();
+
+    public Guid? LapGateId { get; set; }
+
+    public List<Guid> SectorGateIds { get; set; } = new();
 }
 
 

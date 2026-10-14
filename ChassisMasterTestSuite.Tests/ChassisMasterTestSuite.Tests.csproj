@@ -55,6 +55,7 @@
     <Compile Include="..\Analysis\SelectionMeasure.cs" Link="Linked\Analysis\SelectionMeasure.cs" />
     <Compile Include="..\Analysis\GateStore.cs" Link="Linked\Analysis\GateStore.cs" />
     <Compile Include="..\Analysis\GateRunEngine.cs" Link="Linked\Analysis\GateRunEngine.cs" />
+    <Compile Include="..\Analysis\LapTimeEngine.cs" Link="Linked\Analysis\LapTimeEngine.cs" />
     <Compile Include="..\Analysis\GateCrossing.cs" Link="Linked\Analysis\GateCrossing.cs" />
     <Compile Include="..\Analysis\GateDefinition.cs" Link="Linked\Analysis\GateDefinition.cs" />
     <Compile Include="..\Analysis\VbtsGateImporter.cs" Link="Linked\Analysis\VbtsGateImporter.cs" />

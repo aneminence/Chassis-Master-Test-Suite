@@ -9,6 +9,8 @@ using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Data;
+using System.Windows.Media;
 
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Core;
@@ -39,6 +41,8 @@ public partial class TestResultsPanel : UserControl
     private TestDefinition? _lastDefinition;
 
     private readonly ObservableCollection<PassConditionRowVm> _passConditions = new();
+    private readonly ObservableCollection<SectorGateRowVm> _sectorGates = new();
+    private readonly List<DataGridColumn> _sectorColumns = new();
 
     private bool _conditionsCollapsed;
     private GridLength _savedConditionsHeight = new(200);
@@ -108,11 +112,14 @@ public partial class TestResultsPanel : UserControl
         {
             UpdateGateStatusHint();
             RefreshAnalysisGateCombos();
+            RefreshLapGateChoices();
         };
         ApplyTypeDefaults();
         EnsureDefaultPassCondition();
         if (PassConditionsHost is not null)
             PassConditionsHost.ItemsSource = _passConditions;
+        if (SectorGatesHost is not null)
+            SectorGatesHost.ItemsSource = _sectorGates;
 
         Loc.LanguageChanged += (_, _) =>
         {
@@ -151,6 +158,8 @@ public partial class TestResultsPanel : UserControl
             TypeCustomItem.Content = Loc.T("Results.Custom");
         if (TypeGateItem is not null)
             TypeGateItem.Content = Loc.T("Results.Gate");
+        if (TypeLapTimeItem is not null)
+            TypeLapTimeItem.Content = Loc.T("Results.LapTime");
         if (StartConditionsLabel is not null)
             StartConditionsLabel.Text = Loc.T("Results.StartConditions");
         if (EndConditionsLabel is not null)
@@ -201,7 +210,8 @@ public partial class TestResultsPanel : UserControl
         if (ColEnd is not null)
             ColEnd.Header = Loc.T("Results.Col.End");
         if (ColDuration is not null)
-            ColDuration.Header = Loc.T("Results.Col.Duration");
+            ColDuration.Header = Loc.T(GetSelectedTestType() == TestType.LapTime
+                ? "Results.Col.LapTime" : "Results.Col.Duration");
         if (ColDeltaV is not null)
             ColDeltaV.Header = Loc.T("Results.Col.DeltaV");
         if (ColDist is not null)
@@ -370,8 +380,15 @@ public partial class TestResultsPanel : UserControl
         ChannelCombo.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
         if (GatePickPanel is not null)
             GatePickPanel.Visibility = type == TestType.Gate ? Visibility.Visible : Visibility.Collapsed;
+        if (LapTimePanel is not null)
+            LapTimePanel.Visibility = type == TestType.LapTime ? Visibility.Visible : Visibility.Collapsed;
+        if (ThresholdPanel is not null)
+            ThresholdPanel.Visibility = type == TestType.LapTime ? Visibility.Collapsed : Visibility.Visible;
         if (type == TestType.Gate)
             RefreshAnalysisGateCombos();
+        if (type == TestType.LapTime)
+            RefreshLapGateChoices();
+        UpdateResultColumnMode(type);
 
         switch (type)
         {
@@ -394,6 +411,12 @@ public partial class TestResultsPanel : UserControl
             case TestType.Gate:
                 StartLabel.Text = "Min kph";
                 EndLabel.Text = "Max kph";
+                StartThresholdBox.Text = "";
+                EndThresholdBox.Text = "";
+                break;
+            case TestType.LapTime:
+                StartLabel.Text = "";
+                EndLabel.Text = "";
                 StartThresholdBox.Text = "";
                 EndThresholdBox.Text = "";
                 break;
@@ -432,7 +455,34 @@ public partial class TestResultsPanel : UserControl
             scannedPoints += source.Samples.Count;
 
             IReadOnlyList<TestRunResult> raw;
-            if (definition.Type == TestType.Gate)
+            if (definition.Type == TestType.LapTime)
+            {
+                var lapGate = GetSelectedLapGate();
+                var sectorGates = GetSelectedSectorGates();
+                if (lapGate is null || !lapGate.IsValid)
+                {
+                    StatusText.Text = "Select a valid Start / Finish gate.";
+                    StatusText.Foreground = ThemeBrushes.Accent();
+                    return;
+                }
+                if (sectorGates.Any(gate => gate.Id == lapGate.Id))
+                {
+                    StatusText.Text = "Start / Finish cannot also be a sector gate.";
+                    StatusText.Foreground = ThemeBrushes.Accent();
+                    return;
+                }
+                if (sectorGates.Select(gate => gate.Id).Distinct().Count() != sectorGates.Count)
+                {
+                    StatusText.Text = "Each sector gate can only be used once.";
+                    StatusText.Foreground = ThemeBrushes.Accent();
+                    return;
+                }
+                raw = LapTimeEngine.Compute(
+                    MathsEnricher.Apply(source.Samples, MathsChannelStore.Instance.Definitions),
+                    lapGate,
+                    sectorGates);
+            }
+            else if (definition.Type == TestType.Gate)
             {
                 var startGate = GateStore.Instance.StartGate;
                 var endGate = GateStore.Instance.EndGate;
@@ -474,6 +524,7 @@ public partial class TestResultsPanel : UserControl
                     Pass = r.Pass,
                     FailReason = r.FailReason,
                     PassMeasurements = r.PassMeasurements,
+                    SectorTimes = r.SectorTimes,
                     StartSampleIndex = r.StartSampleIndex,
                     EndSampleIndex = r.EndSampleIndex
                 };
@@ -502,6 +553,8 @@ public partial class TestResultsPanel : UserControl
             row.PropertyChanged += ResultRow_PropertyChanged;
             _rows.Add(row);
         }
+        ApplyFastestHighlights();
+        RebuildSectorColumns();
 
         ExportCsvButton.IsEnabled = flat.Count > 0;
 
@@ -613,6 +666,11 @@ public partial class TestResultsPanel : UserControl
             definition = TestDefinition.Gate();
             return true;
         }
+        if (type == TestType.LapTime)
+        {
+            definition = TestDefinition.LapTime();
+            return true;
+        }
 
         if (!TryParseThreshold(StartThresholdBox.Text, out var start))
         {
@@ -666,6 +724,9 @@ public partial class TestResultsPanel : UserControl
                 // Optional Min/Max speed filters are read later in Compute; placeholders OK.
                 definition = TestDefinition.Gate();
                 return true;
+            case TestType.LapTime:
+                definition = TestDefinition.LapTime();
+                return true;
 
             default:
                 error = "Unknown test type.";
@@ -682,6 +743,7 @@ public partial class TestResultsPanel : UserControl
                 "Decel" => TestType.Decel,
                 "Custom" => TestType.Custom,
                 "Gate" => TestType.Gate,
+                "LapTime" => TestType.LapTime,
                 _ => TestType.Accel
             };
         }
@@ -833,12 +895,17 @@ public partial class TestResultsPanel : UserControl
                 TestType.Decel => "Decel",
                 TestType.Custom => "Custom",
                 TestType.Gate => "Gate",
+                TestType.LapTime => "LapTime",
                 _ => "Accel"
             },
             StartThreshold = StartThresholdBox?.Text ?? "",
             EndThreshold = EndThresholdBox?.Text ?? "",
             ConditionsCollapsed = _conditionsCollapsed
         };
+
+        dto.LapGateId = (LapGateCombo?.SelectedItem as GatePickItem)?.Id;
+        dto.SectorGateIds = _sectorGates.Where(row => row.GateId is Guid)
+            .Select(row => row.GateId!.Value).ToList();
 
         if (ChannelCombo?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
             dto.ChannelId = tag;
@@ -888,6 +955,11 @@ public partial class TestResultsPanel : UserControl
                 ChannelCombo.Visibility = isCustom ? Visibility.Visible : Visibility.Collapsed;
             if (GatePickPanel is not null)
                 GatePickPanel.Visibility = type == TestType.Gate ? Visibility.Visible : Visibility.Collapsed;
+            if (LapTimePanel is not null)
+                LapTimePanel.Visibility = type == TestType.LapTime ? Visibility.Visible : Visibility.Collapsed;
+            if (ThresholdPanel is not null)
+                ThresholdPanel.Visibility = type == TestType.LapTime ? Visibility.Collapsed : Visibility.Visible;
+            UpdateResultColumnMode(type);
 
             switch (type)
             {
@@ -903,6 +975,10 @@ public partial class TestResultsPanel : UserControl
                 case TestType.Gate:
                     StartLabel.Text = "Min kph";
                     EndLabel.Text = "Max kph";
+                    break;
+                case TestType.LapTime:
+                    StartLabel.Text = "";
+                    EndLabel.Text = "";
                     break;
             }
 
@@ -928,6 +1004,20 @@ public partial class TestResultsPanel : UserControl
             }
 
             RefreshAnalysisGateCombos();
+            RefreshLapGateChoices();
+            if (dto.LapGateId is Guid lapId)
+                LapGateCombo.SelectedItem = LapGateCombo.Items.Cast<GatePickItem>()
+                    .FirstOrDefault(item => item.Id == lapId);
+            _sectorGates.Clear();
+            foreach (var sectorId in dto.SectorGateIds ?? new List<Guid>())
+            {
+                if (GateStore.Instance.Find(sectorId) is null)
+                    continue;
+                var row = new SectorGateRowVm { GateId = sectorId };
+                FillSectorChoices(row);
+                _sectorGates.Add(row);
+            }
+            RenumberSectors();
 
             _passConditions.Clear();
             if (dto.PassConditions is { Count: > 0 })
@@ -1111,6 +1201,153 @@ public partial class TestResultsPanel : UserControl
             GateStore.Instance.SetAnalysisEnd(item.Id);
     }
 
+    private void RefreshLapGateChoices()
+    {
+        if (LapGateCombo is null)
+            return;
+        var selected = (LapGateCombo.SelectedItem as GatePickItem)?.Id;
+        FillGateCombo(LapGateCombo, selected);
+        foreach (var row in _sectorGates)
+            FillSectorChoices(row);
+        RenumberSectors();
+    }
+
+    private void FillSectorChoices(SectorGateRowVm row)
+    {
+        var selected = row.GateId;
+        row.GateChoices.Clear();
+        foreach (var gate in GateStore.Instance.Gates)
+            row.GateChoices.Add(new GatePickItem(gate.Id, gate.Name));
+        row.GateId = selected is Guid id && GateStore.Instance.Find(id) is not null
+            ? id
+            : row.GateChoices.FirstOrDefault()?.Id;
+    }
+
+    private GateDefinition? GetSelectedLapGate() =>
+        LapGateCombo?.SelectedItem is GatePickItem item && item.Id is Guid id
+            ? GateStore.Instance.Find(id)
+            : null;
+
+    private List<GateDefinition> GetSelectedSectorGates() =>
+        _sectorGates
+            .Where(row => row.GateId is Guid)
+            .Select(row => GateStore.Instance.Find(row.GateId!.Value))
+            .Where(gate => gate is not null)
+            .Cast<GateDefinition>()
+            .ToList();
+
+    private void AddSectorButton_Click(object sender, RoutedEventArgs e)
+    {
+        var row = new SectorGateRowVm();
+        FillSectorChoices(row);
+        _sectorGates.Add(row);
+        RenumberSectors();
+    }
+
+    private void RemoveSector_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: SectorGateRowVm row })
+            _sectorGates.Remove(row);
+        RenumberSectors();
+    }
+
+    private void MoveSectorUp_Click(object sender, RoutedEventArgs e) => MoveSector(sender, -1);
+    private void MoveSectorDown_Click(object sender, RoutedEventArgs e) => MoveSector(sender, 1);
+
+    private void MoveSector(object sender, int delta)
+    {
+        if (sender is not FrameworkElement { DataContext: SectorGateRowVm row })
+            return;
+        var from = _sectorGates.IndexOf(row);
+        var to = from + delta;
+        if (from < 0 || to < 0 || to >= _sectorGates.Count)
+            return;
+        _sectorGates.Move(from, to);
+        RenumberSectors();
+    }
+
+    private void RenumberSectors()
+    {
+        for (var i = 0; i < _sectorGates.Count; i++)
+            _sectorGates[i].NumberText = $"Sector {i + 1}";
+    }
+
+    private void ApplyFastestHighlights()
+    {
+        if (_rows.Count == 0 || _lastDefinition?.Type != TestType.LapTime)
+            return;
+        var purple = new SolidColorBrush(Color.FromRgb(181, 108, 255));
+        purple.Freeze();
+        var normal = ThemeBrushes.TextPrimary();
+        normal.Freeze();
+        var fastestLap = _rows.Min(row => row.Annotated.Result.DurationSeconds);
+        var sectorCount = _rows.Max(row => row.SectorTimes.Count);
+        var fastestSectors = Enumerable.Range(0, sectorCount)
+            .Select(index => _rows.Where(row => row.SectorTimes.Count > index)
+                .Min(row => row.Annotated.Result.SectorTimes[index].DurationSeconds))
+            .ToArray();
+
+        foreach (var row in _rows)
+        {
+            row.DurationBrush = Math.Abs(row.Annotated.Result.DurationSeconds - fastestLap) < 0.0005
+                ? purple : normal;
+            row.DurationWeight = row.DurationBrush == purple ? FontWeights.Bold : FontWeights.Normal;
+            for (var i = 0; i < row.SectorTimes.Count; i++)
+            {
+                row.SectorTimes[i].ValueBrush = Math.Abs(
+                    row.Annotated.Result.SectorTimes[i].DurationSeconds - fastestSectors[i]) < 0.0005
+                    ? purple : normal;
+            }
+        }
+    }
+
+    private void RebuildSectorColumns()
+    {
+        foreach (var column in _sectorColumns)
+            ResultsGrid.Columns.Remove(column);
+        _sectorColumns.Clear();
+        if (_rows.Count == 0 || _rows.All(row => row.SectorTimes.Count == 0))
+            return;
+
+        var count = _rows.Max(row => row.SectorTimes.Count);
+        for (var i = 0; i < count; i++)
+        {
+            var headerName = _rows.Select(row => row.SectorTimes.Count > i ? row.SectorTimes[i].Name : "")
+                .FirstOrDefault(name => !string.IsNullOrWhiteSpace(name));
+            var text = new FrameworkElementFactory(typeof(TextBlock));
+            text.SetBinding(TextBlock.TextProperty, new Binding($"SectorTimes[{i}].ValueText"));
+            text.SetBinding(TextBlock.ForegroundProperty, new Binding($"SectorTimes[{i}].ValueBrush"));
+            text.SetBinding(TextBlock.FontWeightProperty, new Binding($"SectorTimes[{i}].ValueWeight"));
+            var column = new DataGridTemplateColumn
+            {
+                Header = $"S{i + 1} {headerName}",
+                Width = 92,
+                IsReadOnly = true,
+                CellTemplate = new DataTemplate { VisualTree = text }
+            };
+            var durationIndex = ResultsGrid.Columns.IndexOf(ColDuration);
+            ResultsGrid.Columns.Insert(durationIndex + 1 + i, column);
+            _sectorColumns.Add(column);
+        }
+    }
+
+    private void UpdateResultColumnMode(TestType type)
+    {
+        var lap = type == TestType.LapTime;
+        if (ColStart is not null) ColStart.Visibility = lap ? Visibility.Collapsed : Visibility.Visible;
+        if (ColEnd is not null) ColEnd.Visibility = lap ? Visibility.Collapsed : Visibility.Visible;
+        if (ColDeltaV is not null) ColDeltaV.Visibility = lap ? Visibility.Collapsed : Visibility.Visible;
+        if (ColPass is not null) ColPass.Visibility = lap ? Visibility.Collapsed : Visibility.Visible;
+        if (ColPassValues is not null) ColPassValues.Visibility = lap ? Visibility.Collapsed : Visibility.Visible;
+        if (ColDuration is not null)
+            ColDuration.Header = Loc.T(lap ? "Results.Col.LapTime" : "Results.Col.Duration");
+        if (lap)
+            return;
+        foreach (var column in _sectorColumns)
+            ResultsGrid.Columns.Remove(column);
+        _sectorColumns.Clear();
+    }
+
 
     /// <summary>One Pass Condition row: Channel + Min + Max + At gate.</summary>
     private sealed class PassConditionRowVm : INotifyPropertyChanged
@@ -1179,6 +1416,18 @@ public partial class TestResultsPanel : UserControl
         public override string ToString() => Name;
     }
 
+    private sealed class SectorGateRowVm : INotifyPropertyChanged
+    {
+        private Guid? _gateId;
+        private string _numberText = "Sector";
+        public ObservableCollection<GatePickItem> GateChoices { get; } = new();
+        public Guid? GateId { get => _gateId; set { _gateId = value; OnPropertyChanged(); } }
+        public string NumberText { get => _numberText; set { _numberText = value; OnPropertyChanged(); } }
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+    }
+
     private void UpdateGateStatusHint()
     {
         // Optional status nudge when gates change; keep Compute messaging primary.
@@ -1215,6 +1464,8 @@ public partial class TestResultsPanel : UserControl
     public sealed class ResultRowVm : INotifyPropertyChanged
     {
         private bool _isChecked;
+        private Brush _durationBrush = ThemeBrushes.TextPrimary();
+        private FontWeight _durationWeight = FontWeights.Normal;
 
         public required AnnotatedTestRun Annotated { get; init; }
 
@@ -1228,6 +1479,18 @@ public partial class TestResultsPanel : UserControl
 
         public string DurationText { get; init; } = "";
 
+        public Brush DurationBrush
+        {
+            get => _durationBrush;
+            set { _durationBrush = value; OnPropertyChanged(); }
+        }
+
+        public FontWeight DurationWeight
+        {
+            get => _durationWeight;
+            set { _durationWeight = value; OnPropertyChanged(); }
+        }
+
         public string DeltaVText { get; init; } = "";
 
         public string DistanceText { get; init; } = "";
@@ -1237,6 +1500,9 @@ public partial class TestResultsPanel : UserControl
         /// <summary>Highlighted Pass-condition measured values for the grid.</summary>
         public IReadOnlyList<PassValueChipVm> PassValues { get; init; } =
             Array.Empty<PassValueChipVm>();
+
+        public IReadOnlyList<SectorTimeCellVm> SectorTimes { get; init; } =
+            Array.Empty<SectorTimeCellVm>();
 
         public bool IsChecked
         {
@@ -1273,7 +1539,8 @@ public partial class TestResultsPanel : UserControl
                 DeltaVText = r.DeltaSpeedKph.ToString("0.##", CultureInfo.InvariantCulture),
                 DistanceText = r.DistanceMeters.ToString("0.#", CultureInfo.InvariantCulture),
                 PassText = r.Pass ? "Pass" : "Fail",
-                PassValues = chips
+                PassValues = chips,
+                SectorTimes = r.SectorTimes.Select(SectorTimeCellVm.From).ToArray()
             };
         }
 
@@ -1283,6 +1550,29 @@ public partial class TestResultsPanel : UserControl
             var local = TimeZoneInfo.ConvertTime(utc, tz);
             return local.ToString("HH:mm:ss.fff", CultureInfo.InvariantCulture);
         }
+    }
+
+    public sealed class SectorTimeCellVm : INotifyPropertyChanged
+    {
+        private Brush _valueBrush = ThemeBrushes.TextPrimary();
+        public string Name { get; init; } = "";
+        public string ValueText { get; init; } = "";
+        public Brush ValueBrush
+        {
+            get => _valueBrush;
+            set { _valueBrush = value; OnPropertyChanged(); OnPropertyChanged(nameof(ValueWeight)); }
+        }
+        public FontWeight ValueWeight => ValueBrush is SolidColorBrush brush
+            && brush.Color == Color.FromRgb(181, 108, 255)
+                ? FontWeights.Bold : FontWeights.Normal;
+        public static SectorTimeCellVm From(SectorTimeResult result) => new()
+        {
+            Name = result.Name,
+            ValueText = result.DurationSeconds.ToString("0.000", CultureInfo.InvariantCulture)
+        };
+        public event PropertyChangedEventHandler? PropertyChanged;
+        private void OnPropertyChanged([CallerMemberName] string? name = null) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     /// <summary>One Pass measurement chip (value + green/red highlight).</summary>

@@ -12,6 +12,7 @@ public static class TestResultsCsvExporter
     public static string BuildCsv(IReadOnlyList<TestRunResult> runs, TestDefinition? definition = null)
     {
         var passHeaders = CollectPassHeaders(runs);
+        var sectorHeaders = runs.Select(r => r.SectorTimes.Count).DefaultIfEmpty(0).Max();
         var sb = new StringBuilder();
         sb.Append(
             "Run,Source,StartTimestampMs,EndTimestampMs,Duration_s,StartSpeed_kph,EndSpeed_kph,DeltaV_kph,Distance_m,DistanceMethod,Pass,FailReason");
@@ -20,6 +21,8 @@ public static class TestResultsCsvExporter
             sb.Append(',').Append(CsvEscape(h));
             sb.Append(',').Append(CsvEscape(h + "_InRange"));
         }
+        for (var i = 0; i < sectorHeaders; i++)
+            sb.Append(',').Append(CsvEscape($"Sector{i + 1}_s"));
         sb.AppendLine();
 
         foreach (var r in runs)
@@ -53,6 +56,13 @@ public static class TestResultsCsvExporter
                 {
                     sb.Append(',').Append('0');
                 }
+            }
+
+            for (var i = 0; i < sectorHeaders; i++)
+            {
+                sb.Append(',');
+                if (i < r.SectorTimes.Count)
+                    sb.Append(F(r.SectorTimes[i].DurationSeconds));
             }
 
             sb.AppendLine();

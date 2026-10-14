@@ -101,4 +101,22 @@ public sealed class TestDefinition
                 Direction = CrossingDirection.Rising
             }
         };
+
+    public static TestDefinition LapTime() =>
+        new()
+        {
+            Type = TestType.LapTime,
+            Start = new ThresholdCondition
+            {
+                ChannelId = ChannelIds.Velocity,
+                Threshold = 0,
+                Direction = CrossingDirection.Rising
+            },
+            End = new ThresholdCondition
+            {
+                ChannelId = ChannelIds.Velocity,
+                Threshold = 0,
+                Direction = CrossingDirection.Rising
+            }
+        };
 }

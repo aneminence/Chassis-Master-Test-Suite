@@ -140,6 +140,7 @@
                             <ComboBoxItem x:Name="TypeDecelItem" Content="Decel" Tag="Decel"/>
                             <ComboBoxItem x:Name="TypeCustomItem" Content="Custom" Tag="Custom"/>
                             <ComboBoxItem x:Name="TypeGateItem" Content="Gate" Tag="Gate"/>
+                            <ComboBoxItem x:Name="TypeLapTimeItem" Content="Lap Time" Tag="LapTime"/>
                         </ComboBox>
 
                         <TextBlock x:Name="ChannelLabel"
@@ -216,7 +217,37 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </StackPanel>
-<WrapPanel Orientation="Horizontal">
+
+                    <StackPanel x:Name="LapTimePanel" Margin="0,0,0,8" Visibility="Collapsed">
+                        <WrapPanel Margin="0,0,0,6">
+                            <TextBlock x:Name="LapGateLabel" Text="Start / Finish" Style="{StaticResource ParamLabelStyle}"/>
+                            <ComboBox x:Name="LapGateCombo" Width="160" Height="28" Margin="0,0,12,4"
+                                      Style="{StaticResource DarkComboBoxStyle}"/>
+                            <Button x:Name="AddSectorButton" Content="+ Add Sector" Style="{StaticResource HeaderButtonStyle}"
+                                    Margin="0,0,0,4" Click="AddSectorButton_Click"/>
+                        </WrapPanel>
+                        <ItemsControl x:Name="SectorGatesHost">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <WrapPanel Margin="0,0,0,4">
+                                        <TextBlock Text="{Binding NumberText}" Width="58" Style="{StaticResource ParamLabelStyle}"/>
+                                        <ComboBox Width="160" Height="28" Margin="0,0,6,0"
+                                                  Style="{StaticResource DarkComboBoxStyle}"
+                                                  ItemsSource="{Binding GateChoices}"
+                                                  SelectedValuePath="Id"
+                                                  SelectedValue="{Binding GateId, Mode=TwoWay}"/>
+                                        <Button Content="↑" Width="28" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
+                                                Click="MoveSectorUp_Click"/>
+                                        <Button Content="↓" Width="28" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
+                                                Click="MoveSectorDown_Click"/>
+                                        <Button Content="{Binding [Results.Remove], Source={x:Static loc:LocBinder.Instance}}"
+                                                Style="{StaticResource HeaderButtonStyle}" Click="RemoveSector_Click"/>
+                                    </WrapPanel>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+<WrapPanel x:Name="ThresholdPanel" Orientation="Horizontal">
                         <TextBlock x:Name="StartLabel"
                                    Text="Start"
                                    Style="{StaticResource ParamLabelStyle}"/>
@@ -338,7 +369,14 @@
                     <DataGridTextColumn x:Name="ColDuration" Header="Duration s"
                                         Binding="{Binding DurationText}"
                                         IsReadOnly="True"
-                                        Width="80"/>
+                                        Width="80">
+                        <DataGridTextColumn.ElementStyle>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Foreground" Value="{Binding DurationBrush}"/>
+                                <Setter Property="FontWeight" Value="{Binding DurationWeight}"/>
+                            </Style>
+                        </DataGridTextColumn.ElementStyle>
+                    </DataGridTextColumn>
                     <DataGridTextColumn x:Name="ColDeltaV" Header="dV km/h"
                                         Binding="{Binding DeltaVText}"
                                         IsReadOnly="True"

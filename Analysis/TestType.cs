@@ -8,5 +8,6 @@ public enum TestType
     Accel,
     Decel,
     Custom,
-    Gate
+    Gate,
+    LapTime
 }
