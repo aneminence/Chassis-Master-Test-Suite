@@ -1,16 +1,22 @@
-(function () {
+(async function () {
   "use strict";
 
   const notice = document.getElementById("notice");
   const badge = document.getElementById("badge");
   const isZh = (navigator.language || "").toLowerCase().startsWith("zh");
   const text = isZh ? {
-    badge: "3D · 在线影像 · 椭球地形",
+    badge: "3D · 在线影像 · 真实地形",
+    badgeFallback: "3D · 在线影像 · 平面降级",
+    terrainLoading: "正在加载在线 DEM 地形…",
+    terrainError: "在线 DEM 加载失败，已降级为平面地球。正式发布前请配置 Cesium ion Token。",
     waiting: "等待 GPS 数据",
     missing: count => `${count} 条轨迹没有有效高度，已降级为贴地显示。`,
     cesiumError: "无法下载 Cesium，请检查网络连接。"
   } : {
-    badge: "3D · online imagery · ellipsoid terrain",
+    badge: "3D · online imagery · world terrain",
+    badgeFallback: "3D · online imagery · flat fallback",
+    terrainLoading: "Loading online DEM terrain…",
+    terrainError: "Online DEM failed to load; using the flat ellipsoid fallback. Configure a Cesium ion token before release.",
     waiting: "Waiting for GPS data",
     missing: count => `${count} track(s) have no usable altitude and are shown on the ground.`,
     cesiumError: "Cesium could not be downloaded. Check the network connection."
@@ -139,8 +145,18 @@
 
   try {
     if (!window.Cesium) throw new Error(text.cesiumError);
+    setNotice(text.terrainLoading);
+    let terrainProvider;
+    let terrainFallback = false;
+    try {
+      terrainProvider = await Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
+        "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer");
+    } catch (terrainError) {
+      terrainProvider = new Cesium.EllipsoidTerrainProvider();
+      terrainFallback = true;
+    }
     viewer = new Cesium.Viewer("cesiumContainer", {
-      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
+      terrainProvider,
       baseLayer: Cesium.ImageryLayer.fromProviderAsync(
         Cesium.ArcGisMapServerImageryProvider.fromUrl(
           "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer")),
@@ -149,8 +165,13 @@
       navigationHelpButton: false, infoBox: false, selectionIndicator: false
     });
     viewer.scene.globe.depthTestAgainstTerrain = true;
-    viewer.scene.screenSpaceCameraController.enableCollisionDetection = false;
-    setNotice("");
+    viewer.scene.globe.enableLighting = !terrainFallback;
+    const cameraController = viewer.scene.screenSpaceCameraController;
+    cameraController.enableCollisionDetection = true;
+    cameraController.minimumZoomDistance = 5.0;
+    cameraController.maximumTiltAngle = Math.PI / 2.0;
+    badge.textContent = terrainFallback ? text.badgeFallback : text.badge;
+    setNotice(terrainFallback ? text.terrainError : "");
     window.chrome.webview.addEventListener("message", handleMessage);
     post("ready", "");
   } catch (error) {
