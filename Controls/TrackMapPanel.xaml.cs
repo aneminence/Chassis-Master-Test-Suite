@@ -132,6 +132,17 @@ public partial class TrackMapPanel : UserControl
         BuildPlot();
         _map3D = new TrackMap3DController(Map3DWebView);
         _map3D.StatusChanged += message => Dispatcher.Invoke(() => Show3DStatus(message));
+        _map3D.SampleSelected += (trackIndex, sampleIndex) => Dispatcher.Invoke(() =>
+        {
+            if (trackIndex < 0 || trackIndex >= _tracks.Count)
+                return;
+            var samples = _tracks[trackIndex].Samples;
+            if (sampleIndex < 0 || sampleIndex >= samples.Count)
+                return;
+            var sample = samples[sampleIndex];
+            SetCursorSample(sample);
+            SampleSelected?.Invoke(sample, trackIndex);
+        });
 
         GateStore.Instance.Changed += (_, _) =>
         {

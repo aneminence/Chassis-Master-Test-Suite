@@ -25,6 +25,7 @@
   let viewer;
   let sceneState = { tracks: [], altitudeMode: "recorded", exaggeration: 1 };
   let cursorEntity;
+  let cursorPoint;
   let lastDatasetKey = "";
   let trackEntityIds = new Set();
   let cameraMoving = false;
@@ -99,6 +100,7 @@
     setNotice(missingAltitude ? text.missing(missingAltitude) : "");
     if (datasetKey !== lastDatasetKey) fit();
     lastDatasetKey = datasetKey;
+    if (cursorPoint) setCursor(cursorPoint);
     viewer.scene.requestRender();
   }
 
@@ -153,22 +155,33 @@
 
   function setCursor(point) {
     if (!viewer) return;
+    cursorPoint = point;
     if (!point) {
       if (cursorEntity) viewer.entities.remove(cursorEntity);
       cursorEntity = undefined;
       return;
     }
-    const height = sceneState.altitudeMode === "ground" ? 0 : point.altitude;
+    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
+    const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
+    const height = useGround
+      ? 0
+      : track
+        ? track.baseline + (point.altitude - track.baseline) * sceneState.exaggeration
+        : point.altitude;
     const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
     if (!cursorEntity) {
       cursorEntity = viewer.entities.add({
         id: "cmts-cursor",
         position,
         point: { pixelSize: 14, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY }
+          outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference: useGround ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE }
       });
     } else {
       cursorEntity.position = position;
+      cursorEntity.point.heightReference = useGround
+        ? Cesium.HeightReference.CLAMP_TO_GROUND
+        : Cesium.HeightReference.NONE;
     }
     viewer.scene.requestRender();
   }
@@ -199,6 +212,7 @@
       trackEntityIds.clear();
       viewer.entities.removeAll();
       cursorEntity = undefined;
+      cursorPoint = undefined;
       setNotice(text.waiting);
     }
   }
@@ -245,6 +259,40 @@
         updateTracks();
       }
     });
+    const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    clickHandler.setInputAction(movement => {
+      const picked = viewer.scene.pick(movement.position);
+      const entityId = picked && picked.id && picked.id.id;
+      if (typeof entityId !== "string" || !entityId.startsWith("track-")) return;
+
+      const trackId = Number(entityId.substring("track-".length));
+      const track = (sceneState.tracks || []).find(item => item.id === trackId);
+      if (!track || !track.points || !track.points.length) return;
+
+      const ray = viewer.camera.getPickRay(movement.position);
+      const world = ray && viewer.scene.globe.pick(ray, viewer.scene);
+      if (!world) return;
+      const cartographic = Cesium.Cartographic.fromCartesian(world);
+      const longitude = Cesium.Math.toDegrees(cartographic.longitude);
+      const latitude = Cesium.Math.toDegrees(cartographic.latitude);
+      const cosLatitude = Math.cos(cartographic.latitude);
+      let nearest = track.points[0];
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const point of track.points) {
+        const dx = (point[0] - longitude) * cosLatitude;
+        const dy = point[1] - latitude;
+        const distance = dx * dx + dy * dy;
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearest = point;
+        }
+      }
+      window.chrome.webview.postMessage({
+        type: "sampleSelected",
+        trackId,
+        sampleIndex: Math.round(nearest[3])
+      });
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
     badge.textContent = terrainFallback ? text.badgeFallback : text.badge;
     setNotice(terrainFallback ? text.terrainError : "");
     window.chrome.webview.addEventListener("message", handleMessage);

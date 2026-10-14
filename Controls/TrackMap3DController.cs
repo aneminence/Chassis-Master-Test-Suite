@@ -26,6 +26,8 @@ internal sealed class TrackMap3DController
     private bool _pageReady;
     private bool _active;
     private IReadOnlyList<TrackMapPanel.TrackLayer> _tracks = Array.Empty<TrackMapPanel.TrackLayer>();
+    private readonly Dictionary<VehicleSample, (int TrackId, int SampleIndex)> _sampleLocations =
+        new(ReferenceEqualityComparer.Instance);
     private VehicleSample? _cursor;
     private string _altitudeMode = "recorded";
     private double _exaggeration = 1.0;
@@ -41,6 +43,7 @@ internal sealed class TrackMap3DController
 
     public event Action<string>? StatusChanged;
     public event Action? Ready;
+    public event Action<int, int>? SampleSelected;
 
     public async Task EnsureInitializedAsync()
     {
@@ -96,6 +99,7 @@ internal sealed class TrackMap3DController
         _lastSentCounts = counts;
         _lastSentAnchor = anchor is null ? null : (anchor.Latitude, anchor.Longitude);
         _sendStopwatch.Restart();
+        RebuildSampleLocations();
         SendScene();
     }
 
@@ -106,6 +110,7 @@ internal sealed class TrackMap3DController
         {
             _lastSentCounts = Array.Empty<int>();
             _lastSentAnchor = null;
+            RebuildSampleLocations();
             SendImagery();
             SendScene();
             SetCursor(_cursor);
@@ -115,6 +120,7 @@ internal sealed class TrackMap3DController
     public void Clear()
     {
         _tracks = Array.Empty<TrackMapPanel.TrackLayer>();
+        _sampleLocations.Clear();
         _cursor = null;
         _lastSentCounts = Array.Empty<int>();
         _lastSentAnchor = null;
@@ -130,7 +136,7 @@ internal sealed class TrackMap3DController
         Post(new
         {
             type = "cursor",
-            payload = ToPoint(sample)
+            payload = ToCursorPoint(sample)
         });
     }
 
@@ -153,6 +159,16 @@ internal sealed class TrackMap3DController
     }
 
     public void Fit() => Post(new { type = "fit" });
+
+    private void RebuildSampleLocations()
+    {
+        _sampleLocations.Clear();
+        for (var trackId = 0; trackId < _tracks.Count; trackId++)
+        {
+            for (var sampleIndex = 0; sampleIndex < _tracks[trackId].Samples.Count; sampleIndex++)
+                _sampleLocations[_tracks[trackId].Samples[sampleIndex]] = (trackId, sampleIndex);
+        }
+    }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -179,6 +195,15 @@ internal sealed class TrackMap3DController
                 case "status":
                     if (root.TryGetProperty("message", out var message))
                         StatusChanged?.Invoke(message.GetString() ?? string.Empty);
+                    break;
+                case "sampleSelected":
+                    if (root.TryGetProperty("trackId", out var trackIdElement)
+                        && root.TryGetProperty("sampleIndex", out var sampleIndexElement)
+                        && trackIdElement.TryGetInt32(out var trackId)
+                        && sampleIndexElement.TryGetInt32(out var sampleIndex))
+                    {
+                        SampleSelected?.Invoke(trackId, sampleIndex);
+                    }
                     break;
             }
         }
@@ -233,12 +258,15 @@ internal sealed class TrackMap3DController
 
     private static TrackDto BuildTrack(TrackMapPanel.TrackLayer track, int index)
     {
-        var valid = track.Samples.Where(TrackProjection.IsValidGps).ToList();
+        var valid = track.Samples
+            .Select((sample, originalIndex) => (Sample: sample, OriginalIndex: originalIndex))
+            .Where(item => TrackProjection.IsValidGps(item.Sample))
+            .ToList();
         if (valid.Count == 0)
             return new TrackDto(index, track.Name, track.ColorHex, false, new List<double[]>());
 
         var finiteAltitudes = valid
-            .Select(sample => sample.Altitude)
+            .Select(item => item.Sample.Altitude)
             .Where(double.IsFinite)
             .ToArray();
         // Importers historically used 0 for a missing altitude. Until the data
@@ -249,13 +277,13 @@ internal sealed class TrackMap3DController
         var points = new List<double[]>(indices.Count);
         foreach (var i in indices)
         {
-            var sample = valid[i];
+            var sample = valid[i].Sample;
             points.Add(new[]
             {
                 sample.Longitude,
                 sample.Latitude,
                 double.IsFinite(sample.Altitude) ? sample.Altitude : 0.0,
-                (double)i
+                (double)valid[i].OriginalIndex
             });
         }
 
@@ -281,16 +309,39 @@ internal sealed class TrackMap3DController
         return result;
     }
 
-    private static object? ToPoint(VehicleSample? sample)
+    private object? ToCursorPoint(VehicleSample? sample)
     {
         if (sample is null || !TrackProjection.IsValidGps(sample))
             return null;
+
+        var location = _sampleLocations.TryGetValue(sample, out var found)
+            ? found
+            : FindSampleLocation(sample);
         return new
         {
+            trackId = location.Item1,
+            sampleIndex = location.Item2,
             longitude = sample.Longitude,
             latitude = sample.Latitude,
             altitude = double.IsFinite(sample.Altitude) ? sample.Altitude : 0.0
         };
+    }
+
+    private (int TrackId, int SampleIndex) FindSampleLocation(VehicleSample sample)
+    {
+        for (var trackId = 0; trackId < _tracks.Count; trackId++)
+        {
+            var samples = _tracks[trackId].Samples;
+            for (var sampleIndex = samples.Count - 1; sampleIndex >= 0; sampleIndex--)
+            {
+                if (!ReferenceEquals(samples[sampleIndex], sample))
+                    continue;
+                var location = (trackId, sampleIndex);
+                _sampleLocations[sample] = location;
+                return location;
+            }
+        }
+        return (-1, -1);
     }
 
     private void Post(object value)
