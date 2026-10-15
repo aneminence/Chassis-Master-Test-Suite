@@ -58,6 +58,13 @@
   function updateTracks() {
     if (!viewer) return;
 
+    // Cesium's scene exaggeration changes the terrain mesh itself. Previously
+    // the CMTS exaggeration value was only applied to recorded track heights,
+    // so the control appeared to do nothing when inspecting the landscape.
+    // Keep sea level fixed while scaling all positive/negative terrain relief.
+    viewer.scene.verticalExaggeration = Math.max(1, Number(sceneState.exaggeration) || 1);
+    viewer.scene.verticalExaggerationRelativeHeight = 0;
+
     let drawable = 0;
     let missingAltitude = 0;
     const nextEntityIds = new Set();
