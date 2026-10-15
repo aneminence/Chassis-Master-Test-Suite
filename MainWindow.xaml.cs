@@ -3641,13 +3641,18 @@ public partial class MainWindow : Window
         ApplyDarkPlotStyle(plot.WpfPlot);
         scottPlot.Title(plot.Name + " — Compare");
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
-        var useRelativeTime = string.Equals(
+        var useTimestampTime = string.Equals(
             xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+        var useRelativeElapsed = string.Equals(
+            xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase);
         var useRelativeDistance = string.Equals(
             xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+        var useRelativeNumericAxis = useRelativeElapsed || useRelativeDistance;
         plot.IsTimeAxis = false;
-        scottPlot.XLabel(useRelativeTime
+        scottPlot.XLabel(useTimestampTime
             ? "Run time (s)"
+            : useRelativeElapsed
+                ? "Lap elapsed (s)"
             : useRelativeDistance
                 ? "Lap distance (m)"
                 : GetAxisLabel(xSignal));
@@ -3677,7 +3682,7 @@ public partial class MainWindow : Window
             if (i1 < i0)
                 (i0, i1) = (i1, i0);
 
-            var xOrigin = useRelativeDistance
+            var xOrigin = useRelativeNumericAxis
                 ? GetSignalValue(samples[i0], xSignal)
                 : 0.0;
             var colorHex = string.IsNullOrWhiteSpace(annotated.ColorHex)
@@ -3690,9 +3695,9 @@ public partial class MainWindow : Window
                 var ys = new List<double>();
                 for (var i = i0; i <= i1; i++)
                 {
-                    var x = useRelativeTime
+                    var x = useTimestampTime
                         ? (samples[i].Timestamp - run.StartTimestampMs) / 1000.0
-                        : GetSignalValue(samples[i], xSignal) - (useRelativeDistance ? xOrigin : 0.0);
+                        : GetSignalValue(samples[i], xSignal) - (useRelativeNumericAxis ? xOrigin : 0.0);
                     var y = GetSignalValue(samples[i], channel.ChannelId);
                     if (double.IsNaN(y) || double.IsInfinity(y))
                         continue;
@@ -3735,7 +3740,7 @@ public partial class MainWindow : Window
         }
         var limitXs = new[]
         {
-            useRelativeTime || useRelativeDistance ? Math.Min(0, minX) : minX,
+            useTimestampTime || useRelativeNumericAxis ? Math.Min(0, minX) : minX,
             maxX > minX ? maxX : minX + 0.1
         };
         ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
@@ -4779,8 +4784,10 @@ public partial class MainWindow : Window
             return Array.Empty<TrackMapPanel.CompareCursor>();
 
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
-        var relativeTime = string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+        var relativeTimestamp = string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+        var relativeElapsed = string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase);
         var relativeDistance = string.Equals(xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+        var relativeNumericAxis = relativeElapsed || relativeDistance;
         var result = new List<TrackMapPanel.CompareCursor>(_compareRuns.Count);
 
         foreach (var annotated in _compareRuns)
@@ -4791,14 +4798,14 @@ public partial class MainWindow : Window
                 continue;
             var i0 = Math.Clamp(run.StartSampleIndex, 0, samples.Count - 1);
             var i1 = Math.Clamp(run.EndSampleIndex, i0, samples.Count - 1);
-            var origin = relativeDistance ? GetSignalValue(samples[i0], xSignal) : 0.0;
+            var origin = relativeNumericAxis ? GetSignalValue(samples[i0], xSignal) : 0.0;
             var bestIndex = -1;
             var bestDelta = double.PositiveInfinity;
             for (var i = i0; i <= i1; i++)
             {
-                var x = relativeTime
+                var x = relativeTimestamp
                     ? (samples[i].Timestamp - run.StartTimestampMs) / 1000.0
-                    : GetSignalValue(samples[i], xSignal) - (relativeDistance ? origin : 0.0);
+                    : GetSignalValue(samples[i], xSignal) - (relativeNumericAxis ? origin : 0.0);
                 if (!double.IsFinite(x))
                     continue;
                 var delta = Math.Abs(x - cursorX);
