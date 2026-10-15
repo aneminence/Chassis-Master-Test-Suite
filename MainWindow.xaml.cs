@@ -3344,7 +3344,9 @@ public partial class MainWindow : Window
                 ? xSignal
                 : ChannelIds.AxisTime;
 
-        var cursorX = GetAxisValue(sample, selectedXSignal);
+        var cursorX = IsCompareModeActive
+            ? GetCompareAxisValueForMapSample(sample, trackIndex, selectedXSignal)
+            : GetAxisValue(sample, selectedXSignal);
 
         var source = _plots.Count > 0 ? _plots[0] : null;
         SetSharedCursor(cursorX, source);
@@ -3359,6 +3361,73 @@ public partial class MainWindow : Window
             cursorFrozen: true);
 
         TrackMapPanelControl.SetCursorSample(sample);
+    }
+
+    /// <summary>
+    /// Compare plots use a lap-relative X axis. A map click supplies an absolute
+    /// sample, so translate it through the matching checked lap before moving
+    /// the shared plot cursor. Otherwise the cursor lands outside the overlaid
+    /// 0..lap-duration/distance range and appears not to respond.
+    /// </summary>
+    private double GetCompareAxisValueForMapSample(
+        VehicleSample sample,
+        int trackIndex,
+        string xSignal)
+    {
+        Guid? sourceFileId = null;
+        if (_isOfflineMode && trackIndex >= 0 && trackIndex < _offlineFiles.Count)
+            sourceFileId = _offlineFiles.Files[trackIndex].Id;
+
+        AnnotatedTestRun? matchedRun = null;
+        var matchedIndex = -1;
+        var bestTimestampDelta = long.MaxValue;
+        foreach (var annotated in _compareRuns)
+        {
+            if (sourceFileId is Guid id && annotated.SourceFileId is Guid runId && id != runId)
+                continue;
+
+            var samples = annotated.Samples;
+            if (samples.Count == 0)
+                continue;
+            var start = Math.Clamp(annotated.Result.StartSampleIndex, 0, samples.Count - 1);
+            var end = Math.Clamp(annotated.Result.EndSampleIndex, 0, samples.Count - 1);
+            if (end < start)
+                (start, end) = (end, start);
+
+            for (var i = start; i <= end; i++)
+            {
+                if (ReferenceEquals(samples[i], sample))
+                    return GetRelativeCompareAxisValue(annotated, i, xSignal);
+
+                var delta = Math.Abs(samples[i].Timestamp - sample.Timestamp);
+                if (delta >= bestTimestampDelta)
+                    continue;
+                bestTimestampDelta = delta;
+                matchedRun = annotated;
+                matchedIndex = i;
+            }
+        }
+
+        return matchedRun is not null && matchedIndex >= 0
+            ? GetRelativeCompareAxisValue(matchedRun, matchedIndex, xSignal)
+            : GetAxisValue(sample, xSignal);
+    }
+
+    private static double GetRelativeCompareAxisValue(
+        AnnotatedTestRun annotated,
+        int sampleIndex,
+        string xSignal)
+    {
+        var samples = annotated.Samples;
+        var start = Math.Clamp(annotated.Result.StartSampleIndex, 0, samples.Count - 1);
+        sampleIndex = Math.Clamp(sampleIndex, start, samples.Count - 1);
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            return (samples[sampleIndex].Timestamp - annotated.Result.StartTimestampMs) / 1000.0;
+
+        var value = GetSignalValue(samples[sampleIndex], xSignal);
+        var relativeNumeric = string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+        return relativeNumeric ? value - GetSignalValue(samples[start], xSignal) : value;
     }
 
 
