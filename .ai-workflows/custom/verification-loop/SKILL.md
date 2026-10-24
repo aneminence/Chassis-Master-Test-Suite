@@ -1,4 +1,6 @@
-﻿# Skill: verification-loop（CMTS）
+﻿> CMTS path: .ai-workflows/custom/verification-loop/SKILL.md  
+> Official ECC counterpart (generic): .ai-workflows/skills/verification-loop/SKILL.md — use custom for CMTS build/test/F5.
+# Skill: verification-loop（CMTS）
 
 在声称「完成 / 可推送 / 可合并」前执行。PowerShell：**不要用 `&&`**，分条命令。
 
@@ -64,3 +66,4 @@ dotnet test ChassisMasterTestSuite.Tests\ChassisMasterTestSuite.Tests.csproj --f
 ```
 
 未跑通编译或测试时，**不要**写「已完成」。
+

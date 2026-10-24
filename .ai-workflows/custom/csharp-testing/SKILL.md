@@ -1,4 +1,6 @@
-﻿# Skill: csharp-testing（CMTS）
+﻿> CMTS path: .ai-workflows/custom/csharp-testing/SKILL.md  
+> Official ECC C# testing skill: .ai-workflows/skills/csharp-testing/SKILL.md.
+# Skill: csharp-testing（CMTS）
 
 写或改 `ChassisMasterTestSuite.Tests` 时 Read 本文件。
 
@@ -51,3 +53,4 @@ dotnet test ChassisMasterTestSuite.Tests\ChassisMasterTestSuite.Tests.csproj --f
 - 把真实路测 GB 级文件塞进仓库。
 - 依赖本机绝对路径（用 `AppContext.BaseDirectory` / 相对 Fixtures）。
 - 在测试里 `Thread.Sleep` 等长时间阻塞（除非测超时且有理由）。
+

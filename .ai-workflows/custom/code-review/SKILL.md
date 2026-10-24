@@ -1,4 +1,6 @@
-﻿# Skill: code-review（CMTS）
+﻿> CMTS path: .ai-workflows/custom/code-review/SKILL.md  
+> Optional extras: .ai-workflows/agents/code-reviewer.md, .ai-workflows/skills/security-review/.
+# Skill: code-review（CMTS）
 
 在**准备提交或声称完成前** Read 本文件，对**本次 diff** 做审查（不要全库漫游）。
 
@@ -44,3 +46,4 @@
 ```
 
 有**阻断**项则不要建议合并；先修或请示。
+

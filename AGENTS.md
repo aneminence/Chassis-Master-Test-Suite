@@ -1,60 +1,62 @@
 ﻿# CMTS AI 开发规范
 
-面向 Grok Bot 与任意能读仓库文件的 Agent。本仓库**没有** ECC 插件 / Hooks / 持续学习运行时；规范靠 `AGENTS.md` + `.ai-workflows/*/SKILL.md` 约定，Agent 须主动 **Read** 相关技能后再执行。
+面向 Grok Bot 与任意能读仓库文件的 Agent。  
+本仓库**没有** ECC 插件 / Hooks / 全局安装；规矩写在本文件与 `.ai-workflows/` 里。Agent 须 **主动 Read** 相关文件后再动手。
 
-## 目录
+用大白话：先看说明书，再改代码；测过才能说测过。
+
+## 资料在哪
+
+完整索引：`.ai-workflows/README.md`（必读入口之一）
 
 ```
-CMTS/
-├── AGENTS.md                 ← 本文件（总则）
-├── .ai-workflows/
-│   ├── code-review/SKILL.md
-│   ├── verification-loop/SKILL.md
-│   └── csharp-testing/SKILL.md
-├── Core / Controls / Recorder / Analysis / …
-└── ChassisMasterTestSuite.Tests/
+.ai-workflows/
+  custom/     ← CMTS 自制短清单（日常优先）
+  skills/     ← 精选的 ECC 官方技能（MIT，见 SOURCE.md）
+  agents/     ← 精选的 ECC 角色说明
+  rules/      ← 精选的 common + csharp 规则
 ```
 
-## 何时读取技能
+**同名主题**：`custom/` 针对本仓库；`skills/` 是通用官方稿。冲突时 **CMTS 日常以 custom 为准**，官方稿作补充。
 
-| 时机 | 必读 |
-|------|------|
-| 开发新功能 / 改架构前 | 本文件全文 |
-| 写或改单元测试时 | `.ai-workflows/csharp-testing/SKILL.md` |
-| 代码改完、准备提交前 | `.ai-workflows/code-review/SKILL.md` |
-| 声称「完成 / 可合并」前 | `.ai-workflows/verification-loop/SKILL.md` |
+## 开工五步（每次新任务）
 
-不要凭记忆臆造流程；打开对应 `SKILL.md` 按清单执行。
+1. **Read** 本文件（`AGENTS.md`）与 `.ai-workflows/README.md`。
+2. **看清任务范围**：只做用户点名的事；无关功能先问再动。
+3. **按需打开技能**：写测试 → `custom/csharp-testing`；收工验证 → `custom/verification-loop`；审查 → `custom/code-review`；架构/安全再读 `agents/` 或 `skills/`。
+4. **在正确分支上改**：从最新 `main` 拉功能分支；PowerShell **禁止**用 `&&` 串命令。
+5. **改完按「修改代码后」清单做完再汇报**——未运行的测试 **不得**写成「已通过」。
 
 ## 开发新功能前
 
-1. **分析现有架构**：相关命名空间（`Core` / `Controls` / `Recorder` / `Analysis` / `Communication` / `Session`）、数据流（`VehicleSample` → `SampleEnricher` → 图 / TrackMap / Dashboard）、现有测试与分支状态。
-2. **制定修改计划**：列出拟改文件、接口影响、是否触及 VBO/KML/GSpot/在线数据源。
-3. **确定验收标准**：可观察行为（UI / 通道值 / 轨迹）、自动化测试条目、手动 F5 检查项。
-4. **分支**：从最新 `main` 拉功能分支；勿在脏工作区上混做无关提交。PowerShell **禁止** `&&` 链命令。
+1. **分析现有架构**：`Core` / `Controls` / `Recorder` / `Analysis` / `Communication` / `Session`；数据流 `VehicleSample` → enricher → 图 / TrackMap / Dashboard。
+2. **制定修改计划**：拟改文件、接口影响、是否触及 VBO / KML / GSpot / 在线源。
+3. **确定验收标准**：可观察行为、自动化测试、适用的 F5 项（见 `custom/verification-loop`）。
+4. 大改时可 Read `.ai-workflows/agents/architect.md` 或 `skills/change-impact/`。
 
 ## 修改代码后
 
-1. **编译与测试**：按 `verification-loop` 技能（至少 Debug/`dotnet test`；准备交付时再 Release）。
-2. **按 code-review 技能审查**：焦点 diff，不扫无关目录。
-3. **按 verification-loop 技能验证**：含适用的 F5 清单。
-4. **汇报**：修改文件列表、测试结果、剩余风险、未做事项。需要用户确认的决策单独列出。
+1. **编译与测试**：严格按 `.ai-workflows/custom/verification-loop/SKILL.md`。  
+   - 跑过的写结果；**没跑的不要声称通过**。
+2. **审查**：按 `.ai-workflows/custom/code-review/SKILL.md`；需要时再读 `agents/code-reviewer.md` / `skills/security-review/`。
+3. **汇报**：修改文件、测试结果、剩余风险、未做事项；需用户确认的决策单独列出。
 
 ## 硬性约束
 
-- **不得在未经确认的情况下修改无关功能**（含「顺手重构」、改默认主题、改未点名的导入格式等）。
-- 不合并 `main`，除非用户明确要求。
-- 不提交密钥、本机路径隐私、大体积原始路测文件（`*.vbo` 默认 gitignore；测试夹具除外）。
-- 破坏性 git（force-push、reset --hard、amend 已推送提交）须先说明影响并获确认。
-- 涉及邮件 / Slack / 对外发送等不可逆操作时，只起草、等用户批准。
+- **未经确认不得修改无关功能**（含顺手重构、改默认主题、改未点名的格式）。
+- **不合并 `main`**，除非用户明确要求。
+- 不提交密钥、隐私路径、大体积原始路测（`*.vbo` 默认忽略；测试夹具除外）。
+- 破坏性 git（force-push、reset --hard、amend 已推送）须先说明并获确认。
+- 不向外发邮件/消息等不可逆操作，除非用户逐条批准。
+- **不要把 ECC 装进任何 Agent 全局配置**；资料只留在本仓库 `.ai-workflows/`。
 
-## 仓库要点（给 Agent 的速查）
+## 仓库速查
 
-- 技术栈：WPF / `net10.0-windows`；纯逻辑测试项目 `ChassisMasterTestSuite.Tests` 为 `net10.0`（链接源码，无 WPF 引用）。
-- 离线轨迹：`VboReader` / KML 导入 → `OfflineFileSet` → TrackMap（`TrackProjection.FilterGpsOutliers`）。
-- GSpot：实时 WS（`Communication/GSpot`）与 GSpot 设备 `.vbo` 列含义可能与 Racelogic 不同；改解析前先读现有测试与注释。
-- 机器：用户 PC（如 P16）上改代码；PowerShell 分条执行，不用 `&&`。
+- 技术栈：WPF / `net10.0-windows`；测试项目 `ChassisMasterTestSuite.Tests` 为 `net10.0`（链接纯逻辑源码）。
+- 离线轨迹：VBO / KML → OfflineFileSet → TrackMap。
+- GSpot：实时 WS 与设备 `.vbo` 列含义可能不同于 Racelogic；改解析前先看测试与 `custom/cmts-gnss-imu.md`（占位）。
+- 机器：在用户 PC（如 P16）改代码；命令分条执行。
 
 ## English (short)
 
-Before features: analyze architecture, plan changes, define acceptance criteria. After changes: build+test, Read and follow `code-review` then `verification-loop`, report files/tests/risks. Do not touch unrelated features without confirmation. Skills live under `.ai-workflows/`; Read them when the table above says so. No ECC runtime—discipline is file-based.
+Read `AGENTS.md` + `.ai-workflows/README.md` first. Prefer `custom/` for day-to-day CMTS work; official ECC copies under `skills/` `agents/` `rules/` are MIT supplements (`SOURCE.md`). Never claim tests passed if you did not run them. Do not touch unrelated features without confirmation. Do not install ECC into agent globals.
