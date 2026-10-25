@@ -10,6 +10,7 @@
 | 文件夹 | 是什么 | 谁写的 |
 |--------|--------|--------|
 | `custom/` | 专为 CMTS（WPF、VBO、TrackMap、本机 F5）写的短清单 | 本仓库 |
+| `product-management/` | 产品需求流程、优先级、PRD 模板（与工程 QC **互不覆盖**） | 本仓库原创 |
 | `skills/` `agents/` `rules/` | 从开源项目 [ECC](https://github.com/affaan-m/ECC) **挑选**拷贝的原文 | ECC（MIT） |
 
 出处与许可证见 `SOURCE.md`、`LICENSE`。
@@ -26,11 +27,12 @@
   README.md                 ← 本索引
   SOURCE.md                 ← ECC 来源 commit / MIT
   LICENSE                   ← ECC MIT 许可证副本
-  custom/                   ← CMTS 自制
+  custom/                   ← CMTS 自制工程清单
     code-review/SKILL.md
     verification-loop/SKILL.md
     csharp-testing/SKILL.md
     cmts-gnss-imu.md        ← GNSS/IMU 占位，暂无编造内容
+  product-management/       ← 产品管理（原创规范+模板；见该目录 README）
   skills/                   ← 精选官方技能
     security-review/
     tdd-workflow/
@@ -52,6 +54,7 @@
 | 时机 | 先读 |
 |------|------|
 | 开工前（理解仓库规矩） | 仓库根目录 `AGENTS.md` |
+| 新功能 / 需求 / PRD / 优先级 | `product-management/README.md` → `process.md`；正文在 `docs/product/` |
 | 写/改单元测试 | `custom/csharp-testing/SKILL.md`（需要通用 C# 测试建议时再读 `skills/csharp-testing/`） |
 | 改完准备提交 | `custom/code-review/SKILL.md`；可选 `agents/code-reviewer.md` / `skills/security-review/` |
 | 声称完成前 | `custom/verification-loop/SKILL.md`（必跑编译+测试；**未跑的测试不得声称通过**） |
