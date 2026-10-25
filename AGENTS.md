@@ -1,4 +1,4 @@
-﻿# CMTS AI 开发规范
+# CMTS AI 开发规范
 
 面向 Grok Bot 与任意能读仓库文件的 Agent。  
 本仓库**没有** ECC 插件 / Hooks / 全局安装；规矩写在本文件与 `.ai-workflows/` 里。Agent 须 **主动 Read** 相关文件后再动手。
@@ -8,6 +8,8 @@
 ## 资料在哪
 
 完整索引：`.ai-workflows/README.md`（必读入口之一）
+
+**版本号**：仓库根目录 `VERSIONING.md`（SemVer 2.0.0；开发期 `0.x.y`；稳定后 `1.0.0+`）。改 `<Version>` / 打 tag / 发 Release 前必须先 Read，禁止临时编造版本号。
 
 ```
 .ai-workflows/
@@ -45,6 +47,7 @@
 
 - **未经确认不得修改无关功能**（含顺手重构、改默认主题、改未点名的格式）。
 - **不合并 `main`**，除非用户明确要求。
+- **版本号**：遵守根目录 `VERSIONING.md`；未经用户要求发版/bump，不得改 `.csproj` 的 `Version` / 打 `v*` tag。
 - 不提交密钥、隐私路径、大体积原始路测（`*.vbo` 默认忽略；测试夹具除外）。
 - 破坏性 git（force-push、reset --hard、amend 已推送）须先说明并获确认。
 - 不向外发邮件/消息等不可逆操作，除非用户逐条批准。
@@ -59,4 +62,4 @@
 
 ## English (short)
 
-Read `AGENTS.md` + `.ai-workflows/README.md` first. Prefer `custom/` for day-to-day CMTS work; official ECC copies under `skills/` `agents/` `rules/` are MIT supplements (`SOURCE.md`). Never claim tests passed if you did not run them. Do not touch unrelated features without confirmation. Do not install ECC into agent globals.
+Read `AGENTS.md` + `.ai-workflows/README.md` first. Prefer `custom/` for day-to-day CMTS work; official ECC copies under `skills/` `agents/` `rules/` are MIT supplements (`SOURCE.md`). Never claim tests passed if you did not run them. Version bumps: read `VERSIONING.md` first; do not invent versions. Do not touch unrelated features without confirmation. Do not install ECC into agent globals.
