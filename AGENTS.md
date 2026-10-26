@@ -13,6 +13,8 @@
 
 **产品管理**：需求 / PRD / Roadmap / 优先级见 `.ai-workflows/product-management/`（规范与模板）与 `docs/product/`（愿景与 PRD 正文）。产品决策与 ECC 工程规范**互不覆盖**——范围听产品侧，实现与测试听工程侧。小 Bug 不强制完整 PRD；重大或跨模块需求须按 `product-management/process.md` 评估。
 
+**硬件与架构**：样机外壳 / 加工工艺见 `docs/hardware/`（入口 `enclosure-prototype.md`）；整体产品与技术架构见 `docs/architecture/`（入口 `product-architecture.md`）。硬件相关开发前须 Read；未确认项不得擅自补全为定值。
+
 ```
 .ai-workflows/
   custom/              ← CMTS 自制短清单（日常优先）
@@ -65,4 +67,4 @@
 
 ## English (short)
 
-Read `AGENTS.md` + `.ai-workflows/README.md` first. Product scope/PRD: `.ai-workflows/product-management/` + `docs/product/` (does not override engineering QC). Prefer `custom/` for day-to-day CMTS work; official ECC copies under `skills/` `agents/` `rules/` are MIT supplements (`SOURCE.md`). Never claim tests passed if you did not run them. Version bumps: read `VERSIONING.md` first; do not invent versions. Do not touch unrelated features without confirmation. Do not install ECC into agent globals.
+Read `AGENTS.md` + `.ai-workflows/README.md` first. Product scope/PRD: `.ai-workflows/product-management/` + `docs/product/` (does not override engineering QC). Hardware/architecture: `docs/hardware/enclosure-prototype.md`, `docs/architecture/product-architecture.md`. Read before hardware work; do not invent unsettled values. Prefer `custom/` for day-to-day CMTS work; official ECC copies under `skills/` `agents/` `rules/` are MIT supplements (`SOURCE.md`). Never claim tests passed if you did not run them. Version bumps: read `VERSIONING.md` first; do not invent versions. Do not touch unrelated features without confirmation. Do not install ECC into agent globals.
