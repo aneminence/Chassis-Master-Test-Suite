@@ -36,7 +36,6 @@
   let imageryGeneration = 0;
   // Lift tracks above DEM so GNSS/DEM mismatch does not bury polylines.
   const recordedTrackLiftMeters = 10;
-  const gatePostHeightMeters = 40;
 
   function post(type, message) {
     if (window.chrome && window.chrome.webview)
@@ -121,17 +120,21 @@
         entity.polyline.depthFailMaterial = color;
       }
       nextEntityIds.add(trackId);
-
-      const first = track.points[0];
-      const last = track.points[track.points.length - 1];
-      upsertEndpoint(`start-${track.id}`, "S", first, track, "#49c878");
-      upsertEndpoint(`end-${track.id}`, "E", last, track, "#f0b44d");
-      nextEntityIds.add(`start-${track.id}`);
-      nextEntityIds.add(`end-${track.id}`);
     }
 
     for (const id of trackEntityIds) {
       if (!nextEntityIds.has(id)) viewer.entities.removeById(id);
+    }
+    // Remove leftover S/E endpoint markers from prior builds.
+    const staleEnds = [];
+    for (const entity of viewer.entities.values) {
+      if (!entity || !entity.id) continue;
+      const id = String(entity.id);
+      if (id.indexOf("start-") === 0 || id.indexOf("end-") === 0) staleEnds.push(id);
+    }
+    for (const id of staleEnds) {
+      viewer.entities.removeById(id);
+      nextEntityIds.delete(id);
     }
     trackEntityIds = nextEntityIds;
 
@@ -148,23 +151,6 @@
     viewer.scene.requestRender();
   }
 
-  function upsertEndpoint(id, labelText, point, track, color) {
-    const position = Cesium.Cartesian3.fromDegrees(point[0], point[1], displayHeight(point, track));
-    let entity = viewer.entities.getById(id);
-    if (!entity) {
-      entity = viewer.entities.add({
-        id,
-        position,
-        point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(color), outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
-          disableDepthTestDistance: Number.POSITIVE_INFINITY },
-        label: { text: labelText, font: "bold 12px Segoe UI", pixelOffset: new Cesium.Cartesian2(0, -18),
-          fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-          style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: Number.POSITIVE_INFINITY }
-      });
-    } else {
-      entity.position = position;
-    }
-  }
 
   function quadKey(x, y, level) {
     let result = "";
@@ -267,37 +253,49 @@
     if (!viewer) return;
     const next = new Set();
     const clampToGround = sceneState.altitudeMode === "ground";
+    // Flat bar coinciding with track height (no vertical posts / U arch).
+    const barLift = clampToGround ? 2 : 0;
+    // Small lift so label sits just above the bar for readability.
+    const labelLift = 3;
     for (const gate of gateState || []) {
       if (!gate) continue;
       const h0 = gateHeight(gate.alt0);
       const h1 = gateHeight(gate.alt1);
       const color = Cesium.Color.fromCssColorString(gate.colorHex || "#3FBF6F");
-      const width = gate.selected ? 10 : 6;
+      const width = gate.selected ? 12 : 8;
       const name = gate.name || "Gate";
 
-      // One continuous U polyline (top0 -> base0 -> base1 -> top1) updated in place
-      // so frequent track refreshes do not remove/re-add and flicker.
-      const barLift = clampToGround ? 2 : 0;
-      const postH = gatePostHeightMeters;
       const lineId = `gate-${gate.id}`;
       const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
-        gate.lon0, gate.lat0, h0 + barLift + postH,
         gate.lon0, gate.lat0, h0 + barLift,
-        gate.lon1, gate.lat1, h1 + barLift,
-        gate.lon1, gate.lat1, h1 + barLift + postH
+        gate.lon1, gate.lat1, h1 + barLift
       ]);
+      // In-place upsert; clampToGround false so recorded/ground heights match tracks.
       upsertGatePolyline(lineId, name, positions, width, color, false);
       next.add(lineId);
 
       const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
       const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
-      const midH = (h0 + h1) * 0.5 + barLift + postH * 0.55;
+      const midH = (h0 + h1) * 0.5 + barLift + labelLift;
       const markerId = `gate-marker-${gate.id}`;
       upsertGateMarker(markerId, midLon, midLat, midH, name);
       next.add(markerId);
     }
     for (const id of gateEntityIds) {
       if (!next.has(id)) viewer.entities.removeById(id);
+    }
+    // Sweep leftover post / old U entity ids from prior builds (F5 without full clear).
+    const toRemove = [];
+    for (const entity of viewer.entities.values) {
+      if (!entity || !entity.id) continue;
+      const id = String(entity.id);
+      if (id.indexOf("gate-post") === 0 || id.indexOf("gate-top-") === 0 || id.indexOf("gate-base-") === 0) {
+        toRemove.push(id);
+      }
+    }
+    for (const id of toRemove) {
+      viewer.entities.removeById(id);
+      next.delete(id);
     }
     gateEntityIds = next;
     refreshGateLegend();
