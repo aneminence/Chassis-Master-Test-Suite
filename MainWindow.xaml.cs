@@ -15,6 +15,7 @@ using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Localization;
 using Chassis_Master_Test_Suite.Themes;
 using Chassis_Master_Test_Suite.Recorder;
+using Chassis_Master_Test_Suite.Recorder.OxTS;
 using Chassis_Master_Test_Suite.Simulator;
 using Chassis_Master_Test_Suite.Session;
 
@@ -501,7 +502,7 @@ public partial class MainWindow : Window
     /// </summary>
 
     /// <summary>
-    /// Dispatch offline load by extension: VBO or KML/KMZ.
+    /// Dispatch offline load by extension: VBO, KML/KMZ, or OxTS XCOM/NCOM.
     /// </summary>
     private int LoadOfflineTrackFile(string filePath)
     {
@@ -510,7 +511,86 @@ public partial class MainWindow : Window
             ext.Equals(".kmz", StringComparison.OrdinalIgnoreCase))
             return LoadKmlFile(filePath);
 
+        if (ext.Equals(".xcom", StringComparison.OrdinalIgnoreCase) ||
+            ext.Equals(".ncom", StringComparison.OrdinalIgnoreCase))
+            return LoadXcomFile(filePath);
+
         return LoadVboFile(filePath);
+    }
+
+    /// <summary>
+    /// OxTS XCOM (container) or raw NCOM import into OfflineFileSet.
+    /// One entry per NCOM stream; RCOM as a separate entry (relative channels).
+    /// </summary>
+    public int LoadXcomFile(string filePath)
+    {
+        try
+        {
+            if (filePath.EndsWith(".ncom", StringComparison.OrdinalIgnoreCase))
+            {
+                var track = XcomImporter.ImportNcomFile(filePath);
+                if (track.Samples.Count == 0)
+                    return 0;
+
+                var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(track.Samples));
+                var columnNames = track.ColumnNames.Count > 0
+                    ? track.ColumnNames.ToList()
+                    : samples[0].Channels.Keys.ToList();
+                if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
+                    columnNames.Add(ChannelIds.SlopePct);
+
+                _offlineFiles.Add(filePath, samples, columnNames, displayName: track.DisplayName);
+                ApplyOfflineDataset();
+                _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
+                SaveSessionMemory();
+                return samples.Count;
+            }
+
+            var imported = XcomImporter.ImportFile(filePath);
+            var total = 0;
+            foreach (var track in imported.Tracks)
+            {
+                if (track.Samples.Count == 0)
+                    continue;
+
+                var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(track.Samples));
+                var columnNames = track.ColumnNames.Count > 0
+                    ? track.ColumnNames.ToList()
+                    : samples[0].Channels.Keys.ToList();
+                if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
+                    columnNames.Add(ChannelIds.SlopePct);
+
+                var virtualPath = $"{filePath}#{track.StreamSerial}-{track.Kind}";
+                _offlineFiles.Add(virtualPath, samples, columnNames, displayName: track.DisplayName);
+                total += samples.Count;
+            }
+
+            if (total <= 0)
+            {
+                MessageBox.Show(
+                    this,
+                    $"XCOM has no usable samples:\n{filePath}\n\n{imported.Summary}",
+                    "XCOM",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return 0;
+            }
+
+            ApplyOfflineDataset();
+            _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
+            SaveSessionMemory();
+            return total;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                $"Failed to read OxTS file:\n{filePath}\n\n{ex.Message}",
+                "XCOM",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return 0;
+        }
     }
 
 
@@ -884,11 +964,12 @@ public partial class MainWindow : Window
         var dialog =
             new Microsoft.Win32.OpenFileDialog
             {
-                Title = "Open VBO / KML file(s)",
+                Title = "Open VBO / KML / XCOM file(s)",
                 Filter =
-                    "Track files (*.vbo;*.kml;*.kmz)|*.vbo;*.kml;*.kmz|" +
+                    "Track files (*.vbo;*.kml;*.kmz;*.xcom;*.ncom)|*.vbo;*.kml;*.kmz;*.xcom;*.ncom|" +
                     "VBO files (*.vbo)|*.vbo|" +
                     "KML/KMZ files (*.kml;*.kmz)|*.kml;*.kmz|" +
+                    "OxTS XCOM / NCOM (*.xcom;*.ncom)|*.xcom;*.ncom|" +
                     "All files (*.*)|*.*",
                 InitialDirectory = initialDir,
                 Multiselect = true

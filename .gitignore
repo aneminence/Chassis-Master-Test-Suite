@@ -134,3 +134,9 @@ packages/
 
 # Test fixtures may include tiny .vbo samples
 !ChassisMasterTestSuite.Tests/Fixtures/*.vbo
+
+samples/
+
+test-*.txt
+testdiag*.txt
+
