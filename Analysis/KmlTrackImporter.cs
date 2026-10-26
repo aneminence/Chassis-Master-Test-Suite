@@ -126,6 +126,7 @@ public static class KmlTrackImporter
     {
         var list = new List<VehicleSample>(track.Points.Count);
         long seq = 0;
+        double previousHeading = 0;
         foreach (var p in track.Points)
         {
             long ts;
@@ -134,6 +135,8 @@ public static class KmlTrackImporter
             else
                 ts = seq * 1000; // synthetic 1 Hz for LineString-only
 
+            var heading = EstimateTravelHeading(track.Points, (int)seq, previousHeading);
+            previousHeading = heading;
             var speed = p.SpeedKph ?? 0.0;
             var alt = p.AltitudeMeters ?? 0.0;
             var channels = VehicleSample.BuildCoreChannels(
@@ -142,7 +145,7 @@ public static class KmlTrackImporter
                 lateralAcceleration: 0,
                 verticalAcceleration: 0,
                 yawRate: 0,
-                heading: 0,
+                heading: heading,
                 latitude: p.Latitude,
                 longitude: p.Longitude,
                 altitude: alt);
@@ -156,6 +159,7 @@ public static class KmlTrackImporter
                 Timestamp = ts,
                 Sequence = seq,
                 SpeedKph = speed,
+                Heading = heading,
                 Latitude = p.Latitude,
                 Longitude = p.Longitude,
                 Altitude = alt,
@@ -165,6 +169,38 @@ public static class KmlTrackImporter
         }
 
         return list;
+    }
+
+    // KML imports have no measured heading. Estimate course in point order,
+    // not vehicle body yaw (reverse travel cannot be distinguished from GPS alone).
+    private static double EstimateTravelHeading(IReadOnlyList<KmlTrackPoint> points, int index, double previous)
+    {
+        var center = points[index];
+        const double metersPerDegree = 111320;
+        var longitudeScale = metersPerDegree * Math.Cos(center.Latitude * Math.PI / 180);
+        (double X, double Y) Offset(KmlTrackPoint point)
+        {
+            var deltaLon = (point.Longitude - center.Longitude + 540) % 360 - 180;
+            return (deltaLon * longitudeScale, (point.Latitude - center.Latitude) * metersPerDegree);
+        }
+        // A short bounded window avoids scanning long stationary runs on every point.
+        (double X, double Y) Find(int direction)
+        {
+            for (var step = 1; step <= 32; step++)
+            {
+                var candidate = index + direction * step;
+                if (candidate < 0 || candidate >= points.Count) break;
+                var offset = Offset(points[candidate]);
+                if (offset.X * offset.X + offset.Y * offset.Y >= 4) return offset;
+            }
+            return (0, 0);
+        }
+        var before = Find(-1);
+        var after = Find(1);
+        var dx = after.X - before.X;
+        var dy = after.Y - before.Y;
+        if (dx * dx + dy * dy < 4) return previous;
+        return (Math.Atan2(dx, dy) * 180 / Math.PI + 360) % 360;
     }
 
     private static List<KmlTrackPoint> ParseGxTrack(XElement trackEl)

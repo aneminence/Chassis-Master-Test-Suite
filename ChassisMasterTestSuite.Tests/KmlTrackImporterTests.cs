@@ -6,6 +6,32 @@ namespace ChassisMasterTestSuite.Tests;
 
 public class KmlTrackImporterTests
 {
+    [Theory]
+    [InlineData(0.0001, 0, 90)]
+    [InlineData(0, 0.0001, 0)]
+    [InlineData(-0.0001, 0, 270)]
+    [InlineData(0, -0.0001, 180)]
+    public void ToVehicleSamples_EstimatesCourseIncludingEndpoints(double dx, double dy, double expected)
+    {
+        var track = new KmlTrack { Name = "course", Points = Enumerable.Range(0, 3)
+            .Select(i => new KmlTrackPoint { Longitude = 110 + i * dx, Latitude = 30 + i * dy }).ToArray() };
+        foreach (var sample in KmlTrackImporter.ToVehicleSamples(track))
+        {
+            Assert.Equal(expected, sample.Heading, 5);
+            Assert.Equal(sample.Heading, sample.Channels[ChannelIds.Heading]);
+        }
+    }
+
+    [Fact]
+    public void ToVehicleSamples_HoldsCourseThroughLongStationaryRun()
+    {
+        var points = new List<KmlTrackPoint> { new() { Longitude = 110, Latitude = 30 } };
+        points.AddRange(Enumerable.Range(0, 100).Select(_ =>
+            new KmlTrackPoint { Longitude = 110.0001, Latitude = 30 }));
+        var samples = KmlTrackImporter.ToVehicleSamples(new KmlTrack { Name = "stop", Points = points });
+        Assert.All(samples, sample => Assert.Equal(90, sample.Heading, 5));
+    }
+
     private static string FixturePath =>
         Path.Combine(AppContext.BaseDirectory, "Fixtures", "2bulu-sample.kml");
 

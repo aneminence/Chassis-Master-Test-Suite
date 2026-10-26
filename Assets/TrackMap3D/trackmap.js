@@ -8,7 +8,6 @@
   const text = isZh ? {
     terrainLoading: "正在加载在线 DEM 地形…",
     terrainError: "在线 DEM 加载失败，已降级为平面地球。正式发布前请配置 Cesium ion Token。",
-    terrainSampling: "正在采样地形高度…",
     waiting: "等待 GPS 数据",
     missing: count => `${count} 条轨迹没有有效高度，已降级为贴地显示。`,
     cesiumError: "无法下载 Cesium，请检查网络连接。",
@@ -16,7 +15,6 @@
   } : {
     terrainLoading: "Loading online DEM terrain…",
     terrainError: "Online DEM failed to load; using the flat ellipsoid fallback. Configure a Cesium ion token before release.",
-    terrainSampling: "Sampling terrain heights…",
     waiting: "Waiting for GPS data",
     missing: count => `${count} track(s) have no usable altitude and are shown on the ground.`,
     cesiumError: "Cesium could not be downloaded. Check the network connection.",
@@ -38,18 +36,16 @@
   let imageryGeneration = 0;
   // Lift recorded tracks above DEM so GNSS/DEM mismatch does not bury polylines.
   const recordedTrackLiftMeters = 10;
-  // Ground mode: sample DEM heights and lift slightly (do NOT use clampToGround on dense tracks).
-  const groundTrackLiftMeters = 2.5;
-  const maxTerrainSamplesPerTrack = 900;
-  let terrainSampleGen = 0;
-  // trackId -> { key, heights: number[] } absolute ellipsoid heights (DEM + lift)
-  const groundHeightByTrack = new Map();
-  // "lon,lat" -> absolute height for gate endpoints in ground mode
-  const gateGroundHeightCache = new Map();
+  // Ground geometry is draped by Cesium, without a vertical offset or DEM resampling.
+  const groundTrackLiftMeters = 0;
+  const maxGroundChunkPoints = 512;
+  const trackRenderKeys = new Map();
+  let trackRenderRevision = 0;
+  let lastGateRenderKey = "";
   // Vehicle cursor box: length(along heading) x width x height in meters.
   const cursorBoxLengthM = 5.0;
   const cursorBoxWidthM = 2.0;
-  const cursorBoxHeightM = 1.8;
+  const cursorBoxHeightM = 1.5;
   const cursorBoxHalfHeightM = cursorBoxHeightM * 0.5;
 
   function post(type, message) {
@@ -70,143 +66,20 @@
     return isGroundMode() || !track.hasAltitude;
   }
 
-  function terrainCacheKey(track) {
-    const points = track.points || [];
-    const n = points.length;
-    if (!n) return "0";
-    const a = points[0];
-    const b = points[n - 1];
-    return `${n}:${a[0]}:${a[1]}:${b[0]}:${b[1]}:${a[2]}:${b[2]}`;
-  }
-
-  function pickSampleIndices(count, maxSamples) {
-    if (count <= 0) return [];
-    if (count <= maxSamples) {
-      const all = new Array(count);
-      for (let i = 0; i < count; i++) all[i] = i;
-      return all;
-    }
-    const stride = Math.ceil(count / maxSamples);
-    const indices = [];
-    for (let i = 0; i < count; i += stride) indices.push(i);
-    if (indices[indices.length - 1] !== count - 1) indices.push(count - 1);
-    return indices;
-  }
-
   function displayHeight(point, track, index) {
-    if (trackUsesGroundHeights(track)) {
-      const cached = groundHeightByTrack.get(track.id);
-      if (cached && cached.heights && Number.isFinite(cached.heights[index]))
-        return cached.heights[index];
-      // Pending DEM sample: absolute lift above ellipsoid (visible with depthTest off).
-      return groundTrackLiftMeters;
-    }
-    return track.baseline + (point[2] - track.baseline) + recordedTrackLiftMeters;
+    return trackUsesGroundHeights(track) ? groundTrackLiftMeters : point[2] + recordedTrackLiftMeters;
   }
 
-  function gateLonLatKey(lon, lat) {
-    return `${Number(lon).toFixed(6)},${Number(lat).toFixed(6)}`;
-  }
-
-  function sampleGroundHeightSync(lon, lat) {
-    const key = gateLonLatKey(lon, lat);
-    if (gateGroundHeightCache.has(key))
-      return gateGroundHeightCache.get(key);
-    if (!viewer || !viewer.scene || !viewer.scene.globe) return groundTrackLiftMeters;
-    const carto = Cesium.Cartographic.fromDegrees(lon, lat);
-    const h = viewer.scene.globe.getHeight(carto);
-    if (Number.isFinite(h)) {
-      const value = h + groundTrackLiftMeters;
-      gateGroundHeightCache.set(key, value);
-      return value;
-    }
-    return groundTrackLiftMeters;
-  }
-
-  async function sampleHeightsAlongTrack(track) {
-    const points = track.points || [];
-    const n = points.length;
-    if (n < 2) return null;
-    const indices = pickSampleIndices(n, maxTerrainSamplesPerTrack);
-    const cartographics = indices.map(i =>
-      Cesium.Cartographic.fromDegrees(points[i][0], points[i][1]));
-    try {
-      await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, cartographics);
-    } catch (error) {
-      for (const carto of cartographics) {
-        const h = viewer.scene.globe.getHeight(carto);
-        carto.height = Number.isFinite(h) ? h : 0;
-      }
-    }
-    const sampleHeights = cartographics.map(carto =>
-      (Number.isFinite(carto.height) ? carto.height : 0) + groundTrackLiftMeters);
-    const heights = new Array(n);
-    for (let s = 0; s < indices.length - 1; s++) {
-      const i0 = indices[s];
-      const i1 = indices[s + 1];
-      const h0 = sampleHeights[s];
-      const h1 = sampleHeights[s + 1];
-      const span = i1 - i0;
-      for (let i = i0; i <= i1; i++) {
-        const t = span === 0 ? 0 : (i - i0) / span;
-        heights[i] = h0 + (h1 - h0) * t;
-      }
-    }
-    heights[indices[0]] = sampleHeights[0];
-    heights[indices[indices.length - 1]] = sampleHeights[sampleHeights.length - 1];
-    return heights;
-  }
-
-  async function refreshGateGroundCache() {
-    const carts = [];
-    const keys = [];
-    const seen = new Set();
-    for (const gate of gateState || []) {
-      if (!gate) continue;
-      for (const pair of [[gate.lon0, gate.lat0], [gate.lon1, gate.lat1]]) {
-        const key = gateLonLatKey(pair[0], pair[1]);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        keys.push(key);
-        carts.push(Cesium.Cartographic.fromDegrees(pair[0], pair[1]));
-      }
-    }
-    if (!carts.length) return;
-    try {
-      await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, carts);
-      for (let i = 0; i < carts.length; i++) {
-        const h = (Number.isFinite(carts[i].height) ? carts[i].height : 0) + groundTrackLiftMeters;
-        gateGroundHeightCache.set(keys[i], h);
-      }
-    } catch (error) {
-      for (let i = 0; i < carts.length; i++) {
-        const h = viewer.scene.globe.getHeight(carts[i]);
-        gateGroundHeightCache.set(keys[i],
-          (Number.isFinite(h) ? h : 0) + groundTrackLiftMeters);
-      }
-    }
-  }
-
-  async function ensureGroundHeights(tracksNeedingSample) {
-    const gen = ++terrainSampleGen;
-    try {
-      setNotice(text.terrainSampling);
-      for (const track of tracksNeedingSample) {
-        if (gen !== terrainSampleGen) return;
-        const heights = await sampleHeightsAlongTrack(track);
-        if (gen !== terrainSampleGen) return;
-        if (!heights) continue;
-        groundHeightByTrack.set(track.id, { key: terrainCacheKey(track), heights });
-      }
-      if (gen !== terrainSampleGen) return;
-      await refreshGateGroundCache();
-      if (gen !== terrainSampleGen) return;
-      // Redraw with sampled absolute heights (still no clampToGround).
-      updateTracks(true);
-    } catch (error) {
-      if (gen === terrainSampleGen)
-        setNotice(error && error.message ? error.message : String(error));
-    }
+  function trackChunks(points, ground) {
+    // Adjacent chunks share one endpoint, preserving every original segment.
+    // Exact duplicate positions are ignored: they form degenerate ground geometry.
+    const clean = points.filter((p, i) => i === 0 || p[0] !== points[i - 1][0]
+      || p[1] !== points[i - 1][1] || (!ground && p[2] !== points[i - 1][2]));
+    const chunks = [];
+    const size = ground ? maxGroundChunkPoints : Math.max(2, clean.length);
+    for (let start = 0; start < clean.length - 1; start += size - 1)
+      chunks.push(clean.slice(start, start + size));
+    return chunks;
   }
 
   function clearTrackEntities() {
@@ -214,9 +87,10 @@
     for (const id of trackEntityIds)
       viewer.entities.removeById(id);
     trackEntityIds = new Set();
+    trackRenderKeys.clear();
   }
 
-  function updateTracks(fromTerrainSample) {
+  function updateTracks() {
     if (!viewer) return;
 
     viewer.scene.verticalExaggeration = 1;
@@ -225,16 +99,13 @@
     const mode = sceneState.altitudeMode === "ground" ? "ground" : "recorded";
     if (lastAltitudeMode !== null && lastAltitudeMode !== mode) {
       clearTrackEntities();
-      groundHeightByTrack.clear();
-      gateGroundHeightCache.clear();
-      terrainSampleGen++;
     }
     lastAltitudeMode = mode;
 
     let drawable = 0;
     let missingAltitude = 0;
     const nextEntityIds = new Set();
-    const needSample = [];
+    let geometryChanged = false;
     const datasetKey = (sceneState.tracks || []).map(track => {
       const first = track.points && track.points.length ? track.points[0] : [];
       return `${track.id}:${first[0]}:${first[1]}`;
@@ -243,59 +114,43 @@
       if (!track.points || track.points.length < 2) continue;
       drawable++;
       if (!track.hasAltitude) missingAltitude++;
-      if (trackUsesGroundHeights(track)) {
-        const key = terrainCacheKey(track);
-        const cached = groundHeightByTrack.get(track.id);
-        if (!cached || cached.key !== key)
-          needSample.push(track);
-      }
-      const degrees = [];
-      for (let i = 0; i < track.points.length; i++) {
-        const point = track.points[i];
-        degrees.push(point[0], point[1], displayHeight(point, track, i));
-      }
-
-      const trackId = `track-${track.id}`;
-      const color = Cesium.Color.fromCssColorString(track.color || "#42A5F5");
-      const positions = Cesium.Cartesian3.fromDegreesArrayHeights(degrees);
-      // Never clampToGround for long GNSS polylines — they often vanish on Cesium.
-      // Ground mode uses sampled DEM heights + small lift instead.
-      const clampToGround = false;
-      let entity = viewer.entities.getById(trackId);
-      // Drop leftover clampToGround entities from older builds.
-      if (entity) {
-        const wasClamped = !!(entity.polyline && entity.polyline.clampToGround &&
-          entity.polyline.clampToGround.getValue && entity.polyline.clampToGround.getValue());
-        if (wasClamped) {
-          viewer.entities.remove(entity);
-          entity = undefined;
+      const ground = trackUsesGroundHeights(track);
+      const chunks = trackChunks(track.points, ground);
+      chunks.forEach((points, chunkIndex) => {
+        const trackId = `track-${track.id}-${chunkIndex}`;
+        nextEntityIds.add(trackId);
+        const key = JSON.stringify([ground, track.color, points]);
+        if (trackRenderKeys.get(trackId) === key) return;
+        geometryChanged = true;
+        const degrees = points.flatMap((point, index) =>
+          [point[0], point[1], displayHeight(point, track, index)]);
+        const positions = Cesium.Cartesian3.fromDegreesArrayHeights(degrees);
+        const color = Cesium.Color.fromCssColorString(track.color || "#42A5F5");
+        let entity = viewer.entities.getById(trackId);
+        if (!entity) {
+          entity = viewer.entities.add({
+            id: trackId, name: track.name,
+            polyline: {
+              positions, width: 3, clampToGround: ground, zIndex: 0,
+              material: color
+            }
+          });
+        } else {
+          entity.name = track.name;
+          entity.polyline.positions = positions;
+          entity.polyline.clampToGround = ground;
+          entity.polyline.material = color;
         }
-      }
-      if (!entity) {
-        entity = viewer.entities.add({
-          id: trackId,
-          name: track.name,
-          polyline: {
-            positions,
-            width: 8,
-            clampToGround: false,
-            material: color,
-            depthFailMaterial: color
-          }
-        });
-      } else {
-        entity.name = track.name;
-        entity.polyline.positions = positions;
-        entity.polyline.width = 8;
-        entity.polyline.clampToGround = false;
-        entity.polyline.material = color;
-        entity.polyline.depthFailMaterial = color;
-      }
-      nextEntityIds.add(trackId);
+        trackRenderKeys.set(trackId, key);
+      });
     }
 
     for (const id of trackEntityIds) {
-      if (!nextEntityIds.has(id)) viewer.entities.removeById(id);
+      if (!nextEntityIds.has(id)) {
+        viewer.entities.removeById(id);
+        trackRenderKeys.delete(id);
+        geometryChanged = true;
+      }
     }
     // Remove leftover S/E endpoint markers from prior builds.
     const staleEnds = [];
@@ -309,17 +164,15 @@
       nextEntityIds.delete(id);
     }
     trackEntityIds = nextEntityIds;
+    if (geometryChanged) trackRenderRevision++;
 
     if (!drawable) {
       setNotice(text.waiting);
+      updateGates();
+      viewer.scene.requestRender();
       return;
     }
-    if (!fromTerrainSample && needSample.length) {
-      setNotice(text.terrainSampling);
-      ensureGroundHeights(needSample);
-    } else {
-      setNotice(missingAltitude ? text.missing(missingAltitude) : "");
-    }
+    setNotice(missingAltitude ? text.missing(missingAltitude) : "");
     if (datasetKey !== lastDatasetKey) fit();
     lastDatasetKey = datasetKey;
     if (cursorPoint) setCursor(cursorPoint);
@@ -341,54 +194,34 @@
     return result;
   }
 
-  // Match track displayHeight: recorded uses alt+lift; ground uses sampled DEM + lift.
-  function gateHeight(alt, track) {
-    if (sceneState.altitudeMode === "ground" || (track && !track.hasAltitude))
-      return groundTrackLiftMeters;
-    const value = Number.isFinite(alt) ? alt : 0;
-    if (track && Number.isFinite(track.baseline))
-      return track.baseline + (value - track.baseline) + recordedTrackLiftMeters;
-    return value + recordedTrackLiftMeters;
-  }
-
-  // Nearest track sample altitude at lon/lat (same idea as C# ResolveGateAltitudeMeters).
-  function sampleTrackAltitudeNear(lon, lat) {
-    let bestAlt = NaN;
-    let bestDist = Infinity;
-    const mPerDegLat = 111320.0;
-    const mPerLon = mPerDegLat * Math.cos((lat || 0) * Math.PI / 180.0);
-    for (const track of sceneState.tracks || []) {
-      if (!track.points || !track.points.length) continue;
-      for (const point of track.points) {
-        const dx = (point[0] - lon) * mPerLon;
-        const dy = (point[1] - lat) * mPerDegLat;
-        const d2 = dx * dx + dy * dy;
-        if (d2 >= bestDist) continue;
-        bestDist = d2;
-        bestAlt = point[2];
+  // Recorded-mode gates/cursors interpolate the displayed track altitude.
+  function trackDisplayHeightNear(lon, lat, tracks = sceneState.tracks || []) {
+    let height;
+    let bestDistance = Infinity;
+    const cosLat = Math.cos(lat * Math.PI / 180);
+    for (const track of tracks) {
+      const points = track.points || [];
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i];
+        const ax = (a[0] - lon) * cosLat, ay = a[1] - lat;
+        const dx = (b[0] - a[0]) * cosLat, dy = b[1] - a[1];
+        const lengthSquared = dx * dx + dy * dy;
+        const t = lengthSquared > 0
+          ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared)) : 0;
+        const distance = (ax + t * dx) ** 2 + (ay + t * dy) ** 2;
+        if (distance >= bestDistance) continue;
+        bestDistance = distance;
+        const h0 = displayHeight(a, track, i - 1);
+        height = h0 + (displayHeight(b, track, i) - h0) * t;
       }
     }
-    return bestAlt;
-  }
-
-  function resolveGateEndpointHeight(lon, lat, altFallback) {
-    const tracks = sceneState.tracks || [];
-    const track = tracks.find(t => t.hasAltitude) || tracks[0];
-    if (isGroundMode() || (track && !track.hasAltitude))
-      return sampleGroundHeightSync(lon, lat);
-    let alt = Number.isFinite(altFallback) ? altFallback : NaN;
-    if (!Number.isFinite(alt)) {
-      const sampled = sampleTrackAltitudeNear(lon, lat);
-      if (Number.isFinite(sampled)) alt = sampled;
-    } else {
-      // Prefer nearby track sample so bar matches ribbon when DTO alt is a coarse center estimate.
-      const sampled = sampleTrackAltitudeNear(lon, lat);
-      if (Number.isFinite(sampled)) alt = sampled;
-    }
-    return gateHeight(alt, track);
+    return height;
   }
 
   function upsertGatePolyline(id, name, positions, width, color, clampToGround) {
+    const material = new Cesium.PolylineOutlineMaterialProperty({
+      color, outlineColor: Cesium.Color.BLACK, outlineWidth: 0.5
+    });
     let entity = viewer.entities.getById(id);
     if (entity) {
       const wasClamped = !!(entity.polyline && entity.polyline.clampToGround &&
@@ -406,8 +239,8 @@
           positions,
           width,
           clampToGround,
-          material: color,
-          depthFailMaterial: color
+          zIndex: 10,
+          material
         }
       });
     } else {
@@ -415,8 +248,8 @@
       entity.polyline.positions = positions;
       entity.polyline.width = width;
       entity.polyline.clampToGround = clampToGround;
-      entity.polyline.material = color;
-      entity.polyline.depthFailMaterial = color;
+      entity.polyline.material = material;
+      entity.polyline.zIndex = 10;
     }
   }
 
@@ -483,20 +316,25 @@
 
   function updateGates() {
     if (!viewer) return;
+    const key = JSON.stringify([gateState, sceneState.altitudeMode, trackRenderRevision]);
+    if (key === lastGateRenderKey) return;
+    lastGateRenderKey = key;
     const next = new Set();
-    // Polylines use absolute sampled/recorded heights — never clampToGround.
-    const tracks = sceneState.tracks || [];
-    const anyHasAltitude = tracks.some(t => t && t.hasAltitude);
-    const useGroundHeights = isGroundMode() || !anyHasAltitude;
-    const clampToGround = false;
-    // Labels: RELATIVE_TO_GROUND in ground mode; absolute mid+lift in recorded.
+    const clampToGround = isGroundMode() || !(sceneState.tracks || []).some(t => t.hasAltitude);
+    // Labels share the absolute bar height in both altitude modes.
     const labelLift = 3;
     for (const gate of gateState || []) {
       if (!gate) continue;
-      const h0 = resolveGateEndpointHeight(gate.lon0, gate.lat0, gate.alt0);
-      const h1 = resolveGateEndpointHeight(gate.lon1, gate.lat1, gate.alt1);
+      const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
+      const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
+      const fallback = isGroundMode() ? groundTrackLiftMeters
+        : (Number.isFinite(gate.alt0) ? gate.alt0 : 0) + recordedTrackLiftMeters;
+      // Ground ordering is handled by zIndex. Recorded bars have a tiny offset
+      // to avoid coplanar depth fighting with the track at their crossing.
+      const h0 = clampToGround ? 0 : (trackDisplayHeightNear(midLon, midLat) ?? fallback) + 0.05;
+      const h1 = h0;
       const color = Cesium.Color.fromCssColorString(gate.colorHex || "#3FBF6F");
-      const width = gate.selected ? 12 : 8;
+      const width = gate.selected ? 5 : 4;
       const name = gate.name || "Gate";
 
       const lineId = `gate-${gate.id}`;
@@ -507,11 +345,9 @@
       upsertGatePolyline(lineId, name, positions, width, color, clampToGround);
       next.add(lineId);
 
-      const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
-      const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
-      const midH = useGroundHeights ? labelLift : (h0 + h1) * 0.5 + labelLift;
+      const midH = h0 + labelLift;
       const markerId = `gate-marker-${gate.id}`;
-      upsertGateMarker(markerId, midLon, midLat, midH, name, useGroundHeights);
+      upsertGateMarker(markerId, midLon, midLat, midH, name, clampToGround);
       next.add(markerId);
     }
     for (const id of gateEntityIds) {
@@ -555,29 +391,51 @@
     }
   }
 
+  function cursorPitch(point, track, useGround) {
+    const heading = (Number.isFinite(point.heading) ? point.heading : 0) * Math.PI / 180;
+    // Measure a vehicle-length baseline. Ground uses the currently rendered DEM
+    // tiles, avoiding network requests or full-track terrain sampling while dragging.
+    const halfSpan = cursorBoxLengthM * 0.5;
+    const latitudeScale = 111320;
+    const longitudeScale = latitudeScale * Math.cos(point.latitude * Math.PI / 180);
+    if (Math.abs(longitudeScale) < 1) return 0;
+    const dx = Math.sin(heading) * halfSpan / longitudeScale;
+    const dy = Math.cos(heading) * halfSpan / latitudeScale;
+    const heightAt = (lon, lat) => useGround
+      ? viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(lon, lat))
+      : track && trackDisplayHeightNear(lon, lat, [track]);
+    const back = heightAt(point.longitude - dx, point.latitude - dy);
+    const front = heightAt(point.longitude + dx, point.latitude + dy);
+    if (!Number.isFinite(back) || !Number.isFinite(front)) return 0;
+    return Math.atan2(front - back, halfSpan * 2);
+  }
+
   function cursorPosition(point) {
     const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
     const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
-    let trackHeight;
-    if (useGround) {
-      trackHeight = 0;
-    } else if (track) {
-      trackHeight = track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters;
-    } else {
-      trackHeight = point.altitude + recordedTrackLiftMeters;
-    }
-    // Box center sits half-height above the track ribbon so the bottom rests on it.
-    const height = useGround ? cursorBoxHalfHeightM : trackHeight + cursorBoxHalfHeightM;
+    // Ground box positions are relative to the very same terrain as the draped
+    // track. Recorded boxes use the rendered segment, not a separate altitude.
+    const trackHeight = useGround ? 0
+      : (track && trackDisplayHeightNear(point.longitude, point.latitude, [track]))
+        ?? (point.altitude + recordedTrackLiftMeters);
+    // Cesium BoxGeometryUpdater adds half the box height for non-NONE height
+    // references. Relative height therefore specifies the bottom, not the center.
+    const pitch = cursorPitch(point, track, useGround);
+    // Keep the tilted bottom plane on the local track tangent. At fixed lon/lat
+    // the center needs halfHeight / cos(pitch), not the horizontal-box halfHeight.
+    const centerLift = cursorBoxHalfHeightM / Math.cos(pitch);
+    const height = useGround ? centerLift - cursorBoxHalfHeightM : trackHeight + centerLift;
     const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
-    return { position, useGround, height };
+    return { position, useGround, height, pitch };
   }
 
-  function cursorOrientation(position, point) {
+  function cursorOrientation(position, point, pitch = 0) {
     const headingDeg = Number.isFinite(point.heading) ? point.heading : 0;
-    // Cesium HeadingPitchRoll: heading clockwise from north (same as GPS travel heading).
+    // ENU local X points east; GPS heading is clockwise from north.
+    // Rotate the box length (X) from east to north before applying GPS heading.
     return Cesium.Transforms.headingPitchRollQuaternion(
       position,
-      new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(headingDeg), 0, 0)
+      new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(headingDeg - 90), pitch, 0)
     );
   }
 
@@ -586,7 +444,7 @@
       ? Cesium.HeightReference.RELATIVE_TO_GROUND
       : Cesium.HeightReference.NONE;
     entity.position = resolved.position;
-    entity.orientation = cursorOrientation(resolved.position, point);
+    entity.orientation = cursorOrientation(resolved.position, point, resolved.pitch);
     if (entity.point) entity.point = undefined;
     if (!entity.box) {
       entity.box = {
@@ -624,7 +482,7 @@
       cursorEntity = viewer.entities.add({
         id: "cmts-cursor",
         position: resolved.position,
-        orientation: cursorOrientation(resolved.position, point),
+        orientation: cursorOrientation(resolved.position, point, resolved.pitch),
         box: {
           dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
           material: color,
@@ -672,7 +530,7 @@
         entity = viewer.entities.add({
           id,
           position: resolved.position,
-          orientation: cursorOrientation(resolved.position, point),
+          orientation: cursorOrientation(resolved.position, point, resolved.pitch),
           box: {
             dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
             material: color,
@@ -722,11 +580,7 @@
       setCursors(data.payload);
     } else if (data.type === "gates") {
       gateState = Array.isArray(data.payload) ? data.payload : [];
-      if (isGroundMode()) {
-        refreshGateGroundCache().then(() => updateGates()).catch(() => updateGates());
-      } else {
-        updateGates();
-      }
+      updateGates();
     } else if (data.type === "fit") {
       fit();
     } else if (data.type === "clear") {
@@ -734,9 +588,8 @@
       gateState = [];
       lastDatasetKey = "";
       lastAltitudeMode = null;
-      terrainSampleGen++;
-      groundHeightByTrack.clear();
-      gateGroundHeightCache.clear();
+      trackRenderKeys.clear();
+      lastGateRenderKey = "";
       trackEntityIds.clear();
       gateEntityIds.clear();
       viewer.entities.removeAll();
@@ -767,10 +620,16 @@
       animation: false, timeline: false, fullscreenButton: false, homeButton: false,
       sceneModePicker: false, baseLayerPicker: false, geocoder: false,
       navigationHelpButton: false, infoBox: false, selectionIndicator: false,
+      // Limit redraw work while moving; idle scenes still render only on demand.
+      targetFrameRate: 30,
+      useBrowserRecommendedResolution: true,
+      msaaSamples: 1,
       requestRenderMode: true,
       maximumRenderTimeChange: Number.POSITIVE_INFINITY
     });
-    // Prefer visibility over terrain occlusion: GNSS alts often sit below DEM.
+    // FXAA avoids the GPU bandwidth cost of multisample rendering.
+    viewer.scene.postProcessStages.fxaa.enabled = true;
+    // Ground tracks/gates are draped; recorded tracks keep their absolute altitude.
     viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.scene.globe.enableLighting = false;
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#8FC7F2");
@@ -779,6 +638,12 @@
     viewer.scene.moon.show = false;
     viewer.scene.skyAtmosphere.show = true;
     viewer.scene.fog.enabled = true;
+    // Re-evaluate slope when terrain tiles finish loading under a stationary cursor.
+    viewer.scene.globe.tileLoadProgressEvent.addEventListener(pending => {
+      if (pending !== 0) return;
+      if (cursorPoint) setCursor(cursorPoint);
+      else if (compareCursorPoints.length) setCursors(compareCursorPoints);
+    });
     const cameraController = viewer.scene.screenSpaceCameraController;
     cameraController.enableCollisionDetection = true;
     cameraController.minimumZoomDistance = 5.0;
@@ -798,7 +663,7 @@
       const entityId = picked && picked.id && picked.id.id;
       if (typeof entityId !== "string" || !entityId.startsWith("track-")) return;
 
-      const trackId = Number(entityId.substring("track-".length));
+      const trackId = Number(entityId.split("-")[1]);
       const track = (sceneState.tracks || []).find(item => item.id === trackId);
       if (!track || !track.points || !track.points.length) return;
 
