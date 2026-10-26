@@ -1518,9 +1518,15 @@ public partial class TrackMapPanel : UserControl
     {
         _tileLayer?.ApplyPreferences();
         _map3D?.SetImagery(AppearanceService.CurrentMapSource());
-        // Dim scale grid when basemap is on so tiles stay readable.
+        // Basemap ON: hide coordinate grid so satellite imagery stays clean.
         if (GridOverlay is not null)
-            GridOverlay.Opacity = AppearanceService.Preferences.Map.BasemapEnabled ? 0.35 : 1.0;
+        {
+            var basemapOn = AppearanceService.Preferences.Map.BasemapEnabled;
+            GridOverlay.Visibility = basemapOn
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible;
+            GridOverlay.Opacity = 1.0;
+        }
     }
 
     private void ApplyLocalizedChrome()

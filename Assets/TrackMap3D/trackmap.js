@@ -187,54 +187,53 @@
 
   function upsertGatePolyline(id, name, positions, width, color, clampToGround) {
     let entity = viewer.entities.getById(id);
-    if (entity) {
-      viewer.entities.remove(entity);
-      entity = undefined;
+    if (!entity) {
+      entity = viewer.entities.add({
+        id,
+        name,
+        polyline: {
+          positions,
+          width,
+          clampToGround,
+          material: color
+        }
+      });
+    } else {
+      entity.name = name;
+      entity.polyline.positions = positions;
+      entity.polyline.width = width;
+      entity.polyline.clampToGround = clampToGround;
+      entity.polyline.material = color;
     }
-    viewer.entities.add({
-      id,
-      name,
-      polyline: {
-        positions,
-        width,
-        clampToGround,
-        material: color,
-        depthFailMaterial: color
-      }
-    });
   }
 
-  function upsertGateMarker(id, lon, lat, height, color, labelText) {
+  function upsertGateMarker(id, lon, lat, height, labelText) {
+    // Label-only: no round point marker (user request).
     const position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
     let entity = viewer.entities.getById(id);
-    if (entity) {
-      viewer.entities.remove(entity);
-      entity = undefined;
+    if (!entity) {
+      entity = viewer.entities.add({
+        id,
+        position,
+        label: {
+          text: labelText || "",
+          font: "bold 11px Segoe UI",
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+          fillColor: Cesium.Color.WHITE,
+          outlineColor: Cesium.Color.BLACK,
+          outlineWidth: 3,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          showBackground: true,
+          backgroundColor: Cesium.Color.fromCssColorString("#0A0E14").withAlpha(0.72)
+        }
+      });
+    } else {
+      entity.position = position;
+      if (entity.label) {
+        entity.label.text = labelText || "";
+      }
     }
-    viewer.entities.add({
-      id,
-      position,
-      point: {
-        pixelSize: 12,
-        color,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 2,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        heightReference: Cesium.HeightReference.NONE
-      },
-      label: labelText ? {
-        text: labelText,
-        font: "bold 11px Segoe UI",
-        pixelOffset: new Cesium.Cartesian2(0, -16),
-        fillColor: Cesium.Color.WHITE,
-        outlineColor: Cesium.Color.BLACK,
-        outlineWidth: 3,
-        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-        disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        showBackground: true,
-        backgroundColor: Cesium.Color.fromCssColorString("#0A0E14").withAlpha(0.72)
-      } : undefined
-    });
   }
 
   function refreshGateLegend() {
@@ -276,36 +275,25 @@
       const width = gate.selected ? 10 : 6;
       const name = gate.name || "Gate";
 
-      const lineId = `gate-${gate.id}`;
-      // In ground mode keep the bar slightly elevated so it is not z-fighting the DEM.
+      // One continuous U polyline (top0 -> base0 -> base1 -> top1) updated in place
+      // so frequent track refreshes do not remove/re-add and flicker.
       const barLift = clampToGround ? 2 : 0;
+      const postH = gatePostHeightMeters;
+      const lineId = `gate-${gate.id}`;
       const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
+        gate.lon0, gate.lat0, h0 + barLift + postH,
         gate.lon0, gate.lat0, h0 + barLift,
-        gate.lon1, gate.lat1, h1 + barLift
+        gate.lon1, gate.lat1, h1 + barLift,
+        gate.lon1, gate.lat1, h1 + barLift + postH
       ]);
       upsertGatePolyline(lineId, name, positions, width, color, false);
       next.add(lineId);
 
-      // Vertical posts so short (~10 m) gates remain visible from nadir overview.
-      const postH = clampToGround ? gatePostHeightMeters : gatePostHeightMeters;
-      const post0Id = `gate-post0-${gate.id}`;
-      const post1Id = `gate-post1-${gate.id}`;
-      upsertGatePolyline(post0Id, name, Cesium.Cartesian3.fromDegreesArrayHeights([
-        gate.lon0, gate.lat0, h0 + barLift,
-        gate.lon0, gate.lat0, h0 + barLift + postH
-      ]), Math.max(3, width - 2), color, false);
-      upsertGatePolyline(post1Id, name, Cesium.Cartesian3.fromDegreesArrayHeights([
-        gate.lon1, gate.lat1, h1 + barLift,
-        gate.lon1, gate.lat1, h1 + barLift + postH
-      ]), Math.max(3, width - 2), color, false);
-      next.add(post0Id);
-      next.add(post1Id);
-
       const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
       const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
-      const midH = (h0 + h1) * 0.5 + barLift + postH * 0.45;
+      const midH = (h0 + h1) * 0.5 + barLift + postH * 0.55;
       const markerId = `gate-marker-${gate.id}`;
-      upsertGateMarker(markerId, midLon, midLat, midH, color, name);
+      upsertGateMarker(markerId, midLon, midLat, midH, name);
       next.add(markerId);
     }
     for (const id of gateEntityIds) {

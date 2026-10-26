@@ -162,6 +162,17 @@ public partial class MainWindow : Window
     /// </summary>
     private PlotDefinition? _cursorSourcePlot;
 
+    /// <summary>Cached gate crossing X on the current curves X-axis.</summary>
+    private readonly List<(Guid Id, double X, string ColorHex)> _cachedGateXs = new();
+    private bool _gateXCacheDirty = true;
+    private string? _gateXCacheAxisId;
+    private int _gateXCacheSampleCount;
+    private long _gateXCacheSampleStamp;
+
+    /// <summary>Throttle Dashboard/map cursor push while dragging the yellow scrubber.</summary>
+    private DispatcherTimer? _cursorMapThrottleTimer;
+    private bool _cursorMapUpdatePending;
+
     /// <summary>First X placed by the two-click measurement-region action.</summary>
     private double? _measureRegionStartX;
 
@@ -258,6 +269,7 @@ public partial class MainWindow : Window
 
         GateStore.Instance.Changed += (_, _) =>
         {
+            InvalidateGateXCache();
             ScheduleSessionMemorySave();
             if (_restoringSession)
                 return;
@@ -3360,15 +3372,110 @@ public partial class MainWindow : Window
         _cursorSourcePlot = cursorX is null ? null : source;
 
         foreach (var plot in _plots)
-        {
             plot.CursorX = cursorX;
 
-            if (!refreshOverlays || plot.WpfPlot is null)
-                continue;
+        if (!refreshOverlays)
+            return;
 
+        // While dragging: only move the yellow VerticalLine (gates/KML stay put).
+        var dragging = false;
+        foreach (var plot in _plots)
+        {
+            if (plot.IsDraggingCursor)
+            {
+                dragging = true;
+                break;
+            }
+        }
+
+        if (dragging && cursorX is double cx)
+        {
+            foreach (var plot in _plots)
+            {
+                if (plot.WpfPlot is null)
+                    continue;
+                if (plot.CursorLine is not null)
+                {
+                    plot.CursorLine.X = cx;
+                    plot.WpfPlot.Refresh();
+                }
+                else
+                {
+                    ApplyPlotOverlays(plot);
+                    plot.WpfPlot.Refresh();
+                }
+            }
+            return;
+        }
+
+        foreach (var plot in _plots)
+        {
+            if (plot.WpfPlot is null)
+                continue;
             ApplyPlotOverlays(plot);
             plot.WpfPlot.Refresh();
         }
+    }
+
+    private void InvalidateGateXCache() => _gateXCacheDirty = true;
+
+    private void EnsureGateXCache()
+    {
+        var samples = GetGatePlotSamples();
+        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var stamp = samples.Count > 0 ? samples[^1].Timestamp : 0L;
+        if (!_gateXCacheDirty
+            && string.Equals(_gateXCacheAxisId, xChannel, StringComparison.Ordinal)
+            && _gateXCacheSampleCount == samples.Count
+            && _gateXCacheSampleStamp == stamp)
+            return;
+
+        _cachedGateXs.Clear();
+        foreach (var gate in GateStore.Instance.Gates)
+        {
+            if (!gate.IsValid)
+                continue;
+            if (!TryFindGateCrossingX(gate, samples, xChannel, out var x))
+                continue;
+            var colorHex = string.IsNullOrWhiteSpace(gate.ColorHex) ? "#3FBF6F" : gate.ColorHex;
+            _cachedGateXs.Add((gate.Id, x, colorHex));
+        }
+
+        _gateXCacheDirty = false;
+        _gateXCacheAxisId = xChannel;
+        _gateXCacheSampleCount = samples.Count;
+        _gateXCacheSampleStamp = stamp;
+    }
+
+    private void ScheduleCursorMapUpdate()
+    {
+        _cursorMapUpdatePending = true;
+        if (_cursorMapThrottleTimer is null)
+        {
+            _cursorMapThrottleTimer = new DispatcherTimer
+            {
+                Interval = TimeSpan.FromMilliseconds(40)
+            };
+            _cursorMapThrottleTimer.Tick += (_, _) =>
+            {
+                if (!_cursorMapUpdatePending)
+                {
+                    _cursorMapThrottleTimer.Stop();
+                    return;
+                }
+                _cursorMapUpdatePending = false;
+                UpdateNumericDisplay();
+            };
+        }
+        if (!_cursorMapThrottleTimer.IsEnabled)
+            _cursorMapThrottleTimer.Start();
+    }
+
+    private void FlushCursorMapUpdate()
+    {
+        _cursorMapUpdatePending = false;
+        _cursorMapThrottleTimer?.Stop();
+        UpdateNumericDisplay();
     }
 
 
@@ -3499,7 +3606,7 @@ public partial class MainWindow : Window
                     return;
 
                 SetSharedCursor(cx, plot);
-                UpdateNumericDisplay();
+                ScheduleCursorMapUpdate();
                 e.Handled = true;
                 return;
             }
@@ -3537,7 +3644,7 @@ public partial class MainWindow : Window
                 if (cx is not null)
                     SetSharedCursor(cx, plot);
 
-                UpdateNumericDisplay();
+                FlushCursorMapUpdate();
                 e.Handled = true;
                 return;
             }
@@ -4483,6 +4590,7 @@ public partial class MainWindow : Window
         }
 
         // 竖向光标
+        plot.CursorLine = null;
         if (plot.CursorX is double cursorX)
         {
             var vLine = scottPlot.Add.VerticalLine(cursorX);
@@ -4490,6 +4598,7 @@ public partial class MainWindow : Window
                 ThemeBrushes.ScottPlot("AccentBrush");
             vLine.LineWidth = 1.5f;
             vLine.LinePattern = ScottPlot.LinePattern.Solid;
+            plot.CursorLine = vLine;
 
             var readout = BuildCursorReadout(plot, cursorX);
             if (!string.IsNullOrEmpty(readout))
@@ -4540,24 +4649,16 @@ public partial class MainWindow : Window
         if (GateStore.Instance.Gates.Count == 0)
             return;
 
-        var samples = GetGatePlotSamples();
-        if (samples.Count < 2)
+        EnsureGateXCache();
+        if (_cachedGateXs.Count == 0)
             return;
 
-        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
         var selectedId = GateStore.Instance.SelectedId;
-
-        foreach (var gate in GateStore.Instance.Gates)
+        foreach (var (id, x, colorHex) in _cachedGateXs)
         {
-            if (!gate.IsValid)
-                continue;
-            if (!TryFindGateCrossingX(gate, samples, xChannel, out var x))
-                continue;
-
-            var colorHex = string.IsNullOrWhiteSpace(gate.ColorHex) ? "#3FBF6F" : gate.ColorHex;
             var line = scottPlot.Add.VerticalLine(x);
             line.LineColor = ScottPlot.Color.FromHex(colorHex);
-            line.LineWidth = selectedId == gate.Id ? 3.0f : 1.8f;
+            line.LineWidth = selectedId == id ? 3.0f : 1.8f;
             line.LinePattern = ScottPlot.LinePattern.Solid;
         }
     }
@@ -6155,6 +6256,9 @@ public partial class MainWindow : Window
 
         /// <summary>光标 X（与当前轴同一单位；Time 轴为 OADate）。</summary>
         public double? CursorX { get; set; }
+
+        /// <summary>Yellow scrubber line — mutated in place while dragging.</summary>
+        public ScottPlot.Plottables.VerticalLine? CursorLine { get; set; }
 
         /// <summary>横向选区起止（可空表示无选区）。</summary>
         public double? SelectionX1 { get; set; }
