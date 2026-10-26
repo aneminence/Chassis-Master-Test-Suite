@@ -2,28 +2,27 @@
   "use strict";
 
   const notice = document.getElementById("notice");
-  const badge = document.getElementById("badge");
+  const gateLegend = document.getElementById("gateLegend");
+  const gateLegendItems = document.getElementById("gateLegendItems");
   const isZh = (navigator.language || "").toLowerCase().startsWith("zh");
   const text = isZh ? {
-    badge: "3D · 在线影像 · 真实地形",
-    badgeFallback: "3D · 在线影像 · 平面降级",
     terrainLoading: "正在加载在线 DEM 地形…",
     terrainError: "在线 DEM 加载失败，已降级为平面地球。正式发布前请配置 Cesium ion Token。",
     waiting: "等待 GPS 数据",
     missing: count => `${count} 条轨迹没有有效高度，已降级为贴地显示。`,
-    cesiumError: "无法下载 Cesium，请检查网络连接。"
+    cesiumError: "无法下载 Cesium，请检查网络连接。",
+    gatesTitle: "Gates"
   } : {
-    badge: "3D · online imagery · world terrain",
-    badgeFallback: "3D · online imagery · flat fallback",
     terrainLoading: "Loading online DEM terrain…",
     terrainError: "Online DEM failed to load; using the flat ellipsoid fallback. Configure a Cesium ion token before release.",
     waiting: "Waiting for GPS data",
     missing: count => `${count} track(s) have no usable altitude and are shown on the ground.`,
-    cesiumError: "Cesium could not be downloaded. Check the network connection."
+    cesiumError: "Cesium could not be downloaded. Check the network connection.",
+    gatesTitle: "Gates"
   };
-  badge.textContent = text.badge;
   let viewer;
   let sceneState = { tracks: [], altitudeMode: "recorded" };
+  let lastAltitudeMode = null;
   let gateState = [];
   let gateEntityIds = new Set();
   let cursorEntity;
@@ -35,7 +34,9 @@
   let cameraMoving = false;
   let pendingTrackPayload;
   let imageryGeneration = 0;
-  const recordedTrackLiftMeters = 1.5;
+  // Lift tracks above DEM so GNSS/DEM mismatch does not bury polylines.
+  const recordedTrackLiftMeters = 10;
+  const gatePostHeightMeters = 40;
 
   function post(type, message) {
     if (window.chrome && window.chrome.webview)
@@ -50,10 +51,14 @@
   function displayHeight(point, track) {
     if (sceneState.altitudeMode === "ground" || !track.hasAltitude)
       return 0;
-    // Keep the visual line just above the DEM. Recorded GNSS altitude and the
-    // terrain mesh often differ by less than a metre, which otherwise causes
-    // depth-buffer z-fighting while orbiting the camera.
     return track.baseline + (point[2] - track.baseline) + recordedTrackLiftMeters;
+  }
+
+  function clearTrackEntities() {
+    if (!viewer) return;
+    for (const id of trackEntityIds)
+      viewer.entities.removeById(id);
+    trackEntityIds = new Set();
   }
 
   function updateTracks() {
@@ -61,6 +66,11 @@
 
     viewer.scene.verticalExaggeration = 1;
     viewer.scene.verticalExaggerationRelativeHeight = 0;
+
+    const mode = sceneState.altitudeMode === "ground" ? "ground" : "recorded";
+    if (lastAltitudeMode !== null && lastAltitudeMode !== mode)
+      clearTrackEntities();
+    lastAltitudeMode = mode;
 
     let drawable = 0;
     let missingAltitude = 0;
@@ -79,16 +89,37 @@
 
       const trackId = `track-${track.id}`;
       const color = Cesium.Color.fromCssColorString(track.color || "#42A5F5");
+      const positions = Cesium.Cartesian3.fromDegreesArrayHeights(degrees);
+      const clampToGround = mode === "ground" || !track.hasAltitude;
       let entity = viewer.entities.getById(trackId);
-      if (!entity) {
-        entity = viewer.entities.add({ id: trackId, name: track.name, polyline: {} });
+      // Recreate when clamp mode flips: Cesium often ignores in-place clampToGround changes.
+      if (entity) {
+        const wasClamped = !!(entity.polyline && entity.polyline.clampToGround && entity.polyline.clampToGround.getValue && entity.polyline.clampToGround.getValue());
+        if (wasClamped !== clampToGround) {
+          viewer.entities.remove(entity);
+          entity = undefined;
+        }
       }
-      entity.name = track.name;
-      entity.polyline.positions = Cesium.Cartesian3.fromDegreesArrayHeights(degrees);
-      entity.polyline.width = 5;
-      entity.polyline.clampToGround = sceneState.altitudeMode === "ground" || !track.hasAltitude;
-      entity.polyline.material = color;
-      entity.polyline.depthFailMaterial = color;
+      if (!entity) {
+        entity = viewer.entities.add({
+          id: trackId,
+          name: track.name,
+          polyline: {
+            positions,
+            width: 8,
+            clampToGround,
+            material: color,
+            depthFailMaterial: color
+          }
+        });
+      } else {
+        entity.name = track.name;
+        entity.polyline.positions = positions;
+        entity.polyline.width = 8;
+        entity.polyline.clampToGround = clampToGround;
+        entity.polyline.material = color;
+        entity.polyline.depthFailMaterial = color;
+      }
       nextEntityIds.add(trackId);
 
       const first = track.points[0];
@@ -124,7 +155,8 @@
       entity = viewer.entities.add({
         id,
         position,
-        point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(color), outlineColor: Cesium.Color.BLACK, outlineWidth: 2 },
+        point: { pixelSize: 9, color: Cesium.Color.fromCssColorString(color), outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY },
         label: { text: labelText, font: "bold 12px Segoe UI", pixelOffset: new Cesium.Cartesian2(0, -18),
           fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: Number.POSITIVE_INFINITY }
@@ -146,7 +178,6 @@
     return result;
   }
 
-
   function gateHeight(alt) {
     if (sceneState.altitudeMode === "ground")
       return 0;
@@ -154,47 +185,134 @@
     return value + recordedTrackLiftMeters;
   }
 
+  function upsertGatePolyline(id, name, positions, width, color, clampToGround) {
+    let entity = viewer.entities.getById(id);
+    if (entity) {
+      viewer.entities.remove(entity);
+      entity = undefined;
+    }
+    viewer.entities.add({
+      id,
+      name,
+      polyline: {
+        positions,
+        width,
+        clampToGround,
+        material: color,
+        depthFailMaterial: color
+      }
+    });
+  }
+
+  function upsertGateMarker(id, lon, lat, height, color, labelText) {
+    const position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
+    let entity = viewer.entities.getById(id);
+    if (entity) {
+      viewer.entities.remove(entity);
+      entity = undefined;
+    }
+    viewer.entities.add({
+      id,
+      position,
+      point: {
+        pixelSize: 12,
+        color,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 2,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        heightReference: Cesium.HeightReference.NONE
+      },
+      label: labelText ? {
+        text: labelText,
+        font: "bold 11px Segoe UI",
+        pixelOffset: new Cesium.Cartesian2(0, -16),
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        showBackground: true,
+        backgroundColor: Cesium.Color.fromCssColorString("#0A0E14").withAlpha(0.72)
+      } : undefined
+    });
+  }
+
+  function refreshGateLegend() {
+    if (!gateLegend || !gateLegendItems) return;
+    const title = gateLegend.querySelector(".gate-legend-title");
+    if (title) title.textContent = text.gatesTitle;
+    gateLegendItems.innerHTML = "";
+    const gates = gateState || [];
+    if (!gates.length) {
+      gateLegend.style.display = "none";
+      return;
+    }
+    gateLegend.style.display = "block";
+    for (const gate of gates) {
+      if (!gate) continue;
+      const row = document.createElement("div");
+      row.className = "gate-legend-row";
+      const swatch = document.createElement("span");
+      swatch.className = "gate-legend-swatch";
+      swatch.style.background = gate.colorHex || "#3FBF6F";
+      const label = document.createElement("span");
+      label.className = "gate-legend-label" + (gate.selected ? " selected" : "");
+      label.textContent = gate.name || "Gate";
+      row.appendChild(swatch);
+      row.appendChild(label);
+      gateLegendItems.appendChild(row);
+    }
+  }
+
   function updateGates() {
     if (!viewer) return;
     const next = new Set();
+    const clampToGround = sceneState.altitudeMode === "ground";
     for (const gate of gateState || []) {
       if (!gate) continue;
-      const id = `gate-${gate.id}`;
       const h0 = gateHeight(gate.alt0);
       const h1 = gateHeight(gate.alt1);
-      const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
-        gate.lon0, gate.lat0, h0,
-        gate.lon1, gate.lat1, h1
-      ]);
       const color = Cesium.Color.fromCssColorString(gate.colorHex || "#3FBF6F");
-      const width = gate.selected ? 7 : 4;
-      let entity = viewer.entities.getById(id);
-      if (!entity) {
-        entity = viewer.entities.add({
-          id,
-          name: gate.name || "Gate",
-          polyline: {
-            positions,
-            width,
-            clampToGround: sceneState.altitudeMode === "ground",
-            material: color,
-            depthFailMaterial: color
-          }
-        });
-      } else {
-        entity.name = gate.name || "Gate";
-        entity.polyline.positions = positions;
-        entity.polyline.width = width;
-        entity.polyline.clampToGround = sceneState.altitudeMode === "ground";
-        entity.polyline.material = color;
-        entity.polyline.depthFailMaterial = color;
-      }
-      next.add(id);
+      const width = gate.selected ? 10 : 6;
+      const name = gate.name || "Gate";
+
+      const lineId = `gate-${gate.id}`;
+      // In ground mode keep the bar slightly elevated so it is not z-fighting the DEM.
+      const barLift = clampToGround ? 2 : 0;
+      const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
+        gate.lon0, gate.lat0, h0 + barLift,
+        gate.lon1, gate.lat1, h1 + barLift
+      ]);
+      upsertGatePolyline(lineId, name, positions, width, color, false);
+      next.add(lineId);
+
+      // Vertical posts so short (~10 m) gates remain visible from nadir overview.
+      const postH = clampToGround ? gatePostHeightMeters : gatePostHeightMeters;
+      const post0Id = `gate-post0-${gate.id}`;
+      const post1Id = `gate-post1-${gate.id}`;
+      upsertGatePolyline(post0Id, name, Cesium.Cartesian3.fromDegreesArrayHeights([
+        gate.lon0, gate.lat0, h0 + barLift,
+        gate.lon0, gate.lat0, h0 + barLift + postH
+      ]), Math.max(3, width - 2), color, false);
+      upsertGatePolyline(post1Id, name, Cesium.Cartesian3.fromDegreesArrayHeights([
+        gate.lon1, gate.lat1, h1 + barLift,
+        gate.lon1, gate.lat1, h1 + barLift + postH
+      ]), Math.max(3, width - 2), color, false);
+      next.add(post0Id);
+      next.add(post1Id);
+
+      const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
+      const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
+      const midH = (h0 + h1) * 0.5 + barLift + postH * 0.45;
+      const markerId = `gate-marker-${gate.id}`;
+      upsertGateMarker(markerId, midLon, midLat, midH, color, name);
+      next.add(markerId);
     }
     for (const id of gateEntityIds) {
       if (!next.has(id)) viewer.entities.removeById(id);
     }
     gateEntityIds = next;
+    refreshGateLegend();
     viewer.scene.requestRender();
   }
 
@@ -317,10 +435,14 @@
   function handleMessage(event) {
     const data = event.data || {};
     if (data.type === "tracks") {
-      if (cameraMoving) {
-        pendingTrackPayload = data.payload;
+      const next = data.payload || sceneState;
+      const modeChanged = !!(next && sceneState && next.altitudeMode !== sceneState.altitudeMode);
+      // Altitude-mode switches must apply immediately; do not defer behind camera motion.
+      if (cameraMoving && !modeChanged) {
+        pendingTrackPayload = next;
       } else {
-        sceneState = data.payload || sceneState;
+        sceneState = next;
+        pendingTrackPayload = undefined;
         updateTracks();
       }
     } else if (data.type === "imagery") {
@@ -338,6 +460,7 @@
       sceneState.tracks = [];
       gateState = [];
       lastDatasetKey = "";
+      lastAltitudeMode = null;
       trackEntityIds.clear();
       gateEntityIds.clear();
       viewer.entities.removeAll();
@@ -345,6 +468,7 @@
       cursorPoint = undefined;
       compareCursorPoints = [];
       compareCursorEntities.clear();
+      refreshGateLegend();
       setNotice(text.waiting);
     }
   }
@@ -370,7 +494,8 @@
       requestRenderMode: true,
       maximumRenderTimeChange: Number.POSITIVE_INFINITY
     });
-    viewer.scene.globe.depthTestAgainstTerrain = true;
+    // Prefer visibility over terrain occlusion: GNSS alts often sit below DEM.
+    viewer.scene.globe.depthTestAgainstTerrain = false;
     viewer.scene.globe.enableLighting = false;
     viewer.scene.backgroundColor = Cesium.Color.fromCssColorString("#8FC7F2");
     viewer.scene.skyBox.show = false;
@@ -425,8 +550,8 @@
         sampleIndex: Math.round(nearest[3])
       });
     }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-    badge.textContent = terrainFallback ? text.badgeFallback : text.badge;
     setNotice(terrainFallback ? text.terrainError : "");
+    refreshGateLegend();
     window.chrome.webview.addEventListener("message", handleMessage);
     post("ready", "");
   } catch (error) {

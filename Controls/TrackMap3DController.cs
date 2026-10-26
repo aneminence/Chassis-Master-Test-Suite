@@ -185,6 +185,11 @@ internal sealed class TrackMap3DController
         _altitudeMode = altitudeMode == "ground" ? "ground" : "recorded";
         if (_active)
         {
+            // Force a full scene resend so JS recreates polylines when clamp/height mode changes.
+            _lastSentCounts = Array.Empty<int>();
+            _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
+            _lastSentAnchor = null;
+            RebuildSampleLocations();
             SendScene();
             SendGates();
             if (_compareCursors.Count > 0)

@@ -143,30 +143,6 @@
                     <!-- 第 2 层：轨迹（ScottPlot，背景透明以便网格在下方可见） -->
                     <Grid x:Name="PlotHost"/>
 
-                    <!-- Gate color legend (UpperLeft; separate from ScottPlot UpperRight track legend) -->
-                    <Border x:Name="GateLegendPanel"
-                            Visibility="Collapsed"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            Margin="10,10,0,0"
-                            Background="{DynamicResource OverlayScrim}"
-                            BorderBrush="{DynamicResource BorderBrushSoft}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="8,6"
-                            IsHitTestVisible="False"
-                            MaxWidth="200">
-                        <StackPanel>
-                            <TextBlock Text="Gates"
-                                       Foreground="{DynamicResource TextSecondary}"
-                                       FontSize="10"
-                                       FontWeight="SemiBold"
-                                       Margin="0,0,0,4"/>
-                            <ItemsControl x:Name="GateLegendItems"/>
-                        </StackPanel>
-                    </Border>
-
-
                     <!-- 第 3 层：悬停速度提示 -->
                     <Border x:Name="HoverTip"
                             Visibility="Collapsed"
@@ -275,6 +251,31 @@
                                        MaxWidth="360" TextAlignment="Center"/>
                         </Border>
                     </Grid>
+
+                    <!-- Gate color legend overlays both 2D and 3D (above Map3DHost in z-order for 2D;
+                         3D also mirrors legend inside Cesium HTML because WebView2 HWND airspace). -->
+                    <Border x:Name="GateLegendPanel"
+                            Panel.ZIndex="20"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Margin="10,10,0,0"
+                            Background="{DynamicResource OverlayScrim}"
+                            BorderBrush="{DynamicResource BorderBrushSoft}"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Padding="8,6"
+                            IsHitTestVisible="False"
+                            MaxWidth="200">
+                        <StackPanel>
+                            <TextBlock Text="Gates"
+                                       Foreground="{DynamicResource TextSecondary}"
+                                       FontSize="10"
+                                       FontWeight="SemiBold"
+                                       Margin="0,0,0,4"/>
+                            <ItemsControl x:Name="GateLegendItems"/>
+                        </StackPanel>
+                    </Border>
 
                 </Grid>
 

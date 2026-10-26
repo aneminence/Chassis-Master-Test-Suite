@@ -155,7 +155,7 @@ public partial class TrackMapPanel : UserControl
             SetCursorSample(sample);
             SampleSelected?.Invoke(sample, trackIndex);
         });
-        _map3D.Ready += () => Dispatcher.Invoke(PushGatesTo3D);
+        _map3D.Ready += () => Dispatcher.Invoke(() => { PushGatesTo3D(); RefreshGateColorLegend(); });
 
         GateStore.Instance.Changed += (_, _) =>
         {
@@ -533,6 +533,9 @@ public partial class TrackMapPanel : UserControl
         Mode2DButton.IsEnabled = use3D;
         Mode3DButton.IsEnabled = !use3D;
         _map3D?.SetActive(use3D);
+        // Gate legend lives above both hosts; keep it in sync when switching.
+        RefreshGateColorLegend();
+        PushGatesTo3D();
         if (!use3D)
             _tileLayer?.Invalidate(force: true);
     }
@@ -2037,6 +2040,8 @@ public partial class TrackMapPanel : UserControl
 
         if (_projection is null)
         {
+            RefreshGateColorLegend();
+            PushGatesTo3D();
             _wpfPlot.Refresh();
             return;
         }
