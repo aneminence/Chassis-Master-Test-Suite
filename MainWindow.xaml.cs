@@ -853,19 +853,37 @@ public partial class MainWindow : Window
             BorderThickness = new Thickness(1)
         };
 
+        var currentHex = _offlineFiles.Files.FirstOrDefault(f => f.Id == id)?.ColorHex;
         foreach (var hex in FileColorChoices)
         {
-            var item = new MenuItem
-            {
-                Header = hex,
-                Tag = (id, hex),
-                Style = TryFindResource("DarkMenuItemStyle") as Style
-            };
-            item.Icon = new System.Windows.Shapes.Ellipse
+            var swatch = new System.Windows.Shapes.Ellipse
             {
                 Width = 12,
                 Height = 12,
-                Fill = (Brush)new BrushConverter().ConvertFromString(hex)!
+                Fill = (Brush)new BrushConverter().ConvertFromString(hex)!,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var label = new TextBlock
+            {
+                Text = hex,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var header = new StackPanel
+            {
+                Orientation = Orientation.Horizontal
+            };
+            header.Children.Add(swatch);
+            header.Children.Add(label);
+
+            var item = new MenuItem
+            {
+                Header = header,
+                Tag = (id, hex),
+                Style = TryFindResource("DarkMenuItemStyle") as Style,
+                IsCheckable = true,
+                IsChecked = !string.IsNullOrWhiteSpace(currentHex) &&
+                            string.Equals(currentHex, hex, StringComparison.OrdinalIgnoreCase)
             };
             item.Click += OfflineFileColorMenuItem_Click;
             menu.Items.Add(item);
@@ -3361,6 +3379,15 @@ public partial class MainWindow : Window
 
                 scatter.LineWidth = 1;
                 scatter.MarkerSize = 0;
+
+                // Offline single-file: use chip ColorHex (multi-file branch already colors).
+                // Live/online keeps ScottPlot palette defaults.
+                if (_isOfflineMode && _offlineFiles.Count >= 1)
+                {
+                    var offlineFile = _offlineFiles.Selected ?? _offlineFiles.Primary;
+                    if (offlineFile is not null && !string.IsNullOrWhiteSpace(offlineFile.ColorHex))
+                        scatter.Color = ScottPlot.Color.FromHex(offlineFile.ColorHex);
+                }
 
                 plot.LastChannelSeries.Add(
                     (channel.ChannelId, ys));
