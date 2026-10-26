@@ -546,7 +546,7 @@ public partial class TrackMapPanel : UserControl
     {
         if (_map3D is null)
             return;
-        var mode = (AltitudeModeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "recorded";
+        var mode = (AltitudeModeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "ground";
         _map3D.SetDisplay(mode);
         PushGatesTo3D();
     }

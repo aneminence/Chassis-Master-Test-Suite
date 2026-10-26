@@ -1,4 +1,4 @@
-﻿<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
+<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
@@ -108,8 +108,8 @@
                                FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
                     <ComboBox x:Name="AltitudeModeCombo" Width="92" Height="26" Margin="0,0,8,0"
                               Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="AltitudeModeCombo_SelectionChanged">
-                        <ComboBoxItem Tag="recorded" Content="Recorded" IsSelected="True"/>
-                        <ComboBoxItem Tag="ground" Content="Ground"/>
+                        <ComboBoxItem Tag="recorded" Content="Recorded"/>
+                        <ComboBoxItem Tag="ground" Content="Ground" IsSelected="True"/>
                     </ComboBox>
                     <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
                             Click="Fit3DButton_Click"/>

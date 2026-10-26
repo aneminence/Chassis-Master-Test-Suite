@@ -30,7 +30,7 @@ internal sealed class TrackMap3DController
         new(ReferenceEqualityComparer.Instance);
     private VehicleSample? _cursor;
     private IReadOnlyList<TrackMapPanel.CompareCursor> _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
-    private string _altitudeMode = "recorded";
+    private string _altitudeMode = "ground";
     private IReadOnlyList<GateDto> _gates = Array.Empty<GateDto>();
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
     private int[] _lastSentCounts = Array.Empty<int>();
