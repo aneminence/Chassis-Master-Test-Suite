@@ -669,6 +669,67 @@
                                 Margin="0,0,6,0"
                                 Click="ResetViewButton_Click"/>
 
+                        <Button x:Name="MarkRegionButton"
+                                Content="Mark Region"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="MarkRegionButton_Click"
+                                ToolTip="Place two boundaries for min/max/average measurement"/>
+
+                        <Button x:Name="AddKmlMarkButton"
+                                Content="Add Mark"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="AddKmlMarkButton_Click"
+                                ToolTip="Add an independent cut mark at the current cursor"/>
+
+                        <Button x:Name="RemoveKmlMarkButton"
+                                Content="Remove Mark"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="RemoveKmlMarkButton_Click"
+                                ToolTip="Remove the selected cut mark"/>
+
+                        <Button x:Name="CutKmlButton"
+                                Content="Cut ▾"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Click="CutKmlButton_Click"
+                                ToolTip="Cut the selected KML into a new file">
+                            <Button.ContextMenu>
+                                <ContextMenu x:Name="CutKmlMenu"
+                                             Background="{DynamicResource PanelBackground}"
+                                             BorderBrush="{DynamicResource ToolButtonBorder}"
+                                             BorderThickness="1">
+                                    <MenuItem x:Name="CutBeforeCursorItem"
+                                              Header="Before Cursor"
+                                              Style="{StaticResource DarkMenuItemStyle}"
+                                              Tag="BeforeCursor"
+                                              Click="CutKmlMenuItem_Click"/>
+                                    <MenuItem x:Name="CutAfterCursorItem"
+                                              Header="After Mark"
+                                              Style="{StaticResource DarkMenuItemStyle}"
+                                              Tag="AfterCursor"
+                                              Click="CutKmlMenuItem_Click"/>
+                                </ContextMenu>
+                            </Button.ContextMenu>
+                        </Button>
+
+                        <TextBlock x:Name="KmlModifiedText"
+                                   Text="File modified"
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   FontSize="11"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"
+                                   Margin="10,0,6,0"
+                                   Visibility="Collapsed"/>
+
+                        <Button x:Name="SaveKmlAsButton"
+                                Content="Save As…"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Click="SaveKmlAsButton_Click"
+                                ToolTip="Save the edited KML to a new file"
+                                Visibility="Collapsed"/>
+
                     </StackPanel>
 
                     <!-- 右侧：网络质量 -->

@@ -60,6 +60,7 @@
     <Compile Include="..\Analysis\GateDefinition.cs" Link="Linked\Analysis\GateDefinition.cs" />
     <Compile Include="..\Analysis\VbtsGateImporter.cs" Link="Linked\Analysis\VbtsGateImporter.cs" />
     <Compile Include="..\Analysis\KmlTrackImporter.cs" Link="Linked\Analysis\KmlTrackImporter.cs" />
+    <Compile Include="..\Analysis\KmlTrackCutter.cs" Link="Linked\Analysis\KmlTrackCutter.cs" />
     <Compile Include="..\Analysis\GatePassCondition.cs" Link="Linked\Analysis\GatePassCondition.cs" />
     <Compile Include="..\Analysis\PassConditionMeasurement.cs" Link="Linked\Analysis\PassConditionMeasurement.cs" />
     <Compile Include="..\Analysis\MathsEnricher.cs" Link="Linked\Analysis\MathsEnricher.cs" />

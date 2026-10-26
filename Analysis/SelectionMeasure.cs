@@ -100,7 +100,7 @@ public static class SelectionMeasure
     public static string Format(Result result, Func<string, string>? displayName = null)
     {
         var sb = new StringBuilder();
-        sb.Append("Measure [").Append(result.StartIndex).Append("..").Append(result.EndIndex).Append(']');
+        sb.Append("Measure [").Append(F(result.X1)).Append("..").Append(F(result.X2)).Append(']');
         foreach (var c in result.Channels)
         {
             var name = displayName?.Invoke(c.ChannelId) ?? c.ChannelId;

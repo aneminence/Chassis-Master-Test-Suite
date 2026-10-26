@@ -9,13 +9,13 @@ public sealed class OfflineFileEntry
 {
     public required Guid Id { get; init; }
 
-    public required string FilePath { get; init; }
+    public required string FilePath { get; set; }
 
-    public required string DisplayName { get; init; }
+    public required string DisplayName { get; set; }
 
-    public required IReadOnlyList<VehicleSample> Samples { get; init; }
+    public required IReadOnlyList<VehicleSample> Samples { get; set; }
 
-    public required IReadOnlyList<string> ColumnNames { get; init; }
+    public required IReadOnlyList<string> ColumnNames { get; set; }
 
     /// <summary>轨迹/曲线配色（#RRGGBB）。</summary>
     public required string ColorHex { get; init; }
@@ -104,6 +104,31 @@ public sealed class OfflineFileSet
         if (removed && SelectedId == id)
             SelectedId = _files.Count > 0 ? _files[0].Id : null;
         return removed;
+    }
+
+    public bool UpdateData(
+        Guid id,
+        IReadOnlyList<VehicleSample> samples,
+        IReadOnlyList<string> columnNames)
+    {
+        var entry = _files.FirstOrDefault(f => f.Id == id);
+        if (entry is null)
+            return false;
+        entry.Samples = samples;
+        entry.ColumnNames = columnNames;
+        return true;
+    }
+
+    public bool UpdateIdentity(Guid id, string filePath, string? displayName = null)
+    {
+        var entry = _files.FirstOrDefault(f => f.Id == id);
+        if (entry is null)
+            return false;
+        entry.FilePath = filePath;
+        entry.DisplayName = string.IsNullOrWhiteSpace(displayName)
+            ? System.IO.Path.GetFileName(filePath)
+            : displayName.Trim();
+        return true;
     }
 
     public void Clear()

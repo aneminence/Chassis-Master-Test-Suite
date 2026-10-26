@@ -148,6 +148,12 @@ public partial class MainWindow : Window
     /// </summary>
     private PlotDefinition? _cursorSourcePlot;
 
+    /// <summary>First X placed by the two-click measurement-region action.</summary>
+    private double? _measureRegionStartX;
+
+    /// <summary>KML working copies and independent cut marks, keyed by offline file id.</summary>
+    private readonly Dictionary<Guid, KmlEditSession> _kmlEditSessions = new();
+
     /// <summary>Test Results 标注：最近一次 Compute 的 run 与对应样本。</summary>
     private IReadOnlyList<AnnotatedTestRun> _annotatedRuns = Array.Empty<AnnotatedTestRun>();
     private IReadOnlyList<AnnotatedTestRun> _compareRuns = Array.Empty<AnnotatedTestRun>();
@@ -258,6 +264,8 @@ public partial class MainWindow : Window
 
         Loaded += MainWindow_Loaded;
 
+        Closing += MainWindow_Closing;
+
         Closed += MainWindow_Closed;
 
 
@@ -298,6 +306,7 @@ public partial class MainWindow : Window
             ApplyLocalizedToolbar();
         };
         ApplyLocalizedToolbar();
+        UpdateKmlEditUi();
     }
 
     // ============================================================
@@ -495,8 +504,10 @@ public partial class MainWindow : Window
 
             var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
             var columnNames = samples[0].Channels.Keys.ToList();
-            _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name);
+            var entry = _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name);
+            _kmlEditSessions[entry.Id] = new KmlEditSession(track);
             ApplyOfflineDataset();
+            UpdateKmlEditUi();
 
             _lastLoadedChannelCount =
                 ChannelRegistry.Instance.AvailablePlotChannels.Count;
@@ -614,6 +625,7 @@ public partial class MainWindow : Window
         foreach (var file in _offlineFiles.Files)
         {
             var isSelected = file.Id == selectedId;
+            var isDirty = _kmlEditSessions.TryGetValue(file.Id, out var edit) && edit.IsDirty;
 
             var chip = new Border
             {
@@ -629,7 +641,7 @@ public partial class MainWindow : Window
                 Cursor = Cursors.Hand,
                 Tag = file.Id,
                 ToolTip = isSelected
-                    ? $"Selected: {file.FilePath}"
+                    ? $"Selected: {file.FilePath}" + (isDirty ? " · modified, not saved" : "")
                     : $"Click to focus Dashboard / cursor on: {file.DisplayName} (all files stay overlaid)"
             };
 
@@ -639,7 +651,7 @@ public partial class MainWindow : Window
 
             row.Children.Add(new TextBlock
             {
-                Text = file.DisplayName,
+                Text = file.DisplayName + (isDirty ? " *" : ""),
                 Foreground = (Brush)FindResource("TextPrimary"),
                 FontSize = 11,
                 FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
@@ -714,6 +726,9 @@ public partial class MainWindow : Window
         if (_offlineFiles.Selected?.Id == id)
             return;
 
+        if (_offlineFiles.Selected is { } current && !ConfirmLeaveKmlEdit(current.Id))
+            return;
+
         // Preserve absolute cursor X and selection across the file switch.
         double? cursorX = null;
         double? sel1 = null;
@@ -743,6 +758,7 @@ public partial class MainWindow : Window
             SetSharedCursor(keepX, source);
             UpdateNumericDisplay();
         }
+        UpdateKmlEditUi();
     }
 
     private static Button? FindParentButton(DependencyObject? node)
@@ -774,8 +790,12 @@ public partial class MainWindow : Window
         if (sender is not Button { Tag: Guid id })
             return;
 
+        if (!ConfirmLeaveKmlEdit(id))
+            return;
+        _kmlEditSessions.Remove(id);
         _offlineFiles.Remove(id);
         ApplyOfflineDataset();
+        UpdateKmlEditUi();
         SaveSessionMemory();
     }
 
@@ -880,8 +900,15 @@ public partial class MainWindow : Window
 
     private void CloseAllVboButton_Click(object sender, RoutedEventArgs e)
     {
+        foreach (var id in _offlineFiles.Files.Select(f => f.Id).ToList())
+        {
+            if (!ConfirmLeaveKmlEdit(id))
+                return;
+        }
+        _kmlEditSessions.Clear();
         _offlineFiles.Clear();
         ApplyOfflineDataset();
+        UpdateKmlEditUi();
         UpdateOfflineFileStatusLabels();
         SaveSessionMemory();
     }
@@ -1261,6 +1288,39 @@ public partial class MainWindow : Window
             AddPlotButton.Content = Loc.T("Curves.AddPlot");
         if (ResetViewButton is not null)
             ResetViewButton.Content = Loc.T("Curves.ResetView");
+        if (MarkRegionButton is not null)
+        {
+            MarkRegionButton.Content = _measureRegionStartX is null
+                ? Loc.T("Curves.MarkRegion")
+                : Loc.T("Curves.MarkFirst");
+            MarkRegionButton.ToolTip = Loc.T("Curves.MarkRegionTip");
+        }
+        if (AddKmlMarkButton is not null)
+        {
+            AddKmlMarkButton.Content = Loc.T("Curves.AddMark");
+            AddKmlMarkButton.ToolTip = Loc.T("Curves.AddMarkTip");
+        }
+        if (RemoveKmlMarkButton is not null)
+        {
+            RemoveKmlMarkButton.Content = Loc.T("Curves.RemoveMark");
+            RemoveKmlMarkButton.ToolTip = Loc.T("Curves.RemoveMarkTip");
+        }
+        if (CutKmlButton is not null)
+        {
+            CutKmlButton.Content = Loc.T("Curves.Cut");
+            CutKmlButton.ToolTip = Loc.T("Curves.CutTip");
+        }
+        if (CutBeforeCursorItem is not null)
+            CutBeforeCursorItem.Header = Loc.T("Curves.CutBefore");
+        if (CutAfterCursorItem is not null)
+            CutAfterCursorItem.Header = Loc.T("Curves.CutAfter");
+        if (KmlModifiedText is not null)
+            KmlModifiedText.Text = Loc.T("Curves.Modified");
+        if (SaveKmlAsButton is not null)
+        {
+            SaveKmlAsButton.Content = Loc.T("Curves.SaveAs");
+            SaveKmlAsButton.ToolTip = Loc.T("Curves.SaveAsTip");
+        }
         if (FilesLabelText is not null)
             FilesLabelText.Text = Loc.T("Curves.Files");
 
@@ -1784,6 +1844,303 @@ public partial class MainWindow : Window
         RoutedEventArgs e)
     {
         AddPlot();
+    }
+
+    private void MarkRegionButton_Click(object sender, RoutedEventArgs e)
+    {
+        var cursorX = _plots.Select(p => p.CursorX).FirstOrDefault(x => x is not null);
+        if (cursorX is not double x)
+        {
+            MessageBox.Show(this,
+                Loc.Language == Loc.ZhCn ? "请先在曲线上点击，放置黄色光标。" : "Click a curve first to place the yellow cursor.",
+                Loc.T("Curves.MarkRegion"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (_measureRegionStartX is null)
+        {
+            _measureRegionStartX = x;
+            foreach (var plot in _plots)
+            {
+                plot.SelectionX1 = x;
+                plot.SelectionX2 = null;
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot?.Refresh();
+            }
+        }
+        else
+        {
+            var start = _measureRegionStartX.Value;
+            _measureRegionStartX = null;
+            foreach (var plot in _plots)
+            {
+                plot.SelectionX1 = start;
+                plot.SelectionX2 = x;
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot?.Refresh();
+            }
+            foreach (var plot in _plots)
+                UpdateSelectionMeasure(plot);
+            foreach (var plot in _plots)
+            {
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot?.Refresh();
+            }
+        }
+
+        ApplyLocalizedToolbar();
+    }
+
+    private void AddKmlMarkButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetSelectedKmlEdit(out var entry, out var session))
+        {
+            ShowKmlSelectionRequired();
+            return;
+        }
+
+        var cursorX = _plots.Select(p => p.CursorX).FirstOrDefault(x => x is not null);
+        if (cursorX is not double x)
+        {
+            MessageBox.Show(this,
+                Loc.Language == Loc.ZhCn ? "请先在曲线上点击，放置黄色光标。" : "Click a curve first to place the yellow cursor.",
+                Loc.T("Curves.AddMark"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var index = FindNearestSampleIndex(entry.Samples, x);
+        session.AddMark(index);
+        RefreshAllPlots(force: true);
+        UpdateKmlEditUi();
+    }
+
+    private void RemoveKmlMarkButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (!TryGetSelectedKmlEdit(out _, out var session))
+        {
+            ShowKmlSelectionRequired();
+            return;
+        }
+        if (!session.RemoveSelectedMark())
+        {
+            MessageBox.Show(this,
+                Loc.Language == Loc.ZhCn ? "请先选择一个独立标记。" : "Select an independent mark first.",
+                Loc.T("Curves.RemoveMark"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        RefreshAllPlots(force: true);
+        UpdateKmlEditUi();
+    }
+
+    private void CutKmlButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (CutKmlButton.ContextMenu is null)
+            return;
+        CutKmlButton.ContextMenu.PlacementTarget = CutKmlButton;
+        CutKmlButton.ContextMenu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        CutKmlButton.ContextMenu.IsOpen = true;
+    }
+
+    private void CutKmlMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string modeText } ||
+            !Enum.TryParse<KmlCutMode>(modeText, out var mode))
+            return;
+
+        CutSelectedKml(mode);
+    }
+
+    private void CutSelectedKml(KmlCutMode mode)
+    {
+        if (!TryGetSelectedKmlEdit(out var selected, out var session))
+        {
+            ShowKmlSelectionRequired();
+            return;
+        }
+
+        if (session.SelectedMarkId is null)
+        {
+            MessageBox.Show(this,
+                Loc.Language == Loc.ZhCn ? "请先添加或选择一个独立标记。" : "Add or select an independent mark first.",
+                Loc.T("Curves.Cut"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            session.Cut(mode);
+            ApplyKmlWorkingTrack(selected, session);
+            SetSharedCursor(null, null);
+            UpdateKmlEditUi();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                (Loc.Language == Loc.ZhCn ? "无法裁剪 KML：\n" : "Could not cut KML:\n") + ex.Message,
+                Loc.T("Curves.Cut"), MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void SaveKmlAsButton_Click(object sender, RoutedEventArgs e) => SaveSelectedKmlAs();
+
+    private bool SaveSelectedKmlAs()
+    {
+        if (!TryGetSelectedKmlEdit(out var selected, out _))
+        {
+            ShowKmlSelectionRequired();
+            return false;
+        }
+        return SaveKmlAs(selected.Id);
+    }
+
+    private bool SaveKmlAs(Guid entryId)
+    {
+        var entry = _offlineFiles.Files.FirstOrDefault(f => f.Id == entryId);
+        if (entry is null || !_kmlEditSessions.TryGetValue(entryId, out var session))
+            return false;
+
+        var directory = Path.GetDirectoryName(entry.FilePath) ?? AppContext.BaseDirectory;
+        var stem = Path.GetFileNameWithoutExtension(entry.FilePath);
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Title = Loc.Language == Loc.ZhCn ? "另存编辑后的 KML" : "Save edited KML as",
+            Filter = "KML files (*.kml)|*.kml",
+            DefaultExt = ".kml",
+            AddExtension = true,
+            InitialDirectory = directory,
+            FileName = stem + "-edited.kml"
+        };
+        if (dialog.ShowDialog(this) != true)
+            return false;
+        if (string.Equals(Path.GetFullPath(dialog.FileName), Path.GetFullPath(entry.FilePath), StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show(this,
+                Loc.Language == Loc.ZhCn ? "为保护原始文件，请选择新的文件名或保存位置。" : "Choose a new name or location to preserve the source file.",
+                Loc.T("Curves.SaveAs"), MessageBoxButton.OK, MessageBoxImage.Information);
+            return false;
+        }
+
+        try
+        {
+            KmlTrackCutter.ExportFile(session.WorkingTrack, dialog.FileName);
+            session.MarkSaved();
+            _offlineFiles.UpdateIdentity(entry.Id, dialog.FileName, session.WorkingTrack.Name);
+            RebuildOfflineFileChips();
+            UpdateKmlEditUi();
+            SaveSessionMemory();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                (Loc.Language == Loc.ZhCn ? "无法保存 KML：\n" : "Could not save KML:\n") + ex.Message,
+                Loc.T("Curves.SaveAs"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+    }
+
+    private bool ConfirmLeaveKmlEdit(Guid entryId)
+    {
+        if (!_kmlEditSessions.TryGetValue(entryId, out var session) || !session.IsDirty)
+            return true;
+
+        var entry = _offlineFiles.Files.FirstOrDefault(f => f.Id == entryId);
+        if (entry is null)
+            return true;
+
+        var message = Loc.Language == Loc.ZhCn
+            ? $"“{entry.DisplayName}”已修改但尚未保存。\n\n是：另存为\n否：放弃修改\n取消：继续编辑"
+            : $"“{entry.DisplayName}” has unsaved changes.\n\nYes: Save As\nNo: Discard\nCancel: Continue editing";
+        var result = MessageBox.Show(this, message, Loc.T("Curves.Modified"),
+            MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
+        if (result == MessageBoxResult.Cancel)
+            return false;
+        if (result == MessageBoxResult.Yes)
+            return SaveKmlAs(entryId);
+
+        try
+        {
+            var original = KmlTrackImporter.ImportFile(entry.FilePath);
+            session.Reset(original);
+            ApplyKmlWorkingTrack(entry, session);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this,
+                (Loc.Language == Loc.ZhCn ? "无法恢复原始 KML：\n" : "Could not restore the original KML:\n") + ex.Message,
+                Loc.T("Curves.Modified"), MessageBoxButton.OK, MessageBoxImage.Warning);
+            return false;
+        }
+    }
+
+    private bool TryGetSelectedKmlEdit(out OfflineFileEntry entry, out KmlEditSession session)
+    {
+        entry = _offlineFiles.Selected!;
+        if (entry is not null && _kmlEditSessions.TryGetValue(entry.Id, out session!))
+            return true;
+        entry = null!;
+        session = null!;
+        return false;
+    }
+
+    private int FindNearestSampleIndex(IReadOnlyList<VehicleSample> samples, double x)
+    {
+        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var bestIndex = 0;
+        var bestDistance = double.PositiveInfinity;
+        for (var i = 0; i < samples.Count; i++)
+        {
+            var distance = Math.Abs(GetAxisValue(samples[i], xChannel) - x);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestIndex = i;
+            }
+        }
+        return bestIndex;
+    }
+
+    private void ApplyKmlWorkingTrack(OfflineFileEntry entry, KmlEditSession session)
+    {
+        var raw = KmlTrackImporter.ToVehicleSamples(session.WorkingTrack);
+        var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
+        var columns = samples.Count > 0 ? samples[0].Channels.Keys.ToList() : new List<string>();
+        _offlineFiles.UpdateData(entry.Id, samples, columns);
+        ApplyOfflineDataset();
+        var measuredPlots = _plots.Where(p => p.SelectionX1 is not null && p.SelectionX2 is not null).ToList();
+        if (measuredPlots.Count > 0)
+        {
+            foreach (var measuredPlot in measuredPlots)
+                UpdateSelectionMeasure(measuredPlot);
+            foreach (var plot in _plots)
+            {
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot?.Refresh();
+            }
+        }
+        SaveSessionMemory();
+    }
+
+    private void ShowKmlSelectionRequired() => MessageBox.Show(this,
+        Loc.Language == Loc.ZhCn ? "请先在文件列表中选中一个 KML 或 KMZ 轨迹。" : "Select a KML or KMZ track in the file list first.",
+        Loc.T("Curves.Cut"), MessageBoxButton.OK, MessageBoxImage.Information);
+
+    private void UpdateKmlEditUi()
+    {
+        var hasSession = TryGetSelectedKmlEdit(out _, out var session);
+        var dirty = hasSession && session.IsDirty;
+        if (KmlModifiedText is not null)
+            KmlModifiedText.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
+        if (SaveKmlAsButton is not null)
+            SaveKmlAsButton.Visibility = dirty ? Visibility.Visible : Visibility.Collapsed;
+        if (AddKmlMarkButton is not null)
+            AddKmlMarkButton.IsEnabled = hasSession;
+        if (RemoveKmlMarkButton is not null)
+            RemoveKmlMarkButton.IsEnabled = hasSession && session.SelectedMarkId is not null;
+        if (CutKmlButton is not null)
+            CutKmlButton.IsEnabled = hasSession && session.SelectedMarkId is not null;
+        RebuildOfflineFileChips();
     }
 
 
@@ -2968,6 +3325,15 @@ public partial class MainWindow : Window
             if (x is null)
                 return;
 
+            if (!Keyboard.Modifiers.HasFlag(ModifierKeys.Shift) &&
+                TrySelectKmlMarkAtX(plot, wpfPlot, x.Value, out var selectedMarkX))
+            {
+                SetSharedCursor(selectedMarkX, plot);
+                UpdateNumericDisplay();
+                e.Handled = true;
+                return;
+            }
+
             if (Keyboard.Modifiers.HasFlag(ModifierKeys.Shift))
             {
                 plot.IsSelectingRange = true;
@@ -3116,7 +3482,8 @@ public partial class MainWindow : Window
 
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
-            _lastMeasureText = null;
+            foreach (var p in _plots)
+                p.MeasureText = null;
             plot.IsSelectingRange = false;
             plot.IsDraggingCursor = false;
             wpfPlot.UserInputProcessor.Enable();
@@ -3942,6 +4309,22 @@ public partial class MainWindow : Window
         RemovePlotOverlays(scottPlot);
 
         DrawRunAnnotationsOnPlot(plot, scottPlot);
+        DrawKmlEditMarks(plot, scottPlot);
+
+        // Region markers remain visible after the yellow cursor moves away.
+        if (plot.SelectionX1 is double marker1)
+        {
+            var line = scottPlot.Add.VerticalLine(marker1);
+            line.LineColor = ThemeBrushes.ScottPlot("SuccessBrush");
+            line.LineWidth = 1.5f;
+        }
+        if (plot.SelectionX2 is double marker2 &&
+            (plot.SelectionX1 is not double marker1Value || Math.Abs(marker2 - marker1Value) > 1e-12))
+        {
+            var line = scottPlot.Add.VerticalLine(marker2);
+            line.LineColor = ThemeBrushes.ScottPlot("SuccessBrush");
+            line.LineWidth = 1.5f;
+        }
 
         // 横向选区高亮（X 方向）
         if (plot.SelectionX1 is double sx1 &&
@@ -3957,10 +4340,10 @@ public partial class MainWindow : Window
                 ThemeBrushes.ScottPlot("AccentBrush").WithAlpha(0.55);
             span.LineWidth = 1;
 
-            if (!string.IsNullOrEmpty(_lastMeasureText))
+            if (!string.IsNullOrEmpty(plot.MeasureText))
             {
                 var manno = scottPlot.Add.Annotation(
-                    _lastMeasureText,
+                    plot.MeasureText,
                     ScottPlot.Alignment.LowerLeft);
                 manno.LabelFontSize = 13;
                 manno.LabelFontColor = ThemeBrushes.ScottPlot("AccentBrush");
@@ -4001,6 +4384,63 @@ public partial class MainWindow : Window
                 anno.OffsetY = 10;
             }
         }
+    }
+
+    private void DrawKmlEditMarks(PlotDefinition plot, ScottPlot.Plot scottPlot)
+    {
+        if (!TryGetSelectedKmlEdit(out var entry, out var session))
+            return;
+
+        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        foreach (var mark in session.Marks)
+        {
+            if (mark.SampleIndex < 0 || mark.SampleIndex >= entry.Samples.Count)
+                continue;
+            var x = GetAxisValue(entry.Samples[mark.SampleIndex], xChannel);
+            var selected = session.SelectedMarkId == mark.Id;
+            var line = scottPlot.Add.VerticalLine(x);
+            line.LineColor = selected
+                ? ThemeBrushes.ScottPlot("AccentBrush")
+                : ThemeBrushes.ScottPlot("TextSecondary");
+            line.LineWidth = selected ? 3f : 1.5f;
+            line.LinePattern = selected ? ScottPlot.LinePattern.Solid : ScottPlot.LinePattern.Dashed;
+        }
+    }
+
+    private bool TrySelectKmlMarkAtX(
+        PlotDefinition plot,
+        ScottPlot.WPF.WpfPlot wpfPlot,
+        double clickX,
+        out double selectedX)
+    {
+        selectedX = 0;
+        if (!TryGetSelectedKmlEdit(out var entry, out var session) || session.Marks.Count == 0)
+            return false;
+
+        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var limits = wpfPlot.Plot.Axes.GetLimits();
+        var tolerance = Math.Abs(limits.Right - limits.Left) * 8 / Math.Max(1, wpfPlot.ActualWidth);
+        KmlEditMark? nearest = null;
+        var nearestDistance = double.PositiveInfinity;
+        foreach (var mark in session.Marks)
+        {
+            if (mark.SampleIndex < 0 || mark.SampleIndex >= entry.Samples.Count)
+                continue;
+            var markX = GetAxisValue(entry.Samples[mark.SampleIndex], xChannel);
+            var distance = Math.Abs(markX - clickX);
+            if (distance < nearestDistance)
+            {
+                nearest = mark;
+                nearestDistance = distance;
+                selectedX = markX;
+            }
+        }
+
+        if (nearest is null || nearestDistance > tolerance)
+            return false;
+        session.SelectMark(nearest.Id);
+        UpdateKmlEditUi();
+        return true;
     }
 
 
@@ -4146,8 +4586,6 @@ public partial class MainWindow : Window
     // ============================================================
 
 
-    private string? _lastMeasureText;
-
     private IReadOnlyList<VehicleSample> GetHistorySnapshotForAnalysis()
     {
         var snap = GetHistorySnapshot();
@@ -4187,41 +4625,136 @@ public partial class MainWindow : Window
         if (plot.SelectionX1 is not double x1 || plot.SelectionX2 is not double x2 ||
             Math.Abs(x2 - x1) < 1e-12)
         {
-            _lastMeasureText = null;
+            plot.MeasureText = null;
             return;
         }
 
-        var history = GetHistorySnapshotForAnalysis();
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
         var channelIds = plot.Channels.Select(c => c.ChannelId).Distinct().ToList();
         if (channelIds.Count == 0)
         {
-            _lastMeasureText = null;
+            plot.MeasureText = null;
             return;
         }
 
-        var measure = SelectionMeasure.Compute(
-            history,
-            s => GetAxisValue(s, xSignal),
-            x1,
-            x2,
-            channelIds);
-        if (measure is null)
+        var measures = BuildSelectionMeasures(xSignal, x1, x2, channelIds);
+        if (measures.Count == 0)
         {
-            _lastMeasureText = null;
+            plot.MeasureText = null;
             return;
         }
 
-        _lastMeasureText = SelectionMeasure.Format(
-            measure,
-            id => ChannelRegistry.Instance.GetDisplayName(id));
+        plot.MeasureText = FormatSelectionMeasures(measures, x1, x2);
+    }
+
+    private List<(string Label, SelectionMeasure.Result Measure)> BuildSelectionMeasures(
+        string xSignal,
+        double x1,
+        double x2,
+        IReadOnlyList<string> channelIds)
+    {
+        var result = new List<(string, SelectionMeasure.Result)>();
+
+        if (IsCompareModeActive)
+        {
+            foreach (var run in _compareRuns)
+            {
+                var source = run.Samples;
+                if (source.Count == 0)
+                    continue;
+                var start = Math.Clamp(run.Result.StartSampleIndex, 0, source.Count - 1);
+                var end = Math.Clamp(run.Result.EndSampleIndex, start, source.Count - 1);
+                var samples = source.Skip(start).Take(end - start + 1).ToList();
+                if (samples.Count == 0)
+                    continue;
+                var origin = string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase)
+                    ? 0.0
+                    : GetSignalValue(samples[0], xSignal);
+                var relativeNumeric = string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(xSignal, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase);
+                double GetX(VehicleSample s) => string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase)
+                    ? (s.Timestamp - run.Result.StartTimestampMs) / 1000.0
+                    : GetSignalValue(s, xSignal) - (relativeNumeric ? origin : 0.0);
+                var measure = SelectionMeasure.Compute(samples, GetX, x1, x2, channelIds);
+                if (measure is not null)
+                    result.Add(($"{run.SourceLabel} · Run {run.Result.RunNumber}", measure));
+            }
+            return result;
+        }
+
+        if (_isOfflineMode && _offlineFiles.Count > 0)
+        {
+            var useElapsedTime = ShouldUseElapsedTimeOverlay(xSignal);
+            foreach (var file in _offlineFiles.Files)
+            {
+                var samples = MathsEnricher.Apply(file.Samples, MathsChannelStore.Instance.Definitions);
+                if (samples.Count == 0)
+                    continue;
+                var t0 = samples[0].Timestamp;
+                double GetX(VehicleSample s) => useElapsedTime
+                    ? (s.Timestamp - t0) / 1000.0
+                    : GetAxisValue(s, xSignal);
+                var measure = SelectionMeasure.Compute(samples, GetX, x1, x2, channelIds);
+                if (measure is not null)
+                    result.Add((file.DisplayName, measure));
+            }
+            return result;
+        }
+
+        var history = GetHistorySnapshotForAnalysis();
+        var liveMeasure = SelectionMeasure.Compute(
+            history, s => GetAxisValue(s, xSignal), x1, x2, channelIds);
+        if (liveMeasure is not null)
+            result.Add((string.Empty, liveMeasure));
+        return result;
+    }
+
+    private bool ShouldUseElapsedTimeOverlay(string xSignal)
+    {
+        if (_offlineFiles.Count <= 1 ||
+            !string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+            return false;
+        long min = long.MaxValue;
+        long max = long.MinValue;
+        foreach (var file in _offlineFiles.Files)
+        {
+            if (file.Samples.Count < 2)
+                continue;
+            min = Math.Min(min, Math.Min(file.Samples[0].Timestamp, file.Samples[^1].Timestamp));
+            max = Math.Max(max, Math.Max(file.Samples[0].Timestamp, file.Samples[^1].Timestamp));
+        }
+        return max > min && max - min > 2L * 60 * 60 * 1000;
+    }
+
+    private static string FormatSelectionMeasures(
+        IReadOnlyList<(string Label, SelectionMeasure.Result Measure)> measures,
+        double x1,
+        double x2)
+    {
+        var lines = new List<string>
+        {
+            $"Measure [{Math.Min(x1, x2):0.###}..{Math.Max(x1, x2):0.###}]"
+        };
+        var showLabels = measures.Count > 1;
+        foreach (var (label, measure) in measures)
+        {
+            foreach (var stats in measure.Channels)
+            {
+                var name = ChannelRegistry.Instance.GetDisplayName(stats.ChannelId);
+                var prefix = !showLabels || string.IsNullOrWhiteSpace(label) ? name : $"{label} · {name}";
+                lines.Add($"{prefix}  min={stats.Min:0.###}  max={stats.Max:0.###}  avg={stats.Avg:0.###}  n={stats.Count}");
+            }
+        }
+        return string.Join("\n", lines);
     }
 
     private void CopyMeasureToClipboard()
     {
-        if (string.IsNullOrEmpty(_lastMeasureText))
+        var text = _cursorSourcePlot?.MeasureText
+            ?? _plots.Select(p => p.MeasureText).FirstOrDefault(t => !string.IsNullOrEmpty(t));
+        if (string.IsNullOrEmpty(text))
             return;
-        try { Clipboard.SetText(_lastMeasureText); }
+        try { Clipboard.SetText(text); }
         catch { /* ignore clipboard races */ }
     }
 
@@ -5260,6 +5793,17 @@ public partial class MainWindow : Window
     // 程序关闭
     // ============================================================
 
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        foreach (var id in _offlineFiles.Files.Select(f => f.Id).ToList())
+        {
+            if (ConfirmLeaveKmlEdit(id))
+                continue;
+            e.Cancel = true;
+            return;
+        }
+    }
+
     private void MainWindow_Closed(
         object? sender,
         EventArgs e)
@@ -5350,6 +5894,9 @@ public partial class MainWindow : Window
         public double? SelectionX1 { get; set; }
 
         public double? SelectionX2 { get; set; }
+
+        /// <summary>Per-plot statistics for the active measurement region.</summary>
+        public string? MeasureText { get; set; }
 
         public bool IsSelectingRange { get; set; }
 

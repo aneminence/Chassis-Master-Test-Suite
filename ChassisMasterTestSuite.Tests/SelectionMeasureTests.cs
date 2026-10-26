@@ -34,5 +34,9 @@ public class SelectionMeasureTests
         Assert.Equal(20, c.Min);
         Assert.Equal(50, c.Max);
         Assert.Equal(35, c.Avg);
+
+        var text = SelectionMeasure.Format(result);
+        Assert.StartsWith("Measure [2000..5000]", text);
+        Assert.DoesNotContain("Measure [2..5]", text);
     }
 }
