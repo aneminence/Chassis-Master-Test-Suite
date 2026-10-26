@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\..\Recorder\OxTS\*.cs" Link="OxTS\%(Filename)%(Extension)" />
+    <Compile Include="..\..\Core\VehicleSample.cs" Link="Core\VehicleSample.cs" />
+    <Compile Include="..\..\Core\ChannelIds.cs" Link="Core\ChannelIds.cs" />
+    <Compile Include="..\..\Core\ChannelInfo.cs" Link="Core\ChannelInfo.cs" />
+    <Compile Include="..\..\Core\ChannelRegistry.cs" Link="Core\ChannelRegistry.cs" />
+  </ItemGroup>
+</Project>

@@ -73,6 +73,10 @@
     <Compile Include="..\Communication\GSpot\GSpotParser.cs" Link="Linked\Communication\GSpot\GSpotParser.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
+    <Compile Include="..\Recorder\OxTS\XcomContainerReader.cs" Link="Linked\Recorder\OxTS\XcomContainerReader.cs" />
+    <Compile Include="..\Recorder\OxTS\NcomDecoder.cs" Link="Linked\Recorder\OxTS\NcomDecoder.cs" />
+    <Compile Include="..\Recorder\OxTS\RcomDecoder.cs" Link="Linked\Recorder\OxTS\RcomDecoder.cs" />
+    <Compile Include="..\Recorder\OxTS\XcomImporter.cs" Link="Linked\Recorder\OxTS\XcomImporter.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Update="Fixtures\mini.vbts">
@@ -85,6 +89,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
     <None Update="Fixtures\gspot-g4-mini.vbo">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Fixtures\oxts\mobile-015.xcom">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Fixtures\oxts\mobile-015.ncom">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
