@@ -1,7 +1,9 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -20,6 +22,16 @@ namespace Chassis_Master_Test_Suite;
 
 public partial class MainWindow : Window
 {
+    private const int DwmwaUseImmersiveDarkMode = 20;
+    private string? _startupWarning;
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(
+        nint hwnd,
+        int attribute,
+        ref int attributeValue,
+        int attributeSize);
+
     private readonly DataBus _dataBus = new();
 
     /// <summary>
@@ -262,8 +274,6 @@ public partial class MainWindow : Window
 
         StartClock();
 
-        Loaded += MainWindow_Loaded;
-
         Closing += MainWindow_Closing;
 
         Closed += MainWindow_Closed;
@@ -307,6 +317,20 @@ public partial class MainWindow : Window
         };
         ApplyLocalizedToolbar();
         UpdateKmlEditUi();
+    }
+
+    protected override void OnSourceInitialized(EventArgs e)
+    {
+        base.OnSourceInitialized(e);
+
+        // Keep the native Windows title bar translucent, but use its dark variant
+        // so it blends with the application's black workspace.
+        var enabled = 1;
+        _ = DwmSetWindowAttribute(
+            new WindowInteropHelper(this).Handle,
+            DwmwaUseImmersiveDarkMode,
+            ref enabled,
+            Marshal.SizeOf<int>());
     }
 
     // ============================================================
@@ -5694,11 +5718,10 @@ public partial class MainWindow : Window
     // 程序启动
     // ============================================================
 
-    private async void MainWindow_Loaded(
-        object sender,
-        RoutedEventArgs e)
+    internal async Task InitializeStartupAsync(IProgress<double> progress)
     {
         SyncLayoutMapVisuals();
+        progress.Report(62);
 
         _cancellationTokenSource =
             new CancellationTokenSource();
@@ -5715,6 +5738,7 @@ public partial class MainWindow : Window
             new UdpSender(
                 "127.0.0.1",
                 50000);
+        progress.Report(68);
 
 
         // ========================================================
@@ -5727,6 +5751,7 @@ public partial class MainWindow : Window
         var defaultUdp =
             _dataSourceSession.CreateUdpReceiver();
         _dataSourceSession.SetCurrent(defaultUdp);
+        progress.Report(73);
 
         try
         {
@@ -5734,21 +5759,18 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            // 端口占用等绑定失败：弹窗提示，窗口继续可用（可切 GSpot 或稍后点 UDP 重试）。
+            // Defer the warning until the splash has closed and MainWindow is visible.
             var detail = !string.IsNullOrWhiteSpace(defaultUdp.LastError)
                 ? defaultUdp.LastError
                 : ex.Message;
 
-            MessageBox.Show(
-                this,
+            _startupWarning =
                 "UDP 监听未能启动，程序仍会打开。\n\n" +
                 detail +
                 "\n\n请先关掉仍在运行的旧 CMTS / 占用 50000 端口的进程，" +
-                "再点工具栏「UDP」重试；或改用「GSpot…」。",
-                "UDP",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+                "再点工具栏「UDP」重试；或改用「GSpot…」。";
         }
+        progress.Report(79);
 
 
         // ========================================================
@@ -5769,6 +5791,7 @@ public partial class MainWindow : Window
         _ = Task.Run(() =>
             ConsumeDataAsync(
                 _cancellationTokenSource.Token));
+        progress.Report(84);
 
 
         // ========================================================
@@ -5776,6 +5799,7 @@ public partial class MainWindow : Window
         // ========================================================
 
         _uiTimer.Start();
+        progress.Report(87);
 
         // Restore last session (VBO/KML/KMZ / gates / Test Results / maths) when files still exist.
         try
@@ -5786,6 +5810,22 @@ public partial class MainWindow : Window
         {
             System.Diagnostics.Debug.WriteLine("Session restore failed: " + ex);
         }
+        progress.Report(94);
+    }
+
+    internal void ShowStartupWarningIfAny()
+    {
+        if (string.IsNullOrWhiteSpace(_startupWarning))
+            return;
+
+        var warning = _startupWarning;
+        _startupWarning = null;
+        MessageBox.Show(
+            this,
+            warning,
+            "UDP",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
     }
 
 

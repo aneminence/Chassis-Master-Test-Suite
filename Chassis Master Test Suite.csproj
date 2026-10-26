@@ -20,6 +20,7 @@
   <!-- 同一份图标作为 WPF 资源，供窗口标题栏使用 -->
   <ItemGroup>
     <Resource Include="Assets\icon.ico" />
+    <Resource Include="Assets\Splash\cmts-splash.png" />
     <Content Include="Assets\TrackMap3D\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
