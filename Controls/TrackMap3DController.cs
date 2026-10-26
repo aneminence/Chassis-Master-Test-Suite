@@ -31,7 +31,7 @@ internal sealed class TrackMap3DController
     private VehicleSample? _cursor;
     private IReadOnlyList<TrackMapPanel.CompareCursor> _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
     private string _altitudeMode = "recorded";
-    private double _exaggeration = 1.0;
+    private IReadOnlyList<GateDto> _gates = Array.Empty<GateDto>();
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
     private int[] _lastSentCounts = Array.Empty<int>();
     private TrackMapPanel.TrackLayer[] _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
@@ -129,6 +129,7 @@ internal sealed class TrackMap3DController
             RebuildSampleLocations();
             SendImagery();
             SendScene();
+            SendGates();
             if (_compareCursors.Count > 0)
                 SetCompareCursors(_compareCursors);
             else
@@ -145,6 +146,7 @@ internal sealed class TrackMap3DController
         _lastSentCounts = Array.Empty<int>();
         _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
         _lastSentAnchor = null;
+        _gates = Array.Empty<GateDto>();
         Post(new { type = "clear" });
     }
 
@@ -178,18 +180,25 @@ internal sealed class TrackMap3DController
         });
     }
 
-    public void SetDisplay(string altitudeMode, double exaggeration)
+    public void SetDisplay(string altitudeMode)
     {
         _altitudeMode = altitudeMode == "ground" ? "ground" : "recorded";
-        _exaggeration = Math.Clamp(exaggeration, 1.0, 20.0);
         if (_active)
         {
             SendScene();
+            SendGates();
             if (_compareCursors.Count > 0)
                 SetCompareCursors(_compareCursors);
             else
                 SetCursor(_cursor);
         }
+    }
+
+    public void SetGates(IReadOnlyList<GateDto> gates)
+    {
+        _gates = gates ?? Array.Empty<GateDto>();
+        if (_active)
+            SendGates();
     }
 
     public void SetImagery(MapTileSource source)
@@ -229,6 +238,7 @@ internal sealed class TrackMap3DController
                     {
                         SendImagery();
                         SendScene();
+                        SendGates();
                         if (_compareCursors.Count > 0)
                             SetCompareCursors(_compareCursors);
                         else
@@ -273,9 +283,19 @@ internal sealed class TrackMap3DController
             payload = new
             {
                 tracks = payload,
-                altitudeMode = _altitudeMode,
-                exaggeration = _exaggeration
+                altitudeMode = _altitudeMode
             }
+        });
+    }
+
+    private void SendGates()
+    {
+        if (!_pageReady)
+            return;
+        Post(new
+        {
+            type = "gates",
+            payload = _gates
         });
     }
 
@@ -407,4 +427,16 @@ internal sealed class TrackMap3DController
         bool HasAltitude,
         List<double[]> Points,
         double Baseline = 0.0);
+
+    public sealed record GateDto(
+        string Id,
+        string Name,
+        string ColorHex,
+        double Lat0,
+        double Lon0,
+        double Alt0,
+        double Lat1,
+        double Lon1,
+        double Alt1,
+        bool Selected);
 }

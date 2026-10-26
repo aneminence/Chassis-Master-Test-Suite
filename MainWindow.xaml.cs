@@ -120,6 +120,8 @@ public partial class MainWindow : Window
 
     /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
     private readonly OfflineFileSet _offlineFiles = new();
+    private readonly Dictionary<string, string> _fileColorMemory =
+        new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>线上会话：第一条样本时间戳（毫秒）。</summary>
     private long? _liveSessionOriginMs;
@@ -254,7 +256,17 @@ public partial class MainWindow : Window
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
         DashboardPanelControl.VehicleSummaryClicked += OnVehicleSummaryClicked;
 
-        GateStore.Instance.Changed += (_, _) => ScheduleSessionMemorySave();
+        GateStore.Instance.Changed += (_, _) =>
+        {
+            ScheduleSessionMemorySave();
+            if (_restoringSession)
+                return;
+            foreach (var plot in _plots)
+            {
+                ApplyPlotOverlays(plot);
+                plot.WpfPlot?.Refresh();
+            }
+        };
         MathsChannelStore.Instance.Changed += (_, _) =>
         {
             // Persist maths immediately (not only debounced) so restart keeps formulas
@@ -528,7 +540,8 @@ public partial class MainWindow : Window
 
             var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
             var columnNames = samples[0].Channels.Keys.ToList();
-            var entry = _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name);
+            var entry = _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name,
+                preferredColorHex: ResolvePreferredFileColor(filePath));
             _kmlEditSessions[entry.Id] = new KmlEditSession(track);
             ApplyOfflineDataset();
             UpdateKmlEditUi();
@@ -577,7 +590,8 @@ public partial class MainWindow : Window
             if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
                 columnNames.Add(ChannelIds.SlopePct);
 
-            var entry = _offlineFiles.Add(filePath, samples, columnNames);
+            var entry = _offlineFiles.Add(filePath, samples, columnNames,
+                preferredColorHex: ResolvePreferredFileColor(filePath));
             ApplyOfflineDataset();
 
             _lastLoadedChannelCount =
@@ -637,6 +651,14 @@ public partial class MainWindow : Window
     }
 
 
+
+    private string? ResolvePreferredFileColor(string filePath)
+    {
+        if (_fileColorMemory.TryGetValue(filePath, out var hex))
+            return hex;
+        return null;
+    }
+
     private void RebuildOfflineFileChips()
     {
         if (OfflineFilesPanel is null)
@@ -686,6 +708,21 @@ public partial class MainWindow : Window
                 IsHitTestVisible = false
             });
 
+            var colorBtn = new Button
+            {
+                Content = "●",
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 2, 0),
+                Tag = file.Id,
+                Foreground = (Brush)new BrushConverter().ConvertFromString(file.ColorHex)!,
+                Style = TryFindResource("ToolButtonStyle") as Style,
+                ToolTip = Loc.T("Curves.ChangeColorTip")
+            };
+            colorBtn.Click += OfflineFileColorButton_Click;
+            row.Children.Add(colorBtn);
+
             var close = new Button
             {
                 Content = "×",
@@ -703,6 +740,66 @@ public partial class MainWindow : Window
             OfflineFilesPanel.Children.Add(chip);
         }
     }
+
+    private static readonly string[] FileColorChoices =
+    {
+        "#E05252", "#C8A34A", "#4A9FD8", "#3FBF6F",
+        "#C06AD8", "#E08A4A", "#5AC8C8", "#D8D84A",
+        "#7EB6FF", "#FF7EB6", "#A0E060", "#FFB347"
+    };
+
+    private void OfflineFileColorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id })
+            return;
+        e.Handled = true;
+
+        var menu = new ContextMenu
+        {
+            Background = ThemeBrushes.Brush("PanelBackground"),
+            BorderBrush = ThemeBrushes.Brush("ToolButtonBorder"),
+            BorderThickness = new Thickness(1)
+        };
+
+        foreach (var hex in FileColorChoices)
+        {
+            var item = new MenuItem
+            {
+                Header = hex,
+                Tag = (id, hex),
+                Style = TryFindResource("DarkMenuItemStyle") as Style
+            };
+            item.Icon = new System.Windows.Shapes.Ellipse
+            {
+                Width = 12,
+                Height = 12,
+                Fill = (Brush)new BrushConverter().ConvertFromString(hex)!
+            };
+            item.Click += OfflineFileColorMenuItem_Click;
+            menu.Items.Add(item);
+        }
+
+        menu.PlacementTarget = (Button)sender;
+        menu.IsOpen = true;
+    }
+
+    private void OfflineFileColorMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: ValueTuple<Guid, string> tagged })
+            return;
+        var (id, hex) = tagged;
+        if (!_offlineFiles.SetColor(id, hex))
+            return;
+
+        var file = _offlineFiles.Files.FirstOrDefault(f => f.Id == id);
+        if (file is not null)
+            _fileColorMemory[file.FilePath] = file.ColorHex;
+
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        SaveSessionMemory();
+    }
+
 
     private void OfflineFileChip_Click(object sender, MouseButtonEventArgs e)
     {
@@ -1310,6 +1407,11 @@ public partial class MainWindow : Window
             XAxisAutoScaleCheckBox.Content = Loc.T("Curves.XAutoScale");
         if (AddPlotButton is not null)
             AddPlotButton.Content = Loc.T("Curves.AddPlot");
+        if (AddGateAtCursorButton is not null)
+        {
+            AddGateAtCursorButton.Content = Loc.T("Curves.AddGate");
+            AddGateAtCursorButton.ToolTip = Loc.T("Curves.AddGateTip");
+        }
         if (ResetViewButton is not null)
             ResetViewButton.Content = Loc.T("Curves.ResetView");
         if (MarkRegionButton is not null)
@@ -4334,6 +4436,7 @@ public partial class MainWindow : Window
 
         DrawRunAnnotationsOnPlot(plot, scottPlot);
         DrawKmlEditMarks(plot, scottPlot);
+        DrawGateLinesOnPlot(plot, scottPlot);
 
         // Region markers remain visible after the yellow cursor moves away.
         if (plot.SelectionX1 is double marker1)
@@ -4429,6 +4532,129 @@ public partial class MainWindow : Window
             line.LineWidth = selected ? 3f : 1.5f;
             line.LinePattern = selected ? ScottPlot.LinePattern.Solid : ScottPlot.LinePattern.Dashed;
         }
+    }
+
+
+    private void DrawGateLinesOnPlot(PlotDefinition plot, ScottPlot.Plot scottPlot)
+    {
+        if (GateStore.Instance.Gates.Count == 0)
+            return;
+
+        var samples = GetGatePlotSamples();
+        if (samples.Count < 2)
+            return;
+
+        var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var selectedId = GateStore.Instance.SelectedId;
+
+        foreach (var gate in GateStore.Instance.Gates)
+        {
+            if (!gate.IsValid)
+                continue;
+            if (!TryFindGateCrossingX(gate, samples, xChannel, out var x))
+                continue;
+
+            var colorHex = string.IsNullOrWhiteSpace(gate.ColorHex) ? "#3FBF6F" : gate.ColorHex;
+            var line = scottPlot.Add.VerticalLine(x);
+            line.LineColor = ScottPlot.Color.FromHex(colorHex);
+            line.LineWidth = selectedId == gate.Id ? 3.0f : 1.8f;
+            line.LinePattern = ScottPlot.LinePattern.Solid;
+        }
+    }
+
+    private IReadOnlyList<VehicleSample> GetGatePlotSamples()
+    {
+        if (_isOfflineMode && _offlineFiles.Selected is { Samples.Count: > 1 } selected)
+            return selected.Samples;
+        if (_isOfflineMode && _offlineFiles.Primary is { Samples.Count: > 1 } primary)
+            return primary.Samples;
+        return _sampleHistory.Snapshot();
+    }
+
+    private static bool TryFindGateCrossingX(
+        GateDefinition gate,
+        IReadOnlyList<VehicleSample> samples,
+        string xChannel,
+        out double x)
+    {
+        x = 0;
+        for (var i = 1; i < samples.Count; i++)
+        {
+            var a = samples[i - 1];
+            var b = samples[i];
+            if (!GateCrossing.TryCrossSamples(gate, a, b, out var t))
+                continue;
+            var xa = GetAxisValue(a, xChannel);
+            var xb = GetAxisValue(b, xChannel);
+            if (!double.IsFinite(xa) || !double.IsFinite(xb))
+                continue;
+            x = xa + (xb - xa) * t;
+            return true;
+        }
+        return false;
+    }
+
+    private void AddGateAtCursorButton_Click(object sender, RoutedEventArgs e)
+    {
+        var cursorX = _plots.Select(p => p.CursorX).FirstOrDefault(x => x is not null);
+        if (cursorX is not double x)
+        {
+            MessageBox.Show(
+                Loc.T("Curves.AddGateTip"),
+                Loc.T("Curves.AddGate"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        var samples = GetGatePlotSamples();
+        if (samples.Count < 2)
+        {
+            MessageBox.Show(
+                "Need a track with valid GPS first.",
+                Loc.T("Curves.AddGate"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var index = FindNearestSampleIndex(samples, x);
+        var sample = samples[index];
+        if (!Controls.TrackProjection.IsValidGps(sample))
+        {
+            MessageBox.Show(
+                "Cursor sample has no valid GPS.",
+                Loc.T("Curves.AddGate"),
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        double? heading = null;
+        var i0 = Math.Max(0, index - 3);
+        var i1 = Math.Min(samples.Count - 1, index + 3);
+        if (i1 > i0)
+        {
+            var a = samples[i0];
+            var b = samples[i1];
+            if (Controls.TrackProjection.IsValidGps(a) && Controls.TrackProjection.IsValidGps(b))
+            {
+                var mPerLon = 111320.0 * Math.Cos(a.Latitude * Math.PI / 180.0);
+                var dx = (b.Longitude - a.Longitude) * mPerLon;
+                var dy = (b.Latitude - a.Latitude) * 111320.0;
+                if (Math.Abs(dx) > 1e-6 || Math.Abs(dy) > 1e-6)
+                    heading = Math.Atan2(dx, dy) * 180.0 / Math.PI;
+            }
+        }
+
+        GateStore.Instance.Add(new GateDefinition
+        {
+            Name = "",
+            Latitude = sample.Latitude,
+            Longitude = sample.Longitude,
+            WidthMeters = 20,
+            HeadingDeg = heading
+        });
     }
 
     private bool TrySelectKmlMarkAtX(
@@ -6033,7 +6259,17 @@ public partial class MainWindow : Window
 
         // Offline overlays: VBO and KML/KMZ paths share VboFiles for backward-compatible JSON.
         foreach (var f in _offlineFiles.Files)
+        {
             snap.VboFiles.Add(f.FilePath);
+            snap.FileColors[f.FilePath] = f.ColorHex;
+            _fileColorMemory[f.FilePath] = f.ColorHex;
+        }
+
+        foreach (var kv in _fileColorMemory)
+        {
+            if (!snap.FileColors.ContainsKey(kv.Key))
+                snap.FileColors[kv.Key] = kv.Value;
+        }
 
         foreach (var g in GateStore.Instance.Gates)
             snap.Gates.Add(SessionMemoryStore.FromGate(g));
@@ -6102,6 +6338,15 @@ public partial class MainWindow : Window
 
             if (!string.IsNullOrWhiteSpace(snap.LastVbtsPath))
                 SessionMemoryStore.LastImportedVbtsPath = snap.LastVbtsPath;
+
+            if (snap.FileColors is { Count: > 0 })
+            {
+                foreach (var kv in snap.FileColors)
+                {
+                    if (!string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+                        _fileColorMemory[kv.Key] = kv.Value;
+                }
+            }
 
             var existing = snap.VboFiles
                 .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))

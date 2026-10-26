@@ -18,7 +18,7 @@ public sealed class OfflineFileEntry
     public required IReadOnlyList<string> ColumnNames { get; set; }
 
     /// <summary>轨迹/曲线配色（#RRGGBB）。</summary>
-    public required string ColorHex { get; init; }
+    public required string ColorHex { get; set; }
 }
 
 /// <summary>
@@ -76,10 +76,13 @@ public sealed class OfflineFileSet
         string filePath,
         IReadOnlyList<VehicleSample> samples,
         IReadOnlyList<string> columnNames,
-        string? displayName = null)
+        string? displayName = null,
+        string? preferredColorHex = null)
     {
-        var color = Palette[_colorIndex % Palette.Length];
-        _colorIndex++;
+        var color = NormalizeColor(preferredColorHex)
+            ?? Palette[_colorIndex % Palette.Length];
+        if (preferredColorHex is null)
+            _colorIndex++;
 
         var entry = new OfflineFileEntry
         {
@@ -96,6 +99,33 @@ public sealed class OfflineFileSet
         _files.Add(entry);
         SelectedId = entry.Id; // 新打开的文件成为当前选中
         return entry;
+    }
+
+    public bool SetColor(Guid id, string colorHex)
+    {
+        var entry = _files.FirstOrDefault(f => f.Id == id);
+        var normalized = NormalizeColor(colorHex);
+        if (entry is null || normalized is null)
+            return false;
+        entry.ColorHex = normalized;
+        return true;
+    }
+
+    private static string? NormalizeColor(string? colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(colorHex))
+            return null;
+        var hex = colorHex.Trim();
+        if (!hex.StartsWith('#'))
+            hex = "#" + hex;
+        if (hex.Length is not (7 or 9))
+            return null;
+        foreach (var ch in hex.AsSpan(1))
+        {
+            if (!char.IsAsciiHexDigit(ch))
+                return null;
+        }
+        return hex.ToUpperInvariant();
     }
 
     public bool Remove(Guid id)

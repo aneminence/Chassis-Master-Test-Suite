@@ -40,6 +40,9 @@ public sealed class SessionMemorySnapshot
     public List<SessionMathsDto> MathsChannels { get; set; } = new();
 
     public CurvesSettingsDto? Curves { get; set; }
+
+    /// <summary>Per-file curve/track colors keyed by absolute path.</summary>
+    public Dictionary<string, string> FileColors { get; set; } = new();
 }
 
 public sealed class SessionGateDto
@@ -164,6 +167,9 @@ public static class SessionMemoryStore
             snap.MathsChannels ??= new List<SessionMathsDto>();
             snap.Gates ??= new List<SessionGateDto>();
             snap.VboFiles ??= new List<string>();
+            snap.FileColors = new Dictionary<string, string>(
+                snap.FileColors ?? new Dictionary<string, string>(),
+                StringComparer.OrdinalIgnoreCase);
 
             if (!string.IsNullOrWhiteSpace(snap.LastVbtsPath))
                 LastImportedVbtsPath = snap.LastVbtsPath;

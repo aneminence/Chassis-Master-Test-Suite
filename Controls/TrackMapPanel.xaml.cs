@@ -147,9 +147,15 @@ public partial class TrackMapPanel : UserControl
             if (sampleIndex < 0 || sampleIndex >= samples.Count)
                 return;
             var sample = samples[sampleIndex];
+            if (_gatePlaceMode == GatePlaceMode.Add)
+            {
+                PlaceGateAtSample(sample, sampleIndex, samples);
+                return;
+            }
             SetCursorSample(sample);
             SampleSelected?.Invoke(sample, trackIndex);
         });
+        _map3D.Ready += () => Dispatcher.Invoke(PushGatesTo3D);
 
         GateStore.Instance.Changed += (_, _) =>
         {
@@ -159,11 +165,13 @@ public partial class TrackMapPanel : UserControl
                 {
                     RefreshGateCombo();
                     RedrawGates();
+                    PushGatesTo3D();
                 });
                 return;
             }
             RefreshGateCombo();
             RedrawGates();
+            PushGatesTo3D();
         };
 
         PlotHost.Children.Add(_wpfPlot);
@@ -382,6 +390,7 @@ public partial class TrackMapPanel : UserControl
         _refreshStopwatch.Restart();
         Rebuild(valid);
         _map3D?.SetTracks(valid);
+        PushGatesTo3D();
     }
 
     /// <summary>
@@ -530,18 +539,13 @@ public partial class TrackMapPanel : UserControl
 
     private void AltitudeModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Apply3DDisplayOptions();
 
-    private void ExaggerationCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Apply3DDisplayOptions();
-
     private void Apply3DDisplayOptions()
     {
         if (_map3D is null)
             return;
         var mode = (AltitudeModeCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "recorded";
-        var raw = (ExaggerationCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString();
-        if (!double.TryParse(raw, System.Globalization.NumberStyles.Float,
-                System.Globalization.CultureInfo.InvariantCulture, out var exaggeration))
-            exaggeration = 1.0;
-        _map3D.SetDisplay(mode, exaggeration);
+        _map3D.SetDisplay(mode);
+        PushGatesTo3D();
     }
 
     private void Fit3DButton_Click(object sender, RoutedEventArgs e) => _map3D?.Fit();
@@ -1527,8 +1531,6 @@ public partial class TrackMapPanel : UserControl
             Mode3DButton.ToolTip = Loc.T("Map.Mode3DTip");
         if (AltitudeModeLabel is not null)
             AltitudeModeLabel.Text = Loc.T("Map.HeightMode");
-        if (ExaggerationLabel is not null)
-            ExaggerationLabel.Text = Loc.T("Map.Exaggeration");
         if (Map3DSourceLabel is not null)
             Map3DSourceLabel.Text = Loc.T("Map.Source");
         if (Map3DSourceCombo is not null)
@@ -1930,7 +1932,8 @@ public partial class TrackMapPanel : UserControl
             Latitude = g.Latitude,
             Longitude = g.Longitude,
             WidthMeters = g.WidthMeters,
-            HeadingDeg = 0
+            HeadingDeg = 0,
+            ColorHex = g.ColorHex
         };
     }
 
@@ -2071,7 +2074,111 @@ public partial class TrackMapPanel : UserControl
         UpdateLegendVisibility(_tracks.Count > 1 || _runHighlights.Count > 0);
         RefreshGateColorLegend();
         _wpfPlot.Refresh();
+        PushGatesTo3D();
     }
+
+    private void PushGatesTo3D()
+    {
+        if (_map3D is null)
+            return;
+
+        var selectedId = GateStore.Instance.SelectedId;
+        var dtos = new List<TrackMap3DController.GateDto>();
+        foreach (var g in GateStore.Instance.Gates)
+        {
+            if (!g.IsValid)
+                continue;
+            var draw = EnsureHeading(g);
+            var (lat0, lon0, lat1, lon1) = GateCrossing.GetGateEndpointsLatLon(draw);
+            var alt = ResolveGateAltitudeMeters(g.Latitude, g.Longitude);
+            var color = string.IsNullOrWhiteSpace(g.ColorHex) ? "#3FBF6F" : g.ColorHex;
+            dtos.Add(new TrackMap3DController.GateDto(
+                g.Id.ToString("N"),
+                g.Name,
+                color,
+                lat0, lon0, alt,
+                lat1, lon1, alt,
+                selectedId == g.Id));
+        }
+        _map3D.SetGates(dtos);
+    }
+
+    private double ResolveGateAltitudeMeters(double latitude, double longitude)
+    {
+        VehicleSample? best = null;
+        var bestDist = double.PositiveInfinity;
+        const double mPerDegLat = 111320.0;
+        var mPerLon = mPerDegLat * Math.Cos(latitude * Math.PI / 180.0);
+        foreach (var sample in _samples)
+        {
+            if (!TrackProjection.IsValidGps(sample))
+                continue;
+            var dx = (sample.Longitude - longitude) * mPerLon;
+            var dy = (sample.Latitude - latitude) * mPerDegLat;
+            var d2 = dx * dx + dy * dy;
+            if (d2 >= bestDist)
+                continue;
+            bestDist = d2;
+            best = sample;
+        }
+        if (best is null)
+            return 0;
+        return double.IsFinite(best.Altitude) ? best.Altitude : 0;
+    }
+
+    private void PlaceGateAtSample(
+        VehicleSample sample,
+        int sampleIndex,
+        IReadOnlyList<VehicleSample> trackSamples)
+    {
+        if (!TrackProjection.IsValidGps(sample))
+        {
+            StatusGate("Need a track with valid GPS first");
+            return;
+        }
+
+        var widthM = 20.0;
+        if (double.TryParse(GateWidthBox?.Text?.Trim(),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out var parsedW) || double.TryParse(GateWidthBox?.Text?.Trim(), out parsedW))
+            widthM = Math.Max(0.5, parsedW);
+
+        double? heading = EstimateHeadingDegInList(trackSamples, sampleIndex);
+        var gate = new GateDefinition
+        {
+            Name = "",
+            Latitude = sample.Latitude,
+            Longitude = sample.Longitude,
+            WidthMeters = widthM,
+            HeadingDeg = heading
+        };
+        GateStore.Instance.Add(gate);
+        _gatePlaceMode = GatePlaceMode.None;
+        StatusGate($"{gate.Name} @ {sample.Latitude:F6},{sample.Longitude:F6}  W={widthM:0.##}m");
+    }
+
+    private static double? EstimateHeadingDegInList(IReadOnlyList<VehicleSample> samples, int index)
+    {
+        if (samples.Count < 2)
+            return null;
+        var i0 = Math.Max(0, index - 3);
+        var i1 = Math.Min(samples.Count - 1, index + 3);
+        if (i1 <= i0)
+            return null;
+        var a = samples[i0];
+        var b = samples[i1];
+        if (!TrackProjection.IsValidGps(a) || !TrackProjection.IsValidGps(b))
+            return null;
+        // Approximate local ENU heading without projection (small baseline).
+        var mPerLon = 111320.0 * Math.Cos(a.Latitude * Math.PI / 180.0);
+        var dx = (b.Longitude - a.Longitude) * mPerLon;
+        var dy = (b.Latitude - a.Latitude) * 111320.0;
+        if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6)
+            return null;
+        return Math.Atan2(dx, dy) * 180.0 / Math.PI;
+    }
+
     private int FindNearestSample(
         double x,
         double y,

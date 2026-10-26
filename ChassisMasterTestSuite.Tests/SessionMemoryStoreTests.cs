@@ -261,4 +261,32 @@ public class SessionMemoryStoreTests
                 File.Delete(path);
         }
     }
+
+    [Fact]
+    public void FileColors_RoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cmts-session-colors-" + Guid.NewGuid().ToString("N") + ".json");
+        var prev = SessionMemoryStore.StoragePathOverride;
+        try
+        {
+            SessionMemoryStore.StoragePathOverride = path;
+            var snap = new SessionMemorySnapshot
+            {
+                IsOfflineMode = true,
+                VboFiles = { @"D:\CMTS\drive.vbo" },
+                FileColors = { [@"D:\CMTS\drive.vbo"] = "#4A9FD8" },
+            };
+            SessionMemoryStore.Save(snap);
+            var loaded = SessionMemoryStore.Load();
+            Assert.NotNull(loaded);
+            Assert.True(loaded!.FileColors.TryGetValue(@"D:\CMTS\drive.vbo", out var hex));
+            Assert.Equal("#4A9FD8", hex);
+        }
+        finally
+        {
+            SessionMemoryStore.StoragePathOverride = prev;
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
 }

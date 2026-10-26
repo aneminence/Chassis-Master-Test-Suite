@@ -23,7 +23,9 @@
   };
   badge.textContent = text.badge;
   let viewer;
-  let sceneState = { tracks: [], altitudeMode: "recorded", exaggeration: 1 };
+  let sceneState = { tracks: [], altitudeMode: "recorded" };
+  let gateState = [];
+  let gateEntityIds = new Set();
   let cursorEntity;
   let cursorPoint;
   let compareCursorPoints = [];
@@ -51,18 +53,13 @@
     // Keep the visual line just above the DEM. Recorded GNSS altitude and the
     // terrain mesh often differ by less than a metre, which otherwise causes
     // depth-buffer z-fighting while orbiting the camera.
-    return track.baseline + (point[2] - track.baseline) * sceneState.exaggeration
-      + recordedTrackLiftMeters;
+    return track.baseline + (point[2] - track.baseline) + recordedTrackLiftMeters;
   }
 
   function updateTracks() {
     if (!viewer) return;
 
-    // Cesium's scene exaggeration changes the terrain mesh itself. Previously
-    // the CMTS exaggeration value was only applied to recorded track heights,
-    // so the control appeared to do nothing when inspecting the landscape.
-    // Keep sea level fixed while scaling all positive/negative terrain relief.
-    viewer.scene.verticalExaggeration = Math.max(1, Number(sceneState.exaggeration) || 1);
+    viewer.scene.verticalExaggeration = 1;
     viewer.scene.verticalExaggerationRelativeHeight = 0;
 
     let drawable = 0;
@@ -116,6 +113,7 @@
     lastDatasetKey = datasetKey;
     if (cursorPoint) setCursor(cursorPoint);
     if (compareCursorPoints.length) setCursors(compareCursorPoints);
+    updateGates();
     viewer.scene.requestRender();
   }
 
@@ -146,6 +144,58 @@
       result += digit;
     }
     return result;
+  }
+
+
+  function gateHeight(alt) {
+    if (sceneState.altitudeMode === "ground")
+      return 0;
+    const value = Number.isFinite(alt) ? alt : 0;
+    return value + recordedTrackLiftMeters;
+  }
+
+  function updateGates() {
+    if (!viewer) return;
+    const next = new Set();
+    for (const gate of gateState || []) {
+      if (!gate) continue;
+      const id = `gate-${gate.id}`;
+      const h0 = gateHeight(gate.alt0);
+      const h1 = gateHeight(gate.alt1);
+      const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
+        gate.lon0, gate.lat0, h0,
+        gate.lon1, gate.lat1, h1
+      ]);
+      const color = Cesium.Color.fromCssColorString(gate.colorHex || "#3FBF6F");
+      const width = gate.selected ? 7 : 4;
+      let entity = viewer.entities.getById(id);
+      if (!entity) {
+        entity = viewer.entities.add({
+          id,
+          name: gate.name || "Gate",
+          polyline: {
+            positions,
+            width,
+            clampToGround: sceneState.altitudeMode === "ground",
+            material: color,
+            depthFailMaterial: color
+          }
+        });
+      } else {
+        entity.name = gate.name || "Gate";
+        entity.polyline.positions = positions;
+        entity.polyline.width = width;
+        entity.polyline.clampToGround = sceneState.altitudeMode === "ground";
+        entity.polyline.material = color;
+        entity.polyline.depthFailMaterial = color;
+      }
+      next.add(id);
+    }
+    for (const id of gateEntityIds) {
+      if (!next.has(id)) viewer.entities.removeById(id);
+    }
+    gateEntityIds = next;
+    viewer.scene.requestRender();
   }
 
   async function setImagery(source) {
@@ -182,8 +232,7 @@
     const height = useGround
       ? 0
       : track
-        ? track.baseline + (point.altitude - track.baseline) * sceneState.exaggeration
-          + recordedTrackLiftMeters
+        ? track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters
         : point.altitude + recordedTrackLiftMeters;
     const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
     if (!cursorEntity) {
@@ -209,8 +258,7 @@
     const height = useGround
       ? 0
       : track
-        ? track.baseline + (point.altitude - track.baseline) * sceneState.exaggeration
-          + recordedTrackLiftMeters
+        ? track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters
         : point.altitude + recordedTrackLiftMeters;
     return { position: Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height), useGround };
   }
@@ -281,12 +329,17 @@
       setCursor(data.payload);
     } else if (data.type === "cursors") {
       setCursors(data.payload);
+    } else if (data.type === "gates") {
+      gateState = Array.isArray(data.payload) ? data.payload : [];
+      updateGates();
     } else if (data.type === "fit") {
       fit();
     } else if (data.type === "clear") {
       sceneState.tracks = [];
+      gateState = [];
       lastDatasetKey = "";
       trackEntityIds.clear();
+      gateEntityIds.clear();
       viewer.entities.removeAll();
       cursorEntity = undefined;
       cursorPoint = undefined;

@@ -663,6 +663,13 @@
                                 Margin="0,0,6,0"
                                 Click="AddPlotButton_Click"/>
 
+                        <Button x:Name="AddGateAtCursorButton"
+                                Content="Add Gate"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="AddGateAtCursorButton_Click"
+                                ToolTip="Add a gate at the yellow cursor and sync to the map"/>
+
                         <Button x:Name="ResetViewButton"
                                 Content="Reset View"
                                 Style="{StaticResource ToolButtonStyle}"
