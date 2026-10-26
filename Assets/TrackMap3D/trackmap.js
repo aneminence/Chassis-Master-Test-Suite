@@ -36,6 +36,11 @@
   let imageryGeneration = 0;
   // Lift tracks above DEM so GNSS/DEM mismatch does not bury polylines.
   const recordedTrackLiftMeters = 10;
+  // Vehicle cursor box: length(along heading) x width x height in meters.
+  const cursorBoxLengthM = 5.0;
+  const cursorBoxWidthM = 2.0;
+  const cursorBoxHeightM = 1.8;
+  const cursorBoxHalfHeightM = cursorBoxHeightM * 0.5;
 
   function post(type, message) {
     if (window.chrome && window.chrome.webview)
@@ -164,15 +169,61 @@
     return result;
   }
 
-  function gateHeight(alt) {
-    if (sceneState.altitudeMode === "ground")
+  // Match track displayHeight: recorded uses alt+lift; ground uses 0 + clampToGround.
+  function gateHeight(alt, track) {
+    if (sceneState.altitudeMode === "ground" || (track && !track.hasAltitude))
       return 0;
     const value = Number.isFinite(alt) ? alt : 0;
+    if (track && Number.isFinite(track.baseline))
+      return track.baseline + (value - track.baseline) + recordedTrackLiftMeters;
     return value + recordedTrackLiftMeters;
+  }
+
+  // Nearest track sample altitude at lon/lat (same idea as C# ResolveGateAltitudeMeters).
+  function sampleTrackAltitudeNear(lon, lat) {
+    let bestAlt = NaN;
+    let bestDist = Infinity;
+    const mPerDegLat = 111320.0;
+    const mPerLon = mPerDegLat * Math.cos((lat || 0) * Math.PI / 180.0);
+    for (const track of sceneState.tracks || []) {
+      if (!track.points || !track.points.length) continue;
+      for (const point of track.points) {
+        const dx = (point[0] - lon) * mPerLon;
+        const dy = (point[1] - lat) * mPerDegLat;
+        const d2 = dx * dx + dy * dy;
+        if (d2 >= bestDist) continue;
+        bestDist = d2;
+        bestAlt = point[2];
+      }
+    }
+    return bestAlt;
+  }
+
+  function resolveGateEndpointHeight(lon, lat, altFallback) {
+    const tracks = sceneState.tracks || [];
+    const track = tracks.find(t => t.hasAltitude) || tracks[0];
+    let alt = Number.isFinite(altFallback) ? altFallback : NaN;
+    if (!Number.isFinite(alt)) {
+      const sampled = sampleTrackAltitudeNear(lon, lat);
+      if (Number.isFinite(sampled)) alt = sampled;
+    } else {
+      // Prefer nearby track sample so bar matches ribbon when DTO alt is a coarse center estimate.
+      const sampled = sampleTrackAltitudeNear(lon, lat);
+      if (Number.isFinite(sampled)) alt = sampled;
+    }
+    return gateHeight(alt, track);
   }
 
   function upsertGatePolyline(id, name, positions, width, color, clampToGround) {
     let entity = viewer.entities.getById(id);
+    if (entity) {
+      const wasClamped = !!(entity.polyline && entity.polyline.clampToGround &&
+        entity.polyline.clampToGround.getValue && entity.polyline.clampToGround.getValue());
+      if (wasClamped !== !!clampToGround) {
+        viewer.entities.remove(entity);
+        entity = undefined;
+      }
+    }
     if (!entity) {
       entity = viewer.entities.add({
         id,
@@ -181,7 +232,8 @@
           positions,
           width,
           clampToGround,
-          material: color
+          material: color,
+          depthFailMaterial: color
         }
       });
     } else {
@@ -190,12 +242,16 @@
       entity.polyline.width = width;
       entity.polyline.clampToGround = clampToGround;
       entity.polyline.material = color;
+      entity.polyline.depthFailMaterial = color;
     }
   }
 
-  function upsertGateMarker(id, lon, lat, height, labelText) {
+  function upsertGateMarker(id, lon, lat, height, labelText, clampToGround) {
     // Label-only: no round point marker (user request).
     const position = Cesium.Cartesian3.fromDegrees(lon, lat, height);
+    const heightReference = clampToGround
+      ? Cesium.HeightReference.RELATIVE_TO_GROUND
+      : Cesium.HeightReference.NONE;
     let entity = viewer.entities.getById(id);
     if (!entity) {
       entity = viewer.entities.add({
@@ -210,6 +266,7 @@
           outlineWidth: 3,
           style: Cesium.LabelStyle.FILL_AND_OUTLINE,
           disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          heightReference,
           showBackground: true,
           backgroundColor: Cesium.Color.fromCssColorString("#0A0E14").withAlpha(0.72)
         }
@@ -218,6 +275,7 @@
       entity.position = position;
       if (entity.label) {
         entity.label.text = labelText || "";
+        entity.label.heightReference = heightReference;
       }
     }
   }
@@ -252,33 +310,34 @@
   function updateGates() {
     if (!viewer) return;
     const next = new Set();
-    const clampToGround = sceneState.altitudeMode === "ground";
-    // Flat bar coinciding with track height (no vertical posts / U arch).
-    const barLift = clampToGround ? 2 : 0;
-    // Small lift so label sits just above the bar for readability.
+    // Same clamp rule as tracks: ground mode (or no altitude) clamps to DEM.
+    const tracks = sceneState.tracks || [];
+    const anyHasAltitude = tracks.some(t => t && t.hasAltitude);
+    const clampToGround = sceneState.altitudeMode === "ground" || !anyHasAltitude;
+    // Label sits a few meters above the bar (RELATIVE_TO_GROUND in ground mode).
     const labelLift = 3;
     for (const gate of gateState || []) {
       if (!gate) continue;
-      const h0 = gateHeight(gate.alt0);
-      const h1 = gateHeight(gate.alt1);
+      const h0 = resolveGateEndpointHeight(gate.lon0, gate.lat0, gate.alt0);
+      const h1 = resolveGateEndpointHeight(gate.lon1, gate.lat1, gate.alt1);
       const color = Cesium.Color.fromCssColorString(gate.colorHex || "#3FBF6F");
       const width = gate.selected ? 12 : 8;
       const name = gate.name || "Gate";
 
       const lineId = `gate-${gate.id}`;
       const positions = Cesium.Cartesian3.fromDegreesArrayHeights([
-        gate.lon0, gate.lat0, h0 + barLift,
-        gate.lon1, gate.lat1, h1 + barLift
+        gate.lon0, gate.lat0, h0,
+        gate.lon1, gate.lat1, h1
       ]);
-      // In-place upsert; clampToGround false so recorded/ground heights match tracks.
-      upsertGatePolyline(lineId, name, positions, width, color, false);
+      // Match track polyline: clampToGround in map-height mode; absolute+lift in recorded.
+      upsertGatePolyline(lineId, name, positions, width, color, clampToGround);
       next.add(lineId);
 
       const midLon = (Number(gate.lon0) + Number(gate.lon1)) * 0.5;
       const midLat = (Number(gate.lat0) + Number(gate.lat1)) * 0.5;
-      const midH = (h0 + h1) * 0.5 + barLift + labelLift;
+      const midH = clampToGround ? labelLift : (h0 + h1) * 0.5 + labelLift;
       const markerId = `gate-marker-${gate.id}`;
-      upsertGateMarker(markerId, midLon, midLat, midH, name);
+      upsertGateMarker(markerId, midLon, midLat, midH, name, clampToGround);
       next.add(markerId);
     }
     for (const id of gateEntityIds) {
@@ -322,6 +381,56 @@
     }
   }
 
+  function cursorPosition(point) {
+    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
+    const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
+    let trackHeight;
+    if (useGround) {
+      trackHeight = 0;
+    } else if (track) {
+      trackHeight = track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters;
+    } else {
+      trackHeight = point.altitude + recordedTrackLiftMeters;
+    }
+    // Box center sits half-height above the track ribbon so the bottom rests on it.
+    const height = useGround ? cursorBoxHalfHeightM : trackHeight + cursorBoxHalfHeightM;
+    const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
+    return { position, useGround, height };
+  }
+
+  function cursorOrientation(position, point) {
+    const headingDeg = Number.isFinite(point.heading) ? point.heading : 0;
+    // Cesium HeadingPitchRoll: heading clockwise from north (same as GPS travel heading).
+    return Cesium.Transforms.headingPitchRollQuaternion(
+      position,
+      new Cesium.HeadingPitchRoll(Cesium.Math.toRadians(headingDeg), 0, 0)
+    );
+  }
+
+  function applyCursorBox(entity, point, resolved, color) {
+    const heightReference = resolved.useGround
+      ? Cesium.HeightReference.RELATIVE_TO_GROUND
+      : Cesium.HeightReference.NONE;
+    entity.position = resolved.position;
+    entity.orientation = cursorOrientation(resolved.position, point);
+    if (entity.point) entity.point = undefined;
+    if (!entity.box) {
+      entity.box = {
+        dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
+        material: color,
+        outline: true,
+        outlineColor: Cesium.Color.BLACK,
+        heightReference
+      };
+    } else {
+      entity.box.dimensions = new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM);
+      entity.box.material = color;
+      entity.box.outline = true;
+      entity.box.outlineColor = Cesium.Color.BLACK;
+      entity.box.heightReference = heightReference;
+    }
+  }
+
   function setCursor(point) {
     if (!viewer) return;
     cursorPoint = point;
@@ -331,40 +440,31 @@
       cursorEntity = undefined;
       return;
     }
-    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
-    const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
-    const height = useGround
-      ? 0
-      : track
-        ? track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters
-        : point.altitude + recordedTrackLiftMeters;
-    const position = Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
+    const resolved = cursorPosition(point);
+    const color = Cesium.Color.GOLD.withAlpha(0.92);
+    if (cursorEntity && cursorEntity.point) {
+      viewer.entities.remove(cursorEntity);
+      cursorEntity = undefined;
+    }
     if (!cursorEntity) {
       cursorEntity = viewer.entities.add({
         id: "cmts-cursor",
-        position,
-        point: { pixelSize: 14, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK,
-          outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY,
-          heightReference: useGround ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE }
+        position: resolved.position,
+        orientation: cursorOrientation(resolved.position, point),
+        box: {
+          dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
+          material: color,
+          outline: true,
+          outlineColor: Cesium.Color.BLACK,
+          heightReference: resolved.useGround
+            ? Cesium.HeightReference.RELATIVE_TO_GROUND
+            : Cesium.HeightReference.NONE
+        }
       });
     } else {
-      cursorEntity.position = position;
-      cursorEntity.point.heightReference = useGround
-        ? Cesium.HeightReference.CLAMP_TO_GROUND
-        : Cesium.HeightReference.NONE;
+      applyCursorBox(cursorEntity, point, resolved, color);
     }
     viewer.scene.requestRender();
-  }
-
-  function cursorPosition(point) {
-    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
-    const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
-    const height = useGround
-      ? 0
-      : track
-        ? track.baseline + (point.altitude - track.baseline) + recordedTrackLiftMeters
-        : point.altitude + recordedTrackLiftMeters;
-    return { position: Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height), useGround };
   }
 
   function clearCompareCursorEntities() {
@@ -387,22 +487,31 @@
       const id = `cmts-compare-cursor-${point.runNumber || index}`;
       keep.add(id);
       const resolved = cursorPosition(point);
-      const color = Cesium.Color.fromCssColorString(point.color || "#FFD54F");
+      const color = Cesium.Color.fromCssColorString(point.color || "#FFD54F").withAlpha(0.88);
       let entity = compareCursorEntities.get(id);
+      if (entity && entity.point) {
+        viewer.entities.remove(entity);
+        compareCursorEntities.delete(id);
+        entity = undefined;
+      }
       if (!entity) {
         entity = viewer.entities.add({
           id,
           position: resolved.position,
-          point: { pixelSize: 15, color, outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 3, disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            heightReference: resolved.useGround ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE }
+          orientation: cursorOrientation(resolved.position, point),
+          box: {
+            dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
+            material: color,
+            outline: true,
+            outlineColor: Cesium.Color.BLACK,
+            heightReference: resolved.useGround
+              ? Cesium.HeightReference.RELATIVE_TO_GROUND
+              : Cesium.HeightReference.NONE
+          }
         });
         compareCursorEntities.set(id, entity);
       } else {
-        entity.position = resolved.position;
-        entity.point.color = color;
-        entity.point.heightReference = resolved.useGround
-          ? Cesium.HeightReference.CLAMP_TO_GROUND : Cesium.HeightReference.NONE;
+        applyCursorBox(entity, point, resolved, color);
       }
     });
     for (const [id, entity] of compareCursorEntities) {

@@ -396,9 +396,52 @@ internal sealed class TrackMap3DController
             longitude = sample.Longitude,
             latitude = sample.Latitude,
             altitude = double.IsFinite(sample.Altitude) ? sample.Altitude : 0.0,
+            heading = ResolveCursorHeadingDeg(sample, location.Item1, location.Item2),
             color,
             runNumber
         };
+    }
+
+    /// <summary>
+    /// Travel heading deg (0=N, clockwise). Prefer sample.Heading; else bearing from nearby track samples.
+    /// </summary>
+    private double ResolveCursorHeadingDeg(VehicleSample sample, int trackId, int sampleIndex)
+    {
+        if (double.IsFinite(sample.Heading))
+            return sample.Heading;
+
+        if (trackId < 0 || trackId >= _tracks.Count || sampleIndex < 0)
+            return 0.0;
+
+        var samples = _tracks[trackId].Samples;
+        if (samples.Count < 2)
+            return 0.0;
+
+        var i0 = Math.Max(0, sampleIndex - 1);
+        var i1 = Math.Min(samples.Count - 1, sampleIndex + 1);
+        if (i1 <= i0)
+        {
+            i0 = Math.Max(0, sampleIndex - 3);
+            i1 = Math.Min(samples.Count - 1, sampleIndex + 3);
+        }
+        if (i1 <= i0)
+            return 0.0;
+
+        var a = samples[i0];
+        var b = samples[i1];
+        if (!TrackProjection.IsValidGps(a) || !TrackProjection.IsValidGps(b))
+            return 0.0;
+
+        var mPerLon = 111320.0 * Math.Cos(a.Latitude * Math.PI / 180.0);
+        var dx = (b.Longitude - a.Longitude) * mPerLon;
+        var dy = (b.Latitude - a.Latitude) * 111320.0;
+        if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6)
+            return 0.0;
+
+        var deg = Math.Atan2(dx, dy) * 180.0 / Math.PI;
+        if (deg < 0)
+            deg += 360.0;
+        return deg;
     }
 
     private (int TrackId, int SampleIndex) FindSampleLocation(VehicleSample sample)
