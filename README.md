@@ -6,54 +6,58 @@
 
 ---
 
-## 最近更新（2026-10-12）
+## 最近更新（2026-10-26）
 
-### KML/KMZ 导入（`feature/kml-import`，Phase 1）
-- **Offline Open** 支持 `*.vbo;*.kml;*.kmz`；KML/KMZ 轨迹叠加到 Track Map（可与 VBO 等多轨叠画）。
-- 解析 **gx:Track**（含两步路：coords 后 when + `GxTrackExtendedData`）与基础 **LineString**（仅画线、无时间）。
-- 两步路 ExtendedData 速度单位为 **m/s**，导入时 ×3.6 写入 `SpeedKph`（手机轨迹，非 VBOX 多普勒速度）。
+相对上一版 README（2026-10-12 / `0ab045d`）之后合入 `main` 的已交付能力汇总。更早的 KML Phase 1、在线底图、中英语言、主题外壳、Dashboard / Gate / Maths / 多文件对比等仍见下文各节，此处不再重复展开。
 
-### 外观 / 语言 / 在线地图（`feature/map-i18n-theme`）
-- **语言**：顶栏右侧 Language 菜单，中文 / English 运行时切换并写入 `%LocalAppData%\CMTS\app-preferences.json`。
-- **主题**：顶栏右侧 Theme 菜单 — 暗黑 / 明亮；自定义配色仍为占位，偏好持久化。
-- **在线底图**：Track Map 工具栏 `Basemap` 开关 + 图源下拉（OSM / OpenTopo / Esri 影像·街道·地形 / Carto 浅·深 / 自定义 XYZ）；瓦片画在轨迹与 Gate **之下**；磁盘缓存 `map-tiles/`。商业图源（谷歌/高德等）请用自定义 XYZ 自行填入合法地址。
+### OxTS XCOM / NCOM / RCOM 离线导入
+- **Offline Open** 过滤器增加 `*.xcom;*.ncom`（与 VBO / KML / KMZ 并列）。
+- **多流拆分**：一个 XCOM 内每个 NCOM/RCOM 流各自成为一条 Offline 条目，命名形如 `basename#sN-…`，**不混成一路**。
+- **NCOM** → 导航量写入 `VehicleSample`；**RCOM** → 相对测距等通道（见 `docs/xcom-channels.md`）。
+- 实现：`Recorder/OxTS/`（`XcomContainerReader` / `NcomDecoder` / `RcomDecoder` / `XcomImporter`）；说明见 `docs/xcom-ANALYSIS.md`、`docs/xcom-channels.md`；冒烟工具 `tools/OxTSSmoke`。
+- 说明：部分 XCOM 内两路 NCOM 地速在文件内容上即近乎相同，曲线会重合；RCOM 的通用 Speed 映射为猎人车前进速度，可能与 NCOM 地速接近——相对运动请看 RCOM 自有通道（如 `range_long_m` / `range_lat_m`）。
 
-### 外壳与工作区
-- **顶部栏（VBTS 风格）**：`Layout` 分区示意菜单可单独开关 Dashboard / Test Results / Map / Chart（**无 Video**），并带 Reset；`Load` 打开 VBO/KML/KMZ；`Online` / `Offline` 切换线上线下；`Clear` 清空已打开文件；Files 芯片**始终展开**不折叠。
-- **布局**：关闭 Test Results 时 Map 并到 Dashboard 旁，水平分割条仍可左右拖（中间不留空列）。
-- **已删除**顶部 Dashboard / Data / Analysis / Replay / Settings 导航行（无实际用途）。
-- **会话记忆**：启动自动恢复上次未关闭的 VBO、已导入 `.vbts` 门点、Test Results 条件设置、Maths 通道、Test Curve 布局等。
+### Track Map 2D / 3D（Cesium WebView2）
+- 可选 **3D** 轨迹（高度）；默认 **Ground** 海拔模式（DEM 采样贴地）；**无多倍高程夸张**（固定 1×）。
+- **车辆光标**：航向对齐的长方体约 5×2×1.8 m；2D/3D 与曲线光标双向同步（含圈速对比地图点击）。
+- **Gate**：贴轨扁条（无 U 型立柱、无圆点）；**无 S/E 起终点标记**。
+- **GateStore 共享**：2D / 3D / 曲线竖线同步；门颜色走 `ColorHex`。
+- **底图开** → 隐藏轨迹区网格；**底图关** → 保留网格；去掉左下角 online/terrain 状态角标。
+- 在线底图图源逻辑与此前一致（OSM / OpenTopo / Esri / Carto / 自定义 XYZ）。
+- 其它：工具栏控件更紧凑；KML 航向估计；渲染开销与闪烁修复。
 
-### Dashboard（可定制）
-- 可 **Add Gauge / Reset**；表盘可拖动、缩放、删除；点标题选 **Live 通道** 或 **Test Results**（含 Pass 实测值）。
-- 数值随外框自动放大（无字号上限）、居中；缩小主分区时**布局不重排**，可向右/下溢出并裁切，避免挤叠。
+### 按文件着色
+- Files 芯片颜色按钮：色块（swatch）+ 十六进制；曲线与 Track Map 共用 `ColorHex`，按文件路径记忆。
+- 单文件打开时曲线也跟芯片色（不再只走默认调色板）；色板菜单可见色块（`adfbd86`）。
 
-### 多文件曲线 / 对比
-- 打开多个 VBO 时底部曲线 **始终叠加**（芯片色 + 图例）；点文件芯片只 **focus 加粗**，不整图切换。
-- Test Results **Compute 扫全部已打开文件**；结果表有 **Source** 列与行复选框（单击勾选 + 表头全选）。
-- 勾选 ≥2 行进入 **compare overlay**：X = 各 run 起点起的秒，曲线叠画；对比模式下可中键平移、右键/滚轮缩放；图例在曲线区外侧不挡数据。
-- Compute 后曲线彩色区间 + Track Map 加粗高亮轨迹段；点结果行两边联动。
+### KML 非破坏裁剪 / 会话
+- KML 轨迹支持**非破坏裁剪**（不改源文件）。
+- 启动时从会话记忆恢复上次的 KML/KMZ 离线轨。
 
-### Test Results（P0 + Gate）
-- **Accel / Decel / Custom / Gate**；条件区可上下拖调高度，一键 Hide/Show。
-- Gate：Start When / End When + 多条 Pass（Channel + Min/Max + At 门）；结果表 **Pass values** 列高亮实测值（绿=范围内 / 红=超限）；CSV 导出含该列。
-- **Session** 按钮编辑 Driver / Vehicle / Track…，新录制写入 VBO `[SessionData]`。
+### 启动动画 Splash
+- 启动时显示动画 Splash（`Assets/Splash`）。
 
-### Track Map / Gate / `.vbts`
-- 底轨加粗；每扇门独立颜色，**左上角 Gates 图例**（与右上角轨迹图例分离）。
-- 工具栏 Add / 下拉切换 / 改宽度 / Rename / Delete；地图可点选门段。
-- **Import** 可从 VBTS 工程 `.vbts` 导入门（分→度、航向校正）；门配置优先 `.vbts`，Gate `.spl` 已明确不做（Export `.spl` 仍为占位）。
-- **KML/KMZ**（Phase 1）：Offline 打开后叠画到地图；多文件可叠加。
+### 圈速 / 扇区与对比联动
+- Lap / Sector 计时分析；圈速操作区保持可见。
+- 对比模式：尊重所选 X 轴；对比光标与地图同步；圈速对比下地图点击同步；对比 Elapsed 轴对齐。
 
-### Maths / Measure
-- **Maths Channels…** 对话框：增删、公式编辑（Channels / fx 插入）、名称与单位；通道可供曲线 / Custom / Dashboard 使用（基础四则；累计/积分未做）。
-- 曲线拖选 X 区间 → 左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除。
+### 曲线区
+- 多 Plot **共用 X 轴缩放/平移**。
+- 新增通道示例：`slope_pct`（距离窗坡度）。
 
+### GSpot / iCell VBO
+- 修正 GSpot/iCell VBO 经纬度解码（Track Map 可用）。
+- 重映射 speed / heading / time / height 列；识别标准与移位布局。
 
-### Test Curve UX
-- 滚轮默认**滚动**曲线区；点击聚焦后才用滚轮缩放。
-- `+ Channel` 右侧为通道芯片；各 Plot **高度可拖拽**调整并记忆。
-- 多 Plot **黄色光标联动**（与 Dashboard / Track Map 同步）。
+### 主题 / 语言 UI
+- Light 主题对齐 VI skin H（白底红黑）；UI chrome 走 `DynamicResource`。
+- 顶栏 **Language / Theme** 改为分体按钮（主面快速切换 + chevron 其它项）；其它主题含 Icon Gold；中英切换时宽度固定，避免挤动 Start。
+
+### 文档与代理工作流
+- `AGENTS.md` + `.ai-workflows/`（skills / rules / product-management 模板）。
+- `VERSIONING.md`（SemVer 2.0.0，0.x.y 预览线；本地 packs 基线）。
+- 硬件 / 架构 / 产品文档归入 `docs/`（`docs/hardware`、`docs/architecture`、`docs/product`）。
+
 ---
 
 ## 设计理念
@@ -86,11 +90,12 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
                               │
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
-     VboRecorder        ScottPlot 曲线      Dashboard / Track Map
+     VboRecorder        ScottPlot 曲线      Dashboard / Track Map 2D·3D
      (可选录制)         + 光标 / Measure     + Test Results / Gate
 
-离线：VboReader / KmlTrackImporter ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
-分析：Analysis（SpeedToSpeed / GateRun / Maths）──► Test Results 表 + 区间标注
+离线：VboReader / KmlTrackImporter / OxTS XcomImporter ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
+地图：TrackMapPanel（2D 瓦片）+ TrackMap3DController（Cesium WebView2，可选 3D）
+分析：Analysis（SpeedToSpeed / GateRun / Maths / Lap·Sector）──► Test Results 表 + 区间标注
 ```
 
 要点（与代码一致）：
@@ -109,9 +114,9 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 ┌───────────────────────────────────────────────────────────────────────┐
 │ CMTS  Layout│Appearance│Load│Online│Offline│Clear  [●][■] Elapsed     │  顶部栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
-│ Dashboard        │ Test Results        │ Track Map                    │
-│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS/KML 轨迹 · Gate · .vbts │
-│ Live / Test 绑定 │ Gate · Maths · CSV  │ run 高亮 · 左上 Gates 图例   │
+│ Dashboard        │ Test Results        │ Track Map（2D / 3D）         │
+│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS/KML/XCOM · Gate · .vbts │
+│ Live / Test 绑定 │ Gate · Lap · Maths  │ run 高亮 · 左上 Gates 图例   │
 ├──────────────────┴─────────────────────┴──────────────────────────────┤
 │ [X Axis] [X Auto Scale] [+ Add Plot] [Reset]   Files 芯片（常显）     │
 │ Online 工具：[Simulator] [GSpot…] [UDP] [Stop]      Rx / Lost / OOO   │
@@ -141,19 +146,27 @@ Chassis Master Test Suite/
 │   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
 │   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
 │   └─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
-├─ Recorder/    VboRecorder / VboReader / CsvRecorder（未接线）
+├─ Recorder/
+│   ├─ VboRecorder / VboReader / CsvRecorder（未接线）
+│   └─ OxTS/   XcomContainerReader / NcomDecoder / RcomDecoder / XcomImporter
 ├─ Simulator/   VehicleSimulator
 ├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / SessionMetadata
 ├─ Analysis/
 │   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
 │   ├─ GateStore / GateRunEngine / GatePassCondition / VbtsGateImporter
-│   ├─ KmlTrackImporter（KML/KMZ → TrackMap）
+│   ├─ KmlTrackImporter（KML/KMZ → TrackMap；含非破坏裁剪）
 │   ├─ MathsChannelStore / MathsExpression / MathsEnricher
+│   ├─ LapTimeEngine（圈速 / 扇区）
 │   └─ SelectionMeasure / SampleSource / AnnotatedTestRun
-├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel
+├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel / TrackMap3DController
 │               MathsChannelsDialog / GaugeBindingPickerDialog / SessionEditDialog
+├─ Assets/      Splash/ · TrackMap3D/（Cesium 静态资源）
+├─ docs/        xcom-*.md · architecture/ · hardware/ · product/
+├─ tools/       OxTSSmoke（XCOM/NCOM 冒烟）
+├─ samples/     oxts-xcom/（示例 .xcom）
+├─ AGENTS.md · .ai-workflows/ · VERSIONING.md
 ├─ ChassisMasterTestSuite.Tests/   xUnit（纯逻辑，无 WPF）
-├─ MainWindow.* 外壳、Layout、录制、多文件曲线、光标联动
+├─ MainWindow.* 外壳、Layout、录制、多文件曲线、光标联动、文件着色
 ├─ SimulatorWindow.* 三维仿真
 └─ rebuild.cmd
 ```
@@ -246,14 +259,15 @@ dotnet test "Chassis Master Test Suite.sln" -c Release
 bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 ```
 
-### 5. Offline / Load：打开 VBO / KML / KMZ
+### 5. Offline / Load：打开 VBO / KML / KMZ / XCOM / NCOM
 
 1. 点顶部 **Load**（或切到 **Offline** 后在离线页打开）。  
-2. 对话框过滤：`*.vbo;*.kml;*.kmz`（也可只选 VBO 或只选 KML/KMZ）。  
-3. 可打开多个文件；Files 芯片常显；VBO 曲线默认全部叠加，KML/KMZ 叠画到 Track Map。  
-4. 曲线 / Track Map / Dashboard 共用历史缓冲；点芯片 focus 某一文件。  
-5. **Clear** 清空已打开文件。  
-6. **注意**：打开文件会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
+2. 对话框过滤：`*.vbo;*.kml;*.kmz;*.xcom;*.ncom`（也可按类型单选）。  
+3. 可打开多个文件；Files 芯片常显；VBO / NCOM 曲线默认叠加；KML/KMZ 叠画到 Track Map；**XCOM 按流拆成多条**（`#sN-…`），不混轨。  
+4. 芯片可改颜色（色块 + 色号）；曲线与地图轨迹跟 `ColorHex`。  
+5. 曲线 / Track Map / Dashboard 共用历史缓冲；点芯片 focus 某一文件。  
+6. **Clear** 清空已打开文件。  
+7. **注意**：打开文件会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
 
 ### 6. 曲线交互
 
@@ -267,15 +281,18 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 | **拖选 X 区间** | Measure：左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除 |
 | **X Auto Scale** | 勾选时随数据自动缩放；人手操作后取消勾选 |
 | Reset View | 恢复自动缩放视野 |
-| 多 Plot | `+ Channel` 右侧通道芯片；拖分割条改高度；黄色光标跨图联动 |
+| 多 Plot | + Channel 右侧通道芯片；拖分割条改高度；黄色光标跨图联动；**共用 X 缩放/平移** |
 
-### 7. Track Map 与 Gate
+### 7. Track Map 与 Gate（2D / 3D）
 
-- 实时/离线轨迹同步曲线光标与 Dashboard。  
-- Offline 可叠加 **KML/KMZ** 轨迹（Phase 1：gx:Track / LineString；两步路速度 m/s→km/h）。  
-- **Add Gate** → 在轨迹上布置；下拉切换、改宽度、Rename、Delete；地图点选高亮。  
-- **Import**：选择 `.vbts` 导入门（会确认是否替换现有门；优先 `.vbts`，不用 `.spl`）。  
-- Compute 后的 run 段以加粗彩色轨迹显示；右上角为轨迹/文件图例，左上角为 Gates 图例。  
+- 实时/离线轨迹同步曲线光标与 Dashboard；**2D / 3D 可切换**（3D 经 Cesium WebView2）。  
+- 3D：默认 **Ground**（DEM 贴地）；无多倍高程夸张；车辆光标为航向长方体；门为贴轨扁条（无圆点 / 无 S·E 标记）。  
+- **GateStore** 在 2D、3D、曲线竖线间同步；门色走 `ColorHex`。  
+- Offline 可叠加 **KML/KMZ**（Phase 1 + 非破坏裁剪）与 **XCOM/NCOM** 轨迹。  
+- **底图开**隐藏轨迹区网格，**底图关**保留网格；无左下角 online/terrain 角标。  
+- **Add Gate** → 布置 / 切换 / 改宽度 / Rename / Delete；地图点选高亮。  
+- **Import**：`.vbts` 导入门（确认是否替换；优先 `.vbts`，不用 `.spl`）。  
+- Compute / 圈速对比：run 段加粗；对比光标与地图点击可互相同步。  
 - Layout 关掉 Test Results 后，Map 与 Dashboard 并排，仍可拖水平分割条。
 
 ### 8. Dashboard
@@ -355,11 +372,22 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] Session 元数据写入 VBO `[SessionData]`  
 - [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）  
 - [x] 通道注册表（实时 vs 文件）  
-- [x] UI 主题（暗黑 / 明亮 / 自定义占位）+ 中英语言（顶栏菜单）  
+- [x] UI 主题（暗黑 / 明亮 / Light H / Icon Gold / 自定义占位）+ 中英语言（分体按钮）  
 - [x] Track Map 在线底图（可开关、多图源）  
 - [x] KML/KMZ 导入（Phase 1：gx:Track / LineString → TrackMap 叠画；两步路速度 m/s→km/h）  
 - [x] Layout：关 Test Results 后 Dashboard|Map 并排可拖  
 - [x] Test Curve UX：滚轮滚动优先、点击聚焦缩放、通道芯片、可调高度、光标联动  
+- [x] Cesium 3D Track Map（Ground 默认、航向光标、贴轨 Gate、无夸张倍率、底图开关网格）  
+- [x] Gate 跨 2D / 3D / 曲线同步（GateStore + ColorHex）  
+- [x] 按文件着色（芯片色块 + 曲线/地图同色，路径记忆）  
+- [x] OxTS XCOM/NCOM/RCOM 离线导入（多流拆分）  
+- [x] KML 非破坏裁剪 + 会话恢复 KML/KMZ  
+- [x] 启动动画 Splash  
+- [x] Lap / Sector 计时与对比↔地图光标同步  
+- [x] 多 Plot 共用 X 轴缩放/平移；`slope_pct` 通道  
+- [x] GSpot/iCell VBO 经纬度与列布局兼容  
+- [x] Light（VI H）/ Icon Gold 等主题 + Language/Theme 分体按钮  
+- [x] `AGENTS.md` / `.ai-workflows` / `VERSIONING.md` / `docs/` 文档布局  
 
 ---
 
@@ -369,10 +397,15 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 **已完成（本分支 / 近期）**
 - [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）  
-- [x] 界面语言中/英  
+- [x] 界面语言中/英；Language/Theme 分体按钮；Light（VI H）/ Icon Gold  
 - [x] 皮肤：暗黑 / 明亮 + 自定义配色（占位）  
-- [x] KML/KMZ Phase 1（Offline 叠画 TrackMap）  
+- [x] KML/KMZ Phase 1 + 非破坏裁剪 + 会话恢复  
 - [x] Layout 关 Test Results 后 Dashboard/Map 并排  
+- [x] Cesium 3D 轨迹图（Ground、航向光标、贴轨门、无夸张）  
+- [x] Gate 2D/3D/曲线同步；按文件着色  
+- [x] OxTS XCOM/NCOM/RCOM 离线导入  
+- [x] Lap/Sector；对比↔地图同步；多 Plot 共用 X 缩放  
+- [x] Splash；`docs/` + AGENTS / `.ai-workflows` / VERSIONING  
 
 **延后**
 - [ ] Settings 正式页  
@@ -380,9 +413,11 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [ ] Maths 高级函数（累计 / 积分等）  
 - [ ] 法规 / 场景试验插件包  
 - [ ] Dashboard 更多表盘类型（Angular / Chart / Target / Level）与告警  
+- [ ] RCOM Speed 与通用 Speed 解耦 / 导入时默认只开差异流（体验优化）  
 
 **明确不做**
-- GSpot 实车标定、同步视频、正式报告 PDF/XLSX/DOCX、Gate `.spl`（用 `.vbts` 替代）、原生 VBOX Online、`CsvRecorder`
+- GSpot 实车标定、同步视频、正式报告 PDF/XLSX/DOCX、Gate `.spl`（用 `.vbts` 替代）、原生 VBOX Online、`CsvRecorder`  
+- 3D 多倍高程夸张（已去掉，固定 1×）
 
 ---
 
@@ -404,13 +439,16 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 ## 相关资源
 
 - VI 设计系统：`D:\CMTS\VI`（独立目录，不在本仓库）  
-- 仓库：https://github.com/aneminence/Chassis-Master-Test-Suite
+- 仓库：https://github.com/aneminence/Chassis-Master-Test-Suite  
+- 产品 / 架构 / 硬件：`docs/product/`、`docs/architecture/`、`docs/hardware/`  
+- OxTS：`docs/xcom-ANALYSIS.md`、`docs/xcom-channels.md`；示例 `samples/oxts-xcom/`  
+- 版本策略：`VERSIONING.md`；代理约定：`AGENTS.md`、`.ai-workflows/`
 
 ## Tests / quality
 
 Minimal xUnit project: `ChassisMasterTestSuite.Tests`（`net10.0`，stock xUnit）。
 
-覆盖纯逻辑（经 linked 生产源）：历史缓冲、DataBus、降采样、UDP 序列化、VBO 经度往返、GSpot `pos`、Maths、Gate/`.vbts` 导入、KML/KMZ（含两步路速度换算）、SessionMemory 等——无 WPF / 无实网。
+覆盖纯逻辑（经 linked 生产源）：历史缓冲、DataBus、降采样、UDP 序列化、VBO 经度往返、GSpot `pos`、Maths、Gate/`.vbts` 导入、KML/KMZ（含两步路速度换算）、OxTS 相关单测、SessionMemory 等——无 WPF / 无实网。XCOM 冒烟另见 `tools/OxTSSmoke`。
 
 ```bash
 dotnet test "Chassis Master Test Suite.sln" -c Release
