@@ -1,0 +1,80 @@
+name: Release Windows Package
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Validate tag and project version
+        shell: pwsh
+        run: |
+          $tagVersion = "${{ github.ref_name }}" -replace '^v', ''
+          [xml]$project = Get-Content "Chassis Master Test Suite.csproj"
+          $projectVersion = $project.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+
+          if (-not $projectVersion) {
+            throw "The project does not define <Version>."
+          }
+
+          if ($projectVersion -ne $tagVersion) {
+            throw "Tag version $tagVersion does not match project version $projectVersion."
+          }
+
+          "CMTS_VERSION=$tagVersion" >> $env:GITHUB_ENV
+          "PACKAGE_NAME=Chassis-Master-Test-Suite-$tagVersion-win-x64-portable" >> $env:GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore "Chassis Master Test Suite.csproj" --runtime win-x64
+
+      - name: Build release
+        run: dotnet build "Chassis Master Test Suite.csproj" --configuration Release --no-restore
+
+      - name: Publish self-contained Windows package
+        run: >-
+          dotnet publish "Chassis Master Test Suite.csproj"
+          --configuration Release
+          --runtime win-x64
+          --self-contained true
+          --no-restore
+          --output "artifacts/${{ env.PACKAGE_NAME }}"
+
+      - name: Add version manifest and create archive
+        shell: pwsh
+        run: |
+          $packageDirectory = "artifacts/${{ env.PACKAGE_NAME }}"
+          Set-Content -Path "$packageDirectory/VERSION.txt" -Value "${{ env.CMTS_VERSION }}" -Encoding utf8NoBOM
+
+          $archive = "artifacts/${{ env.PACKAGE_NAME }}.zip"
+          Compress-Archive -Path "$packageDirectory/*" -DestinationPath $archive -CompressionLevel Optimal
+
+          $hash = (Get-FileHash $archive -Algorithm SHA256).Hash
+          "$hash  ${{ env.PACKAGE_NAME }}.zip" | Set-Content "$archive.sha256" -Encoding ascii
+
+      - name: Create GitHub pre-release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            "artifacts/${{ env.PACKAGE_NAME }}.zip#Windows x64 portable package" `
+            "artifacts/${{ env.PACKAGE_NAME }}.zip.sha256#SHA-256 checksum" `
+            --title "Chassis Master Test Suite ${{ env.CMTS_VERSION }} Preview" `
+            --generate-notes `
+            --prerelease `
+            --verify-tag
