@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Chassis Master Test Suite",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ChassisMasterTestSuite.Tests", "ChassisMasterTestSuite.Tests\ChassisMasterTestSuite.Tests.csproj", "{DEED9D19-E10A-4AB6-85BE-7DD1BB6C4B78}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "ChassisMasterTestSuite.Tests", "ChassisMasterTestSuite.Tests", "{B4EFFF82-1C1D-0305-8160-E5D86F23ED11}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Tests", "Tests", "{B4EFFF82-1C1D-0305-8160-E5D86F23ED11}"
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Rendering", "Rendering", "{BB1D306B-D9EF-E029-378E-7CBECB293969}"
 EndProject
