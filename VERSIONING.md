@@ -15,34 +15,37 @@
 
 ---
 
-## 当前基线与本地打包史（写入本规范时）
+## 当前基线与发布史
 
-**尚未**在 GitHub 上创建 Releases，也 **没有** `v*` tag。迄今版本只存在于本机打包目录：
+### 现行账本（2026-10-27 起）
 
-`D:\CMTS\release\`
+| 项 | 状态 |
+|----|------|
+| 最新已发布号 | **`0.3.0`**（GitHub **prerelease**） |
+| Tag | **`v0.3.0`**（挂在发版时的 `main`） |
+| 主 `.csproj` `<Version>` | **`0.3.0`**（与 tag / Release 一致） |
+| GitHub Release | [v0.3.0](https://github.com/aneminence/Chassis-Master-Test-Suite/releases/tag/v0.3.0)（2026-10-27 Asia/Shanghai；Windows x64 portable zip + sha256） |
+| 发版方式 | 推送匹配 `v*` 的 tag 后，`.github/workflows/release.yml` 自动构建并创建 **prerelease** |
+| 下一补丁预览（仅修复/文档/测试/同内容重打） | **`0.3.1`** |
+| 下一功能预览（含新功能或可能破坏既有用法） | **`0.4.0`** |
+
+**禁止**再延续 `0.21.x` 写法。未经用户宣告稳定，不得升 **`1.0.0`**。
+
+### 本地打包史（规范写入前；仍作对照）
+
+早期版本只存在于本机 `D:\CMTS\release\`：
 
 | 本地文件夹 | `VERSION.txt` 所写 | Git | 日期（Asia/Shanghai） | 规范认定 |
 |------------|-------------------|-----|----------------------|----------|
 | `Chassis-Master-Test-Suite-0.1-preview-win-x64` | （无 / 预览） | — | — | 历史：`0.1-preview` |
 | `Chassis-Master-Test-Suite-0.2-win-x64` | `0.2.0` | `120b56f` | 2026-10-10 | **`0.2.0`** |
-| `Chassis-Master-Test-Suite-0.2.1-win-x64` | **`0.21.0`（误写）** | `0ab045d` | 2026-10-12 | 文件夹意图为 **`0.2.1`**；**禁止**再延续 `0.21.x` 这种写法 |
-
-**账本起点（下一包之前）**：上一**意图**预览号为 **`0.2.1`**（以文件夹名为准；`VERSION.txt` 的 `0.21.0` 视为笔误，不纳入 SemVer 序列）。
-
-| 项 | 状态 |
-|----|------|
-| `main` | 已明显超前于 `0ab045d` / `0.2.1` 包 |
-| 主 `.csproj` `<Version>` | **尚未**显式设置；SDK 默认会表现为 `1.0.0`，**不得**当成正式 `1.0.0` |
-| GitHub Releases / tags | 无 |
-| 是否现在打 `0.3.0` 包 | **否**（维护者已明确：本轮只定规范与文档 PR，不打包） |
-
-下一功能向预览包（当用户将来要求时）应为 **`0.3.0`**（升 `x`），而不是 `0.21.1` / `0.22.0` / `0.2.2`（若相对 `0.2.1` 已含大量功能，按规则走 `0.3.0`）。
+| `Chassis-Master-Test-Suite-0.2.1-win-x64` | **`0.21.0`（误写）** | `0ab045d` | 2026-10-12 | 文件夹意图为 **`0.2.1`**；**禁止**再延续 `0.21.x` |
 
 ---
 
 ## 版本号放在哪里（单一事实来源）
 
-版本只应有 **一处权威来源**，发版时再派生 tag / 本地 `VERSION.txt` /（将来）GitHub Release。
+版本只应有 **一处权威来源**，发版时再派生 tag / 本地 `VERSION.txt` / GitHub Release。
 
 | 位置 | 角色 |
 |------|------|
@@ -50,12 +53,12 @@
 | 可选 `<AssemblyVersion>` / `<FileVersion>` | 未单独说明时跟随 `<Version>` |
 | Git tag（发版时） | **`vX.Y.Z`**，与 `<Version>` 的 `X.Y.Z` 一致 |
 | 本地包内 `VERSION.txt` | 打包脚本从 SSOT **生成**，禁止手写另一套号 |
-| GitHub Release（将来若启用） | 基于已推送的 `vX.Y.Z` tag |
+| GitHub Release（prerelease，由 `release.yml` 创建） | 基于已推送的 `vX.Y.Z` tag |
 | `D:\CMTS\release\` 文件夹名 | 应含同一 `X.Y.Z`（如 `...-0.3.0-win-x64`） |
 | `CHANGELOG-quality.md` / README | 可记变更，**不**定义产品版本 |
 
-**对齐**：用户确认后，再把 `<Version>` 设为当前账本号（例如先对齐 `0.2.1`，或发下一包时直接写成新号）。  
-**未获用户确认前**：Agent 不得擅自改 `<Version>`、打 tag、写 GitHub Release，或在 `D:\CMTS\release` 打新包。
+**对齐**：发版前把 `<Version>` 写成目标 `0.x.y`（现行账本为 **`0.3.0`**）。  
+**未获用户发版/bump 指示前**：Agent 不得擅自改 `<Version>`、打 tag、触发 Release，或在 `D:\CMTS\release` 打新包。
 
 ---
 
@@ -81,29 +84,29 @@
 2. 日常合入 `main` 的功能 PR **默认不改** `<Version>`；只在用户要求 **发版 / 本地打包 / bump** 时改。
 3. 预发布后缀可选（如 `0.3.0-alpha.1`）；无用户要求时，预览包直接用 `0.x.y`。
 
-### 从 `main` 打预览包 /（将来）Release
+### 从 `main` 打预览包 / GitHub Release
 
-适用：用户明确要求「把当前 `main` 打成预览包」（仍为 `0.x.y`，不是 `1.0.0`）。
+适用：用户明确要求「把当前 `main` 打成预览包 / 发版」（仍为 `0.x.y`，不是 `1.0.0`）。
 
-1. **基线** = 上一意图发布号（写入时为 **`0.2.1`**；之后以最近一次按本规范发布的为准）。
+1. **基线** = 最近一次按本规范发布的号（现行：**`0.3.0`**）。
 2. **分类 `main` 相对基线的变更**（禁止拍脑袋）：
-   - 仅修复 / 文档 / 测试 / 同内容重打 → **`y+1`**（例：`0.2.1` → `0.2.2`）
-   - 含新功能或可能破坏既有用法 → **`x+1`，`y=0`**（例：`0.2.1` → **`0.3.0`**）
+   - 仅修复 / 文档 / 测试 / 同内容重打 → **`y+1`**（例：`0.3.0` → `0.3.1`）
+   - 含新功能或可能破坏既有用法 → **`x+1`，`y=0`**（例：`0.3.0` → **`0.4.0`**）
    - 两者都有 → 走较高档（功能档）
 3. **禁止跳号**，除非用户写明目标版本。
 4. **发版步骤（仅用户要求时）**：
    - 更新 `.csproj` `<Version>` 到新的 `0.x.y`
-   - 打 tag **`v0.x.y`**（打在含该版本号的提交上；通常基于当时 `main`）
-   - 本地产出到 `D:\CMTS\release\...-0.x.y-win-x64\`，`VERSION.txt` 与 SSOT 一致
-   - 若用户还要求：再发 GitHub Release（当前默认未启用）
+   - 打并推送 tag **`v0.x.y`**（打在含该版本号的提交上；通常基于当时 `main`）
+   - GitHub Actions `release.yml` 会构建 Windows x64 portable 包，并以 **prerelease** 挂到该 tag（附 zip + sha256）
+   - 若仍需本机包：产出到 `D:\CMTS\release\...-0.x.y-win-x64\`，`VERSION.txt` 与 SSOT 一致
 5. **文档-only / 本规范 PR**：**不** bump、**不**打包、**不**打 tag。
 
-示例（基线 `0.2.1`，且 `main` 已合入大量功能）：
+示例（基线 `0.3.0`）：
 
 | 场景 | 下一版本 |
 |------|----------|
-| 用户要求打功能预览包 | **`0.3.0`** |
-| 仅热修上一包、无新功能 | `0.2.2` |
+| 用户要求打功能预览包 | **`0.4.0`** |
+| 仅热修上一包、无新功能 | `0.3.1` |
 | 用户指定确切号 | 以指定为准（须仍是合法 `0.x.y`） |
 | 用户说「现在不打包」 | **不改版本、不产出** |
 
@@ -140,12 +143,12 @@
 
 ---
 
-## Tag 与（将来）GitHub Release 格式
+## Tag 与 GitHub Release 格式
 
-- Tag：**`vX.Y.Z`**（例：`v0.2.1`、`v0.3.0`）
+- Tag：**`vX.Y.Z`**（例：`v0.3.0`、`v0.3.1`）
 - 禁止：无 `v` 前缀、与 `<Version>` 不一致、`0.21.0` 式中间段
-- GitHub Release：可选；启用时必须挂在已有 `vX.Y.Z` tag 上，不另造号段
-- 预览与正式共用 `vX.Y.Z`；是否在说明里写「预览」由用户定
+- GitHub Release：由 `release.yml` 在推送 `v*` tag 后创建 **prerelease**，必须挂在已有 `vX.Y.Z` tag 上，不另造号段
+- 预览与正式共用 `vX.Y.Z`；当前流水线默认 `--prerelease`；是否改为正式 Release 由用户定
 
 ---
 
@@ -164,7 +167,7 @@
 [ ] 改 Version / 打包 / 打 tag / Release 前已 Read VERSIONING.md
 [ ] 用户明确要求发版、打包或 bump
 [ ] 使用 SemVer 0.x.y（三数字）；禁止 0.21.0 式写法
-[ ] 账本基线：上一意图包 0.2.1；下一功能包多为 0.3.0（用户要求时）
+[ ] 账本基线：已发布 0.3.0（prerelease）；下一补丁多为 0.3.1，下一功能多为 0.4.0（用户要求时）
 [ ] 未经用户宣告稳定不得升 1.0.0
 [ ] SSOT = 主 csproj <Version>；发版 tag = vX.Y.Z；VERSION.txt 从 SSOT 生成
 [ ] 不把 SDK 默认 1.0.0 认成正式 1.0.0
@@ -175,4 +178,4 @@
 
 ## English (short)
 
-CMTS follows **SemVer 2.0.0** on **`0.x.y`** until the maintainer declares **`1.0.0`**. There are **no GitHub Releases/tags yet**; versions so far are **local packs** under `D:\CMTS\release` (`0.1-preview` → `0.2.0` → folder `0.2.1` whose `VERSION.txt` wrongly said `0.21.0`). **Do not continue `0.21`-style numbers.** Next feature preview, when asked, should be **`0.3.0`**. SSOT: `<Version>` in `Chassis Master Test Suite.csproj`; shipping adds tag **`vX.Y.Z`** and generated `VERSION.txt`. Docs-only work must not pack or bump. Humans and AI agents must read this file before any version change.
+CMTS follows **SemVer 2.0.0** on **`0.x.y`** until the maintainer declares **`1.0.0`**. Current shipped baseline is **`0.3.0`** (GitHub **prerelease** tag `v0.3.0`; `<Version>` matches). Older local-only packs under `D:\CMTS\release` (`0.1-preview` → `0.2.0` → folder `0.2.1` whose `VERSION.txt` wrongly said `0.21.0`) are historical. **Do not continue `0.21`-style numbers.** Next patch preview, when asked, is usually **`0.3.1`**; next feature preview is usually **`0.4.0`**. SSOT: `<Version>` in `Chassis Master Test Suite.csproj`; shipping pushes tag **`vX.Y.Z`** so `release.yml` builds the Windows portable zip as a prerelease. Docs-only work must not pack or bump. Humans and AI agents must read this file before any version change.
