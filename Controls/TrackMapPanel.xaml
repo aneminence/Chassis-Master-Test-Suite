@@ -117,7 +117,7 @@
             </Grid>
 
             <!-- 地图区 -->
-            <Border Grid.Row="1"
+            <Border x:Name="MapSurface" Grid.Row="1"
                     Background="{DynamicResource MapCanvasBackground}"
                     BorderBrush="{DynamicResource BorderBrushSoft}"
                     BorderThickness="1"

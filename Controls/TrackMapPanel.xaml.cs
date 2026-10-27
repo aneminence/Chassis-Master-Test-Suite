@@ -1516,6 +1516,13 @@ public partial class TrackMapPanel : UserControl
 
     private void ApplyBasemapFromPreferences()
     {
+        // Reveal the acrylic backdrop only in Glass mode without imagery.
+        // Keep a solid backing beneath tiles, including while they are loading.
+        MapSurface?.SetResourceReference(Border.BackgroundProperty,
+            ThemeManager.CurrentMode == AppThemeMode.Glass &&
+            !AppearanceService.Preferences.Map.BasemapEnabled
+                ? "CardBackground"
+                : "MapCanvasBackground");
         _tileLayer?.ApplyPreferences();
         _map3D?.SetImagery(AppearanceService.CurrentMapSource());
         // Basemap ON: hide coordinate grid so satellite imagery stays clean.

@@ -9,6 +9,7 @@ public enum AppThemeMode
     Dark,
     Light,
     IconGold,
+    Glass,
     Custom
 }
 
@@ -21,6 +22,7 @@ public static class ThemeManager
     public const string DarkUri = "pack://application:,,,/Themes/Theme.Dark.xaml";
     public const string LightUri = "pack://application:,,,/Themes/Theme.Light.xaml";
     public const string IconGoldUri = "pack://application:,,,/Themes/Theme.IconGold.xaml";
+    public const string GlassUri = "pack://application:,,,/Themes/Theme.Glass.xaml";
 
     public static AppThemeMode CurrentMode { get; private set; } = AppThemeMode.Dark;
 
@@ -32,6 +34,8 @@ public static class ThemeManager
             return AppThemeMode.Light;
         if (string.Equals(mode, "IconGold", StringComparison.OrdinalIgnoreCase))
             return AppThemeMode.IconGold;
+        if (string.Equals(mode, "Glass", StringComparison.OrdinalIgnoreCase))
+            return AppThemeMode.Glass;
         if (string.Equals(mode, "Custom", StringComparison.OrdinalIgnoreCase))
             return AppThemeMode.Custom;
         return AppThemeMode.Dark;
@@ -41,6 +45,7 @@ public static class ThemeManager
     {
         AppThemeMode.Light => "Light",
         AppThemeMode.IconGold => "IconGold",
+        AppThemeMode.Glass => "Glass",
         AppThemeMode.Custom => "Custom",
         _ => "Dark"
     };
@@ -55,6 +60,7 @@ public static class ThemeManager
         {
             AppThemeMode.Light => LoadDictionary(LightUri),
             AppThemeMode.IconGold => LoadDictionary(IconGoldUri),
+            AppThemeMode.Glass => LoadDictionary(GlassUri),
             _ => LoadDictionary(DarkUri)
         };
 

@@ -28,7 +28,8 @@
          主布局
          ================================================================ -->
 
-    <Grid Margin="10">
+    <Grid Margin="10"
+          Background="{DynamicResource AppBackdropBrush}">
 
                 <Grid.RowDefinitions>
             <!-- 0 toolbar -->
@@ -381,6 +382,12 @@
                                                   IsCheckable="True"
                                                   Click="ThemeIconGold_Click"
                                                   ToolTip="Warm gold dark chrome (VI Variant D)"/>
+                                        <MenuItem x:Name="ThemeGlassItem"
+                                                  Header="半透明玻璃"
+                                                  Style="{StaticResource DarkMenuItemStyle}"
+                                                  IsCheckable="True"
+                                                  Click="ThemeGlass_Click"
+                                                  ToolTip="Layered translucent dark glass"/>
                                         <MenuItem x:Name="ThemeCustomItem"
                                                   Header="自定义…"
                                                   Style="{StaticResource DarkMenuItemStyle}"

@@ -2,6 +2,7 @@
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
     <!-- Dark theme (gold accent) -->
+    <SolidColorBrush x:Key="AppBackdropBrush" Color="Transparent"/>
     <SolidColorBrush x:Key="AppBackground" Color="#0B0E12"/>
     <SolidColorBrush x:Key="PanelBackground" Color="#12171E"/>
     <SolidColorBrush x:Key="CardBackground" Color="#0E131A"/>

@@ -24,6 +24,7 @@ namespace Chassis_Master_Test_Suite;
 public partial class MainWindow : Window
 {
     private const int DwmwaUseImmersiveDarkMode = 20;
+    private const int DwmwaSystemBackdropType = 38;
     private string? _startupWarning;
 
     [DllImport("dwmapi.dll")]
@@ -32,6 +33,20 @@ public partial class MainWindow : Window
         int attribute,
         ref int attributeValue,
         int attributeSize);
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(
+        nint hwnd,
+        ref DwmMargins margins);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DwmMargins
+    {
+        public int Left;
+        public int Right;
+        public int Top;
+        public int Bottom;
+    }
 
     private readonly DataBus _dataBus = new();
 
@@ -308,6 +323,8 @@ public partial class MainWindow : Window
         {
             void RefreshThemeChrome()
             {
+                ApplyNativeWindowStyle();
+
                 foreach (var plot in _plots)
                 {
                     if (plot.WpfPlot is null)
@@ -348,14 +365,50 @@ public partial class MainWindow : Window
     {
         base.OnSourceInitialized(e);
 
-        // Keep the native Windows title bar translucent, but use its dark variant
-        // so it blends with the application's black workspace.
-        var enabled = 1;
+        ApplyNativeWindowStyle();
+    }
+
+    private void ApplyNativeWindowStyle()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == nint.Zero)
+            return;
+
+        var darkEnabled = ThemeManager.CurrentMode == AppThemeMode.Light ? 0 : 1;
         _ = DwmSetWindowAttribute(
-            new WindowInteropHelper(this).Handle,
+            hwnd,
             DwmwaUseImmersiveDarkMode,
-            ref enabled,
+            ref darkEnabled,
             Marshal.SizeOf<int>());
+
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22621))
+            return;
+
+        var glassEnabled = ThemeManager.CurrentMode == AppThemeMode.Glass;
+        var backdropType = glassEnabled ? 3 : 0; // Desktop Acrylic / automatic title-bar backdrop
+        var backdropResult = DwmSetWindowAttribute(
+            hwnd,
+            DwmwaSystemBackdropType,
+            ref backdropType,
+            Marshal.SizeOf<int>());
+
+        glassEnabled &= backdropResult >= 0;
+
+        var margins = new DwmMargins
+        {
+            Left = glassEnabled ? -1 : 0,
+            Right = glassEnabled ? -1 : 0,
+            Top = glassEnabled ? -1 : 0,
+            Bottom = glassEnabled ? -1 : 0
+        };
+        _ = DwmExtendFrameIntoClientArea(hwnd, ref margins);
+
+        if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } compositionTarget)
+        {
+            compositionTarget.BackgroundColor = glassEnabled
+                ? Colors.Transparent
+                : Colors.Black;
+        }
     }
 
     // ============================================================
@@ -1395,6 +1448,11 @@ public partial class MainWindow : Window
         AppearanceService.SetTheme(AppThemeMode.IconGold);
     }
 
+    private void ThemeGlass_Click(object sender, RoutedEventArgs e)
+    {
+        AppearanceService.SetTheme(AppThemeMode.Glass);
+    }
+
     // Custom theme is a placeholder in the other-themes menu (IsEnabled=false).
     private void ThemeCustom_Click(object sender, RoutedEventArgs e)
     {
@@ -1411,7 +1469,9 @@ public partial class MainWindow : Window
         var showLight = mode == AppThemeMode.Light;
 
         // Label: current binary mode; when Custom, still show last Light/Dark target as Dark→toggle to Light.
-        ThemeToggleButton.Content = Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
+        ThemeToggleButton.Content = mode == AppThemeMode.Glass
+            ? (Loc.Language == Loc.En ? "Glass" : "玻璃")
+            : Loc.T(showLight ? "Menu.Theme.Light" : "Menu.Theme.Dark");
         ThemeToggleButton.ToolTip = Loc.T("Menu.ThemeToggleTip");
         ThemeToggleButton.FontWeight = FontWeights.Normal;
 
@@ -1427,6 +1487,8 @@ public partial class MainWindow : Window
 
         if (ThemeIconGoldItem is not null)
             ThemeIconGoldItem.IsChecked = mode == AppThemeMode.IconGold;
+        if (ThemeGlassItem is not null)
+            ThemeGlassItem.IsChecked = mode == AppThemeMode.Glass;
     }
 
     private void ApplyLocalizedToolbar()
@@ -1448,6 +1510,11 @@ public partial class MainWindow : Window
         {
             ThemeIconGoldItem.Header = Loc.T("Menu.Theme.IconGold");
             ThemeIconGoldItem.ToolTip = Loc.T("Menu.Theme.IconGoldTip");
+        }
+        if (ThemeGlassItem is not null)
+        {
+            ThemeGlassItem.Header = Loc.T("Menu.Theme.Glass");
+            ThemeGlassItem.ToolTip = Loc.T("Menu.Theme.GlassTip");
         }
         if (ThemeCustomItem is not null)
         {

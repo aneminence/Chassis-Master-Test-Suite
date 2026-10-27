@@ -16,7 +16,7 @@ public sealed class AppPreferences
     /// <summary>zh-CN | en</summary>
     public string Language { get; set; } = "zh-CN";
 
-    /// <summary>Dark | Light | Custom</summary>
+    /// <summary>Dark | Light | IconGold | Glass | Custom</summary>
     public string ThemeMode { get; set; } = "Dark";
 
     public CustomThemeColors? CustomColors { get; set; }
