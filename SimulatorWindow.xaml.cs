@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Media3D;
@@ -15,6 +15,7 @@ public partial class SimulatorWindow : Window
     private Task? _simulatorTask;
 
     private AxisAngleRotation3D? _vehicleHeadingRotation;
+    private AxisAngleRotation3D? _vehiclePitchRotation;
     private TranslateTransform3D? _vehicleTranslation;
     private AxisAngleRotation3D? _frontLeftSteeringRotation;
     private AxisAngleRotation3D? _frontRightSteeringRotation;
@@ -30,14 +31,19 @@ public partial class SimulatorWindow : Window
     private bool _followCamera = true;
     private bool _paused;
 
+    private Point3D _chaseCamPos;
+    private Vector3D _chaseLook;
+    private Vector3D _chaseUp = new(0, 0, 1);
+    private bool _chaseInitialized;
+    private DateTime _lastCamTick = DateTime.UtcNow;
+
     public SimulatorWindow(VehicleSimulator simulator)
     {
         InitializeComponent();
-
         _simulator = simulator;
 
         var start = SimulatorSceneBuilder.GetStartPose();
-        _simulator.SetStartPose(start.X, start.Y, start.HeadingDeg);
+        _simulator.SetStartPose(start.X, start.Y, start.Z, start.HeadingDeg);
 
         BuildScene();
 
@@ -62,8 +68,9 @@ public partial class SimulatorWindow : Window
         _simulator.ResetVehicle();
         _wheelRotationAngle = 0.0;
         _hasPreviousVehiclePosition = false;
+        _chaseInitialized = false;
         ApplyFollowCameraMode();
-        UpdateCamera(_simulator.GetState());
+        UpdateCamera(_simulator.GetState(), 1.0 / 60.0);
 
         if (_simulatorCts == null)
         {
@@ -87,7 +94,7 @@ public partial class SimulatorWindow : Window
             {
                 MessageBox.Show(
                     this,
-                    $"Vehicle Simulator 运行失败：\n\n{ex.Message}",
+                    $"Vehicle Simulator failed:\n\n{ex.Message}",
                     "CMTS Simulator Error",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
@@ -99,7 +106,6 @@ public partial class SimulatorWindow : Window
     {
         _renderTimer.Stop();
         _simulator.ReleaseControls();
-
         if (_simulatorCts != null)
         {
             _simulatorCts.Cancel();
@@ -110,24 +116,23 @@ public partial class SimulatorWindow : Window
 
     private void BuildScene()
     {
-        // 保留 XAML 中的灯光（SunLight / DefaultLights），清掉其它动态内容后重建赛道与车。
         for (var i = Viewport.Children.Count - 1; i >= 0; i--)
         {
-            var child = Viewport.Children[i];
-            var typeName = child.GetType().Name;
+            var typeName = Viewport.Children[i].GetType().Name;
             if (typeName is not ("SunLight" or "DefaultLights"))
             {
                 Viewport.Children.RemoveAt(i);
             }
         }
 
-        Viewport.Children.Add(new System.Windows.Media.Media3D.ModelVisual3D
+        Viewport.Children.Add(new ModelVisual3D
         {
             Content = SimulatorSceneBuilder.BuildEnvironment()
         });
 
         var vehicle = SimulatorSceneBuilder.BuildVehicle(
             out _vehicleHeadingRotation,
+            out _vehiclePitchRotation,
             out _vehicleTranslation,
             out _frontLeftSteeringRotation,
             out _frontRightSteeringRotation,
@@ -136,21 +141,22 @@ public partial class SimulatorWindow : Window
             out _rearLeftRollingRotation,
             out _rearRightRollingRotation);
 
-        Viewport.Children.Add(new System.Windows.Media.Media3D.ModelVisual3D
-        {
-            Content = vehicle
-        });
+        Viewport.Children.Add(new ModelVisual3D { Content = vehicle });
     }
 
     private void RenderTimer_Tick(object? sender, EventArgs e)
     {
+        var now = DateTime.UtcNow;
+        var dt = (now - _lastCamTick).TotalSeconds;
+        _lastCamTick = now;
+        if (dt <= 0 || dt > 0.1) dt = 1.0 / 60.0;
+
         var state = _simulator.GetState();
         UpdateVehicleVisual(state);
         UpdateWheelRolling(state);
-
         if (_followCamera)
         {
-            UpdateCamera(state);
+            UpdateCamera(state, dt);
         }
 
         UpdateStatus(state);
@@ -162,12 +168,18 @@ public partial class SimulatorWindow : Window
         {
             _vehicleTranslation.OffsetX = state.X;
             _vehicleTranslation.OffsetY = state.Y;
-            _vehicleTranslation.OffsetZ = 0.0;
+            _vehicleTranslation.OffsetZ = state.Z;
         }
 
         if (_vehicleHeadingRotation != null)
         {
             _vehicleHeadingRotation.Angle = state.HeadingDeg;
+        }
+
+        if (_vehiclePitchRotation != null)
+        {
+            // Pitch about +Y: positive nose up when climbing (+tangent.Z).
+            _vehiclePitchRotation.Angle = -state.PitchDeg;
         }
 
         if (_frontLeftSteeringRotation != null)
@@ -197,72 +209,90 @@ public partial class SimulatorWindow : Window
         _lastVehicleY = state.Y;
 
         var headingRad = state.HeadingDeg * Math.PI / 180.0;
-        var forwardX = Math.Cos(headingRad);
-        var forwardY = Math.Sin(headingRad);
-        var signedDistance = deltaX * forwardX + deltaY * forwardY;
-
-        if (Math.Abs(signedDistance) < 1e-7)
-        {
-            return;
-        }
+        var signedDistance = deltaX * Math.Cos(headingRad) + deltaY * Math.Sin(headingRad);
+        if (Math.Abs(signedDistance) < 1e-7) return;
 
         var deltaAngleDeg = signedDistance / SimulatorSceneBuilder.WheelRadius * 180.0 / Math.PI;
-
-        // 绕车体 +Y 滚动：前进用负角，使轮顶朝 +X。
         _wheelRotationAngle -= deltaAngleDeg;
-        if (Math.Abs(_wheelRotationAngle) > 360000.0)
-        {
-            _wheelRotationAngle %= 360.0;
-        }
+        if (Math.Abs(_wheelRotationAngle) > 360000.0) _wheelRotationAngle %= 360.0;
 
-        if (_frontLeftRollingRotation != null)
-        {
-            _frontLeftRollingRotation.Angle = _wheelRotationAngle;
-        }
-
-        if (_frontRightRollingRotation != null)
-        {
-            _frontRightRollingRotation.Angle = _wheelRotationAngle;
-        }
-
-        if (_rearLeftRollingRotation != null)
-        {
-            _rearLeftRollingRotation.Angle = _wheelRotationAngle;
-        }
-
-        if (_rearRightRollingRotation != null)
-        {
-            _rearRightRollingRotation.Angle = _wheelRotationAngle;
-        }
+        if (_frontLeftRollingRotation != null) _frontLeftRollingRotation.Angle = _wheelRotationAngle;
+        if (_frontRightRollingRotation != null) _frontRightRollingRotation.Angle = _wheelRotationAngle;
+        if (_rearLeftRollingRotation != null) _rearLeftRollingRotation.Angle = _wheelRotationAngle;
+        if (_rearRightRollingRotation != null) _rearRightRollingRotation.Angle = _wheelRotationAngle;
     }
 
-    private void UpdateCamera(VehicleState state)
+    private void UpdateCamera(VehicleState state, double dt)
     {
         var headingRad = state.HeadingDeg * Math.PI / 180.0;
         var forwardX = Math.Cos(headingRad);
         var forwardY = Math.Sin(headingRad);
+        var leftX = -forwardY;
+        var leftY = forwardX;
 
-        const double cameraDistance = 9.0;
-        const double cameraHeight = 5.0;
-        const double lookAhead = 6.0;
+        const double cameraDistance = 11.0;
+        const double cameraHeight = 4.2;
+        const double lookAhead = 14.0;
+        const double positionLag = 0.18;
+        const double lookLag = 0.28;
 
-        var cameraX = state.X - forwardX * cameraDistance;
-        var cameraY = state.Y - forwardY * cameraDistance;
+        var desiredPos = new Point3D(
+            state.X - forwardX * cameraDistance,
+            state.Y - forwardY * cameraDistance,
+            state.Z + cameraHeight);
 
-        var targetX = state.X + forwardX * lookAhead;
-        var targetY = state.Y + forwardY * lookAhead;
+        var lookTarget = new Point3D(
+            state.X + forwardX * lookAhead,
+            state.Y + forwardY * lookAhead,
+            state.Z + 1.2);
 
-        var camera = Viewport.Camera as PerspectiveCamera;
-        if (camera == null)
+        // Bank from lateral accel (LFS-ish): lean into turn.
+        var bankRad = Math.Clamp(-state.LateralAcceleration * 0.035, -0.22, 0.22);
+        var up = new Vector3D(
+            leftX * Math.Sin(bankRad),
+            leftY * Math.Sin(bankRad),
+            Math.Cos(bankRad));
+        up.Normalize();
+
+        if (!_chaseInitialized)
         {
-            return;
+            _chaseCamPos = desiredPos;
+            _chaseLook = lookTarget - desiredPos;
+            _chaseLook.Normalize();
+            _chaseUp = up;
+            _chaseInitialized = true;
+        }
+        else
+        {
+            var posAlpha = 1.0 - Math.Exp(-dt / positionLag);
+            var lookAlpha = 1.0 - Math.Exp(-dt / lookLag);
+            _chaseCamPos = new Point3D(
+                _chaseCamPos.X + (desiredPos.X - _chaseCamPos.X) * posAlpha,
+                _chaseCamPos.Y + (desiredPos.Y - _chaseCamPos.Y) * posAlpha,
+                _chaseCamPos.Z + (desiredPos.Z - _chaseCamPos.Z) * posAlpha);
+
+            var desiredLook = lookTarget - _chaseCamPos;
+            if (desiredLook.Length > 1e-6)
+            {
+                desiredLook.Normalize();
+                _chaseLook = new Vector3D(
+                    _chaseLook.X + (desiredLook.X - _chaseLook.X) * lookAlpha,
+                    _chaseLook.Y + (desiredLook.Y - _chaseLook.Y) * lookAlpha,
+                    _chaseLook.Z + (desiredLook.Z - _chaseLook.Z) * lookAlpha);
+                if (_chaseLook.Length > 1e-6) _chaseLook.Normalize();
+            }
+
+            _chaseUp = new Vector3D(
+                _chaseUp.X + (up.X - _chaseUp.X) * lookAlpha,
+                _chaseUp.Y + (up.Y - _chaseUp.Y) * lookAlpha,
+                _chaseUp.Z + (up.Z - _chaseUp.Z) * lookAlpha);
+            if (_chaseUp.Length > 1e-6) _chaseUp.Normalize();
         }
 
-        camera.Position = new Point3D(cameraX, cameraY, cameraHeight);
-        var look = new Vector3D(targetX - cameraX, targetY - cameraY, 1.2 - cameraHeight);
-        look.Normalize();
-        camera.LookDirection = look;
-        camera.UpDirection = new Vector3D(0, 0, 1);
+        if (Viewport.Camera is not PerspectiveCamera camera) return;
+        camera.Position = _chaseCamPos;
+        camera.LookDirection = _chaseLook;
+        camera.UpDirection = _chaseUp;
     }
 
     private void UpdateStatus(VehicleState state)
@@ -275,7 +305,7 @@ public partial class SimulatorWindow : Window
         LatAccelText.Text = $"{state.LateralAcceleration:0.00} m/s²";
         YawRateText.Text = $"{state.YawRateDegPerSec:0.00} deg/s";
         HeadingText.Text = $"{state.HeadingDeg:0.0}°";
-        PositionText.Text = $"{state.X:0.0} / {state.Y:0.0} m";
+        PositionText.Text = $"{state.X:0.0} / {state.Y:0.0} / z{state.Z:0.0} m";
     }
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
@@ -285,6 +315,7 @@ public partial class SimulatorWindow : Window
             _simulator.ResetVehicle();
             _wheelRotationAngle = 0.0;
             _hasPreviousVehiclePosition = false;
+            _chaseInitialized = false;
             e.Handled = true;
             return;
         }
@@ -292,6 +323,7 @@ public partial class SimulatorWindow : Window
         if (e.Key == Key.C)
         {
             _followCamera = !_followCamera;
+            if (_followCamera) _chaseInitialized = false;
             ApplyFollowCameraMode();
             e.Handled = true;
             return;
@@ -301,14 +333,10 @@ public partial class SimulatorWindow : Window
         {
             _paused = !_paused;
             _simulator.IsPaused = _paused;
-            if (_paused)
-            {
-                _simulator.ReleaseControls();
-            }
-
+            if (_paused) _simulator.ReleaseControls();
             CameraModeText.Text = _paused
-                ? "PAUSED  (P 继续)"
-                : (_followCamera ? "Camera: Follow  (C 切换)" : "Camera: Free  (C 切换)");
+                ? "PAUSED  (P resume)"
+                : (_followCamera ? "Camera: Chase  (C toggle)" : "Camera: Free  (C toggle)");
             e.Handled = true;
             return;
         }
@@ -338,10 +366,8 @@ public partial class SimulatorWindow : Window
     private void ApplyFollowCameraMode()
     {
         CameraModeText.Text = _followCamera
-            ? "Camera: Follow  (C 切换)"
-            : "Camera: Free  (C 切换)";
-
-        // 跟车时关掉 Helix 旋转，避免抢相机；自由视角恢复鼠标控制。
+            ? "Camera: Chase  (C toggle)"
+            : "Camera: Free  (C toggle)";
         Viewport.IsRotationEnabled = !_followCamera;
         Viewport.IsPanEnabled = !_followCamera;
         Viewport.IsZoomEnabled = true;
@@ -349,30 +375,11 @@ public partial class SimulatorWindow : Window
 
     private void ApplyKeyboardControls()
     {
-        double throttle = 0.0;
-        double brake = 0.0;
-        double steering = 0.0;
-
-        if (Keyboard.IsKeyDown(Key.W))
-        {
-            throttle = 1.0;
-        }
-
-        if (Keyboard.IsKeyDown(Key.S) || Keyboard.IsKeyDown(Key.Space))
-        {
-            brake = 1.0;
-        }
-
-        if (Keyboard.IsKeyDown(Key.A))
-        {
-            steering = 1.0;
-        }
-
-        if (Keyboard.IsKeyDown(Key.D))
-        {
-            steering = -1.0;
-        }
-
+        double throttle = 0.0, brake = 0.0, steering = 0.0;
+        if (Keyboard.IsKeyDown(Key.W)) throttle = 1.0;
+        if (Keyboard.IsKeyDown(Key.S) || Keyboard.IsKeyDown(Key.Space)) brake = 1.0;
+        if (Keyboard.IsKeyDown(Key.A)) steering = 1.0;
+        if (Keyboard.IsKeyDown(Key.D)) steering = -1.0;
         _simulator.SetControls(throttle, brake, steering);
     }
 
@@ -381,4 +388,3 @@ public partial class SimulatorWindow : Window
         _simulator.ReleaseControls();
     }
 }
-

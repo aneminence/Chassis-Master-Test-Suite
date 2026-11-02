@@ -53,12 +53,12 @@
                            Foreground="{DynamicResource TextPrimary}"
                            FontSize="20"
                            FontWeight="SemiBold"/>
-                <TextBlock Text="Helix 3D / 封闭赛道 / 100 Hz UDP"
+                <TextBlock Text="Helix 3D / Spa-style elevation / 100 Hz UDP"
                            Foreground="{DynamicResource SimulatorMutedForeground}"
                            FontSize="12"
                            Margin="0,3,0,0"/>
                 <TextBlock x:Name="CameraModeText"
-                           Text="Camera: Follow  (C 切换)"
+                           Text="Camera: Chase  (C toggle)"
                            Foreground="{DynamicResource SimulatorLabelForeground}"
                            FontSize="12"
                            Margin="0,6,0,0"/>
@@ -236,3 +236,4 @@
         </Border>
     </Grid>
 </Window>
+

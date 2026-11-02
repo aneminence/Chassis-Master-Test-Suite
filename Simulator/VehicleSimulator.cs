@@ -1,21 +1,11 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using Chassis_Master_Test_Suite.Communication;
 
 namespace Chassis_Master_Test_Suite.Simulator;
 
 /// <summary>
-/// CMTS 人工驾驶车辆模拟器：100 Hz 运动学 + UDP 输出。
-///
-/// 车体 / 世界水平面约定（右手系，用户锁定）：
-///   X = 前进（Heading = 0° 时）
-///   Y = 车辆左侧
-///   Z = 向上
-///
-/// Heading：0° = +X；+ = 左转（朝向 +Y）；- = 右转。
-/// forward = (cos(Heading), sin(Heading)) 在 X-Y 平面。
-///
-/// 虚拟 GPS：纬度沿 +X（北），经度沿 +Y（东，与旧版「左/前」映射到 lon/lat 的数值约定对齐，
-/// 即旧 Z→lat、旧 X→lon，现改为 X→lat、Y→lon）。
+/// CMTS driving simulator: soft steering + single-track (bicycle) yaw/sideslip, 100 Hz UDP.
+/// Body/world: X forward (heading 0), Y left, Z up. Vehicle Z follows Spa track elevation.
 /// </summary>
 public sealed class VehicleSimulator
 {
@@ -27,27 +17,44 @@ public sealed class VehicleSimulator
     public static VehicleSimulator? Current { get; private set; }
 
     private const double WheelBase = 2.80;
-    private const double MaxSteeringAngleDeg = 32.0;
-    private const double MaxAcceleration = 4.0;
-    private const double MaxBrakeDeceleration = 8.0;
-    private const double RollingResistance = 0.12;
-    private const double AeroDragCoefficient = 0.0025;
+    private const double DistanceToFrontAxle = 1.40;
+    private const double DistanceToRearAxle = 1.40;
+    private const double VehicleMass = 1450.0;
+    private const double YawInertia = 2500.0;
+    private const double FrontCorneringStiffness = 70000.0;
+    private const double RearCorneringStiffness = 80000.0;
+    private const double MaxSteeringAngleDeg = 28.0;
+    private const double SteeringTimeConstant = 0.22;
+    private const double MaxAcceleration = 4.2;
+    private const double MaxBrakeDeceleration = 9.0;
+    private const double RollingResistance = 0.14;
+    private const double AeroDragCoefficient = 0.0028;
 
     private double _speedMps;
+    private double _lateralVelocity;
+    private double _yawRateRad;
     private double _x;
     private double _y;
+    private double _z;
     private double _headingDeg;
     private double _steeringAngleDeg;
+    private double _steeringCommandDeg;
     private double _longitudinalAcceleration;
     private double _lateralAcceleration;
+    private double _verticalAcceleration;
     private double _yawRateDegPerSec;
+    private double _pitchDeg;
     private double _throttle;
     private double _brake;
     private double _steeringInput;
     private bool _paused;
+    private double _prevZ;
+    private double _prevVz;
+    private bool _hasPrevZ;
 
     private double _startX;
     private double _startY;
+    private double _startZ;
     private double _startHeadingDeg;
 
     public VehicleSimulator(UdpSender udpSender)
@@ -56,20 +63,17 @@ public sealed class VehicleSimulator
         Current = this;
     }
 
-    /// <summary>设置复位起点（赛道起点）。</summary>
-    public void SetStartPose(double x, double y, double headingDeg)
+    public void SetStartPose(double x, double y, double z, double headingDeg)
     {
         lock (_stateLock)
         {
             _startX = x;
             _startY = y;
+            _startZ = z;
             _startHeadingDeg = NormalizeHeading(headingDeg);
         }
     }
 
-    /// <summary>
-    /// throttle/brake: 0~1；steering: +1 = 左，-1 = 右。
-    /// </summary>
     public void SetControls(double throttle, double brake, double steering)
     {
         lock (_stateLock)
@@ -102,15 +106,22 @@ public sealed class VehicleSimulator
         {
             _x = _startX;
             _y = _startY;
+            _z = _startZ;
             _headingDeg = _startHeadingDeg;
             _steeringAngleDeg = 0.0;
+            _steeringCommandDeg = 0.0;
             _speedMps = 0.0;
+            _lateralVelocity = 0.0;
+            _yawRateRad = 0.0;
             _longitudinalAcceleration = 0.0;
             _lateralAcceleration = 0.0;
+            _verticalAcceleration = 0.0;
             _yawRateDegPerSec = 0.0;
+            _pitchDeg = 0.0;
             _throttle = 0.0;
             _brake = 0.0;
             _steeringInput = 0.0;
+            _hasPrevZ = false;
         }
     }
 
@@ -118,19 +129,7 @@ public sealed class VehicleSimulator
     {
         lock (_stateLock)
         {
-            return new VehicleState
-            {
-                X = _x,
-                Y = _y,
-                SpeedMps = _speedMps,
-                HeadingDeg = _headingDeg,
-                SteeringAngleDeg = _steeringAngleDeg,
-                LongitudinalAcceleration = _longitudinalAcceleration,
-                LateralAcceleration = _lateralAcceleration,
-                YawRateDegPerSec = _yawRateDegPerSec,
-                Throttle = _throttle,
-                Brake = _brake
-            };
+            return SnapshotUnlocked();
         }
     }
 
@@ -138,7 +137,6 @@ public sealed class VehicleSimulator
     {
         const int frequencyHz = 100;
         var period = TimeSpan.FromMilliseconds(1000.0 / frequencyHz);
-
         _stopwatch.Restart();
         var lastSeconds = _stopwatch.Elapsed.TotalSeconds;
 
@@ -147,118 +145,137 @@ public sealed class VehicleSimulator
             var now = _stopwatch.Elapsed.TotalSeconds;
             var dt = now - lastSeconds;
             lastSeconds = now;
-
-            if (dt <= 0)
-            {
-                dt = period.TotalSeconds;
-            }
-            else if (dt > 0.05)
-            {
-                dt = 0.05;
-            }
+            if (dt <= 0) dt = period.TotalSeconds;
+            else if (dt > 0.05) dt = 0.05;
 
             bool paused;
-            lock (_stateLock)
-            {
-                paused = _paused;
-            }
-
-            if (!paused)
-            {
-                Step(dt);
-            }
-
-            // 暂停时仍发当前包，保持主窗链路活着
+            lock (_stateLock) { paused = _paused; }
+            if (!paused) Step(dt);
             await SendCurrentPacket().ConfigureAwait(false);
 
-            try
-            {
-                await Task.Delay(period, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
-            }
+            try { await Task.Delay(period, cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) { break; }
         }
     }
 
     private void Step(double dt)
     {
-        double throttle;
-        double brake;
-        double steeringInput;
-
         lock (_stateLock)
         {
-            throttle = _throttle;
-            brake = _brake;
-            steeringInput = _steeringInput;
+            // Speed-dependent max steer (high speed locks less angle) + 1st-order filter.
+            var speedKph = Math.Abs(_speedMps) * 3.6;
+            var steerScale = 1.0 / (1.0 + Math.Pow(speedKph / 95.0, 1.6));
+            var targetSteer = _steeringInput * MaxSteeringAngleDeg * steerScale;
+            var alpha = 1.0 - Math.Exp(-dt / SteeringTimeConstant);
+            _steeringCommandDeg += (targetSteer - _steeringCommandDeg) * alpha;
+            _steeringAngleDeg = _steeringCommandDeg;
 
-            var targetSteering = steeringInput * MaxSteeringAngleDeg;
-            const double steeringResponse = 7.0;
-            var steeringDifference = targetSteering - _steeringAngleDeg;
-            _steeringAngleDeg += steeringDifference * Math.Clamp(steeringResponse * dt, 0.0, 1.0);
-
-            var accel = throttle * MaxAcceleration - brake * MaxBrakeDeceleration;
-            accel -= RollingResistance * Math.Sign(_speedMps);
+            var accel = _throttle * MaxAcceleration - _brake * MaxBrakeDeceleration;
+            accel -= RollingResistance * Math.Sign(_speedMps == 0 ? _throttle - _brake : _speedMps);
             accel -= AeroDragCoefficient * _speedMps * Math.Abs(_speedMps);
-
             _longitudinalAcceleration = accel;
             _speedMps += accel * dt;
-
-            if (brake > 0.05 && Math.Abs(_speedMps) < 0.05)
+            if (_brake > 0.05 && Math.Abs(_speedMps) < 0.08)
             {
                 _speedMps = 0.0;
+                _lateralVelocity = 0.0;
+                _yawRateRad = 0.0;
                 _longitudinalAcceleration = 0.0;
             }
 
-            var steeringRad = _steeringAngleDeg * Math.PI / 180.0;
-            double yawRateRad;
-            if (Math.Abs(_speedMps) > 0.05)
+            var u = Math.Max(Math.Abs(_speedMps), 0.5) * Math.Sign(_speedMps == 0 ? 1.0 : _speedMps);
+            if (Math.Abs(_speedMps) < 0.35)
             {
-                yawRateRad = _speedMps / WheelBase * Math.Tan(steeringRad);
+                // Low-speed: damped bicycle → near kinematic.
+                var delta = _steeringAngleDeg * Math.PI / 180.0;
+                var yawTarget = _speedMps / WheelBase * Math.Tan(delta);
+                _yawRateRad += (yawTarget - _yawRateRad) * Math.Clamp(6.0 * dt, 0, 1);
+                _lateralVelocity *= Math.Exp(-8.0 * dt);
             }
             else
             {
-                yawRateRad = 0.0;
+                var delta = _steeringAngleDeg * Math.PI / 180.0;
+                var a = DistanceToFrontAxle;
+                var b = DistanceToRearAxle;
+                var slipFront = (_lateralVelocity + a * _yawRateRad) / u - delta;
+                var slipRear = (_lateralVelocity - b * _yawRateRad) / u;
+                var fyf = -FrontCorneringStiffness * slipFront;
+                var fyr = -RearCorneringStiffness * slipRear;
+
+                var vDot = (fyf + fyr) / VehicleMass - _speedMps * _yawRateRad;
+                var rDot = (a * fyf - b * fyr) / YawInertia;
+                _lateralVelocity += vDot * dt;
+                _yawRateRad += rDot * dt;
+
+                // Soft clamp wild rates
+                _yawRateRad = Math.Clamp(_yawRateRad, -1.6, 1.6);
+                _lateralVelocity = Math.Clamp(_lateralVelocity, -12.0, 12.0);
             }
 
-            _yawRateDegPerSec = yawRateRad * 180.0 / Math.PI;
+            _yawRateDegPerSec = _yawRateRad * 180.0 / Math.PI;
             _headingDeg = NormalizeHeading(_headingDeg + _yawRateDegPerSec * dt);
-            _lateralAcceleration = _speedMps * yawRateRad;
+            _lateralAcceleration = (_speedMps * _yawRateRad) + 0.15 * _lateralVelocity;
 
             var headingRad = _headingDeg * Math.PI / 180.0;
-            var velocityX = _speedMps * Math.Cos(headingRad);
-            var velocityY = _speedMps * Math.Sin(headingRad);
-            _x += velocityX * dt;
-            _y += velocityY * dt;
+            var cos = Math.Cos(headingRad);
+            var sin = Math.Sin(headingRad);
+            // Body: +X forward, +Y left → world
+            var vxWorld = _speedMps * cos - _lateralVelocity * sin;
+            var vyWorld = _speedMps * sin + _lateralVelocity * cos;
+            _x += vxWorld * dt;
+            _y += vyWorld * dt;
+
+            if (SpaTrackCenterline.TrySampleAt(_x, _y, out var groundZ, out var tangent, out _))
+            {
+                _z = groundZ;
+                var horiz = Math.Sqrt(tangent.X * tangent.X + tangent.Y * tangent.Y);
+                _pitchDeg = horiz > 1e-6
+                    ? Math.Atan2(tangent.Z, horiz) * 180.0 / Math.PI
+                    : 0.0;
+            }
+
+            if (_hasPrevZ)
+            {
+                var vz = (_z - _prevZ) / Math.Max(dt, 1e-4);
+                _verticalAcceleration = (vz - _prevVz) / Math.Max(dt, 1e-4);
+                _prevVz = vz;
+            }
+            else
+            {
+                _prevVz = 0;
+                _verticalAcceleration = 0;
+                _hasPrevZ = true;
+            }
+
+            _prevZ = _z;
         }
     }
+
+    private VehicleState SnapshotUnlocked() => new()
+    {
+        X = _x,
+        Y = _y,
+        Z = _z,
+        SpeedMps = _speedMps,
+        HeadingDeg = _headingDeg,
+        PitchDeg = _pitchDeg,
+        SteeringAngleDeg = _steeringAngleDeg,
+        LongitudinalAcceleration = _longitudinalAcceleration,
+        LateralAcceleration = _lateralAcceleration,
+        VerticalAcceleration = _verticalAcceleration,
+        YawRateDegPerSec = _yawRateDegPerSec,
+        Throttle = _throttle,
+        Brake = _brake
+    };
 
     private async Task SendCurrentPacket()
     {
         VehicleState state;
-        lock (_stateLock)
-        {
-            state = new VehicleState
-            {
-                X = _x,
-                Y = _y,
-                SpeedMps = _speedMps,
-                HeadingDeg = _headingDeg,
-                SteeringAngleDeg = _steeringAngleDeg,
-                LongitudinalAcceleration = _longitudinalAcceleration,
-                LateralAcceleration = _lateralAcceleration,
-                YawRateDegPerSec = _yawRateDegPerSec,
-                Throttle = _throttle,
-                Brake = _brake
-            };
-        }
+        lock (_stateLock) { state = SnapshotUnlocked(); }
 
         const double originLatitude = 31.2304;
         const double originLongitude = 121.4737;
         const double metersPerDegreeLatitude = 111320.0;
-
         var latitude = originLatitude + state.X / metersPerDegreeLatitude;
         var metersPerDegreeLongitude =
             metersPerDegreeLatitude * Math.Cos(originLatitude * Math.PI / 180.0);
@@ -272,11 +289,11 @@ public sealed class VehicleSimulator
             SpeedKph = state.SpeedMps * 3.6,
             LongitudinalAcceleration = state.LongitudinalAcceleration,
             LateralAcceleration = state.LateralAcceleration,
-            VerticalAcceleration = 0.0,
+            VerticalAcceleration = state.VerticalAcceleration,
             YawRate = state.YawRateDegPerSec,
             Latitude = latitude,
             Longitude = longitude,
-            Altitude = 10.0,
+            Altitude = 10.0 + state.Z,
             Heading = state.HeadingDeg
         };
 
@@ -285,16 +302,8 @@ public sealed class VehicleSimulator
 
     private static double NormalizeHeading(double heading)
     {
-        while (heading >= 360.0)
-        {
-            heading -= 360.0;
-        }
-
-        while (heading < 0.0)
-        {
-            heading += 360.0;
-        }
-
+        while (heading >= 360.0) heading -= 360.0;
+        while (heading < 0.0) heading += 360.0;
         return heading;
     }
 }
@@ -303,13 +312,15 @@ public sealed class VehicleState
 {
     public double X { get; init; }
     public double Y { get; init; }
+    public double Z { get; init; }
     public double SpeedMps { get; init; }
     public double HeadingDeg { get; init; }
+    public double PitchDeg { get; init; }
     public double SteeringAngleDeg { get; init; }
     public double LongitudinalAcceleration { get; init; }
     public double LateralAcceleration { get; init; }
+    public double VerticalAcceleration { get; init; }
     public double YawRateDegPerSec { get; init; }
     public double Throttle { get; init; }
     public double Brake { get; init; }
 }
-
