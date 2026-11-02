@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media.Media3D;
@@ -28,14 +29,14 @@ public partial class SimulatorWindow : Window
     private double _lastVehicleX;
     private double _lastVehicleY;
     private bool _hasPreviousVehiclePosition;
-    private bool _followCamera = true;
-    private bool _paused;
 
     private Point3D _chaseCamPos;
     private Vector3D _chaseLook;
     private Vector3D _chaseUp = new(0, 0, 1);
     private bool _chaseInitialized;
-    private DateTime _lastCamTick = DateTime.UtcNow;
+    private readonly Stopwatch _renderClock = Stopwatch.StartNew();
+    private double _lastRenderSeconds;
+    private VehicleState? _displayState;
 
     public SimulatorWindow(VehicleSimulator simulator)
     {
@@ -146,20 +147,35 @@ public partial class SimulatorWindow : Window
 
     private void RenderTimer_Tick(object? sender, EventArgs e)
     {
-        var now = DateTime.UtcNow;
-        var dt = (now - _lastCamTick).TotalSeconds;
-        _lastCamTick = now;
-        if (dt <= 0 || dt > 0.1) dt = 1.0 / 60.0;
+        var now = _renderClock.Elapsed.TotalSeconds;
+        var dt = Math.Max(0.0001, now - _lastRenderSeconds);
+        _lastRenderSeconds = now;
 
-        var state = _simulator.GetState();
+        var raw = _simulator.GetState();
+        var state = SmoothDisplayState(raw, dt);
         UpdateVehicleVisual(state);
         UpdateWheelRolling(state);
-        if (_followCamera)
-        {
-            UpdateCamera(state, dt);
-        }
+        UpdateCamera(state, dt);
 
-        UpdateStatus(state);
+        UpdateStatus(raw);
+    }
+
+    private VehicleState SmoothDisplayState(VehicleState raw, double dt)
+    {
+        var previous = _displayState;
+        if (previous == null || !_chaseInitialized || dt > .25)
+            return _displayState = raw;
+        var alpha = 1 - Math.Exp(-dt / .045);
+        double Blend(double a, double b) => a + (b - a) * alpha;
+        var headingDelta = (raw.HeadingDeg - previous.HeadingDeg + 540) % 360 - 180;
+        return _displayState = new VehicleState
+        {
+            X = Blend(previous.X, raw.X), Y = Blend(previous.Y, raw.Y), Z = Blend(previous.Z, raw.Z),
+            HeadingDeg = previous.HeadingDeg + headingDelta * alpha,
+            PitchDeg = Blend(previous.PitchDeg, raw.PitchDeg),
+            SteeringAngleDeg = Blend(previous.SteeringAngleDeg, raw.SteeringAngleDeg),
+            SpeedMps = raw.SpeedMps
+        };
     }
 
     private void UpdateVehicleVisual(VehicleState state)
@@ -278,9 +294,11 @@ public partial class SimulatorWindow : Window
         }
 
         if (Viewport.Camera is not PerspectiveCamera camera) return;
-        camera.Position = _chaseCamPos;
-        camera.LookDirection = _chaseLook;
-        camera.UpDirection = _chaseUp;
+        // Translation and look target must use the same displayed vehicle pose.
+        // Independently lagging these makes the vehicle surge in screen space.
+        camera.Position = desiredPos;
+        camera.LookDirection = lookTarget - desiredPos;
+        camera.UpDirection = up;
     }
 
     private void UpdateStatus(VehicleState state)
@@ -298,67 +316,23 @@ public partial class SimulatorWindow : Window
 
     private void Window_KeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key == Key.R)
-        {
-            _simulator.ResetVehicle();
-            _wheelRotationAngle = 0.0;
-            _hasPreviousVehiclePosition = false;
-            _chaseInitialized = false;
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.C)
-        {
-            _followCamera = !_followCamera;
-            if (_followCamera) _chaseInitialized = false;
-            ApplyFollowCameraMode();
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.P)
-        {
-            _paused = !_paused;
-            _simulator.IsPaused = _paused;
-            if (_paused) _simulator.ReleaseControls();
-            CameraModeText.Text = _paused
-                ? "PAUSED  (P resume)"
-                : (_followCamera ? "Camera: Chase  (C toggle)" : "Camera: Free  (C toggle)");
-            e.Handled = true;
-            return;
-        }
-
-        if (_paused)
-        {
-            e.Handled = true;
-            return;
-        }
-
+        if (e.Key is not (Key.W or Key.A or Key.S or Key.D or Key.Space)) return;
         ApplyKeyboardControls();
         e.Handled = true;
     }
 
     private void Window_KeyUp(object sender, KeyEventArgs e)
     {
-        if (_paused)
-        {
-            e.Handled = true;
-            return;
-        }
-
+        if (e.Key is not (Key.W or Key.A or Key.S or Key.D or Key.Space)) return;
         ApplyKeyboardControls();
         e.Handled = true;
     }
 
     private void ApplyFollowCameraMode()
     {
-        CameraModeText.Text = _followCamera
-            ? "Camera: Chase  (C toggle)"
-            : "Camera: Free  (C toggle)";
-        Viewport.IsRotationEnabled = !_followCamera;
-        Viewport.IsPanEnabled = !_followCamera;
-        Viewport.IsZoomEnabled = true;
+        Viewport.IsRotationEnabled = false;
+        Viewport.IsPanEnabled = false;
+        Viewport.IsZoomEnabled = false;
     }
 
     private void ApplyKeyboardControls()

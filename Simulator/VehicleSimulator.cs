@@ -25,10 +25,11 @@ public sealed class VehicleSimulator
     private const double RearCorneringStiffness = 80000.0;
     private const double MaxSteeringAngleDeg = 28.0;
     private const double SteeringTimeConstant = 0.22;
-    private const double MaxAcceleration = 4.2;
+    private const double WheelPowerWatts = 180000.0;
+    private const double MaxDriveForce = 8500.0;
     private const double MaxBrakeDeceleration = 9.0;
     private const double RollingResistance = 0.14;
-    private const double AeroDragCoefficient = 0.0028;
+    private const double AeroDragCoefficient = 0.00028; // 0.5 * rho * CdA / mass
 
     private double _speedMps;
     private double _lateralVelocity;
@@ -147,6 +148,7 @@ public sealed class VehicleSimulator
         var period = TimeSpan.FromMilliseconds(1000.0 / frequencyHz);
         _stopwatch.Restart();
         var lastSeconds = _stopwatch.Elapsed.TotalSeconds;
+        var accumulated = 0.0;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -154,11 +156,20 @@ public sealed class VehicleSimulator
             var dt = now - lastSeconds;
             lastSeconds = now;
             if (dt <= 0) dt = period.TotalSeconds;
-            else if (dt > 0.05) dt = 0.05;
+            else if (dt > 0.25) dt = 0.25;
 
             bool paused;
             lock (_stateLock) { paused = _paused; }
-            if (!paused) Step(dt);
+            if (!paused)
+            {
+                accumulated += dt;
+                while (accumulated >= period.TotalSeconds)
+                {
+                    Step(period.TotalSeconds);
+                    accumulated -= period.TotalSeconds;
+                }
+            }
+            else accumulated = 0;
             await SendCurrentPacket().ConfigureAwait(false);
 
             try { await Task.Delay(period, cancellationToken).ConfigureAwait(false); }
@@ -172,17 +183,21 @@ public sealed class VehicleSimulator
         {
             // Speed-dependent max steer (high speed locks less angle) + 1st-order filter.
             var speedKph = Math.Abs(_speedMps) * 3.6;
-            var steerScale = 1.0 / (1.0 + Math.Pow(speedKph / 95.0, 1.6));
+            var steerScale = 1.0 / (1.0 + Math.Pow(speedKph / 40.0, 2.0));
             var targetSteer = _steeringInput * MaxSteeringAngleDeg * steerScale;
             var alpha = 1.0 - Math.Exp(-dt / SteeringTimeConstant);
             _steeringCommandDeg += (targetSteer - _steeringCommandDeg) * alpha;
             _steeringAngleDeg = _steeringCommandDeg;
 
-            var accel = _throttle * MaxAcceleration - _brake * MaxBrakeDeceleration;
+            // Generic sport sedan calibration, wheel power rather than constant acceleration.
+            var driveForce = Math.Min(MaxDriveForce, WheelPowerWatts / Math.Max(_speedMps, 1.0));
+            var accel = _throttle * driveForce / VehicleMass - _brake * MaxBrakeDeceleration;
+            accel -= 9.81 * Math.Sin(_pitchDeg * Math.PI / 180.0);
             accel -= RollingResistance * Math.Sign(_speedMps == 0 ? _throttle - _brake : _speedMps);
             accel -= AeroDragCoefficient * _speedMps * Math.Abs(_speedMps);
             _longitudinalAcceleration = accel;
-            _speedMps += accel * dt;
+            // Brake is not reverse gear; crossing zero used to destabilize the lateral model.
+            _speedMps = Math.Max(0.0, _speedMps + accel * dt);
             if (_brake > 0.05 && Math.Abs(_speedMps) < 0.08)
             {
                 _speedMps = 0.0;
@@ -205,15 +220,37 @@ public sealed class VehicleSimulator
                 var delta = _steeringAngleDeg * Math.PI / 180.0;
                 var a = DistanceToFrontAxle;
                 var b = DistanceToRearAxle;
-                var slipFront = (_lateralVelocity + a * _yawRateRad) / u - delta;
-                var slipRear = (_lateralVelocity - b * _yawRateRad) / u;
-                var fyf = -FrontCorneringStiffness * slipFront;
-                var fyr = -RearCorneringStiffness * slipRear;
-
-                var vDot = (fyf + fyr) / VehicleMass - _speedMps * _yawRateRad;
-                var rDot = (a * fyf - b * fyr) / YawInertia;
-                _lateralVelocity += vDot * dt;
-                _yawRateRad += rDot * dt;
+                // Backward Euler solves the coupled linear bicycle system.
+                // Explicit Euler oscillates at low speed because damping scales as 1/u.
+                // Quasi-static longitudinal load transfer and combined-slip force budget.
+                var transfer = VehicleMass * _longitudinalAcceleration * 0.52 / WheelBase;
+                var frontLoad = Math.Clamp(VehicleMass * 9.81 * b / WheelBase - transfer, 1000, VehicleMass * 9.81 - 1000);
+                var rearLoad = VehicleMass * 9.81 - frontLoad;
+                var longitudinalUsage = Math.Clamp(Math.Abs(_longitudinalAcceleration) / 10.3, 0, 0.98);
+                var gripScale = Math.Sqrt(1 - longitudinalUsage * longitudinalUsage);
+                var slipF = Math.Atan2(_lateralVelocity + a * _yawRateRad, u) - delta;
+                var slipR = Math.Atan2(_lateralVelocity - b * _yawRateRad, u);
+                double EffectiveStiffness(double stiffness, double slip, double load)
+                {
+                    var limit = 1.05 * load * gripScale;
+                    var demand = stiffness * Math.Abs(slip);
+                    return demand < 1e-6 ? stiffness : limit * Math.Tanh(demand / limit) / Math.Abs(slip);
+                }
+                var cf = EffectiveStiffness(FrontCorneringStiffness, slipF, frontLoad);
+                var cr = EffectiveStiffness(RearCorneringStiffness, slipR, rearLoad);
+                var a11 = -(cf + cr) / (VehicleMass * u);
+                var a12 = (-a * cf + b * cr) / (VehicleMass * u) - u;
+                var a21 = (-a * cf + b * cr) / (YawInertia * u);
+                var a22 = -(a * a * cf + b * b * cr) / (YawInertia * u);
+                var m11 = 1 - dt * a11;
+                var m12 = -dt * a12;
+                var m21 = -dt * a21;
+                var m22 = 1 - dt * a22;
+                var rhsV = _lateralVelocity + dt * cf * delta / VehicleMass;
+                var rhsR = _yawRateRad + dt * a * cf * delta / YawInertia;
+                var determinant = m11 * m22 - m12 * m21;
+                _lateralVelocity = (rhsV * m22 - m12 * rhsR) / determinant;
+                _yawRateRad = (m11 * rhsR - m21 * rhsV) / determinant;
 
                 // Soft clamp wild rates
                 _yawRateRad = Math.Clamp(_yawRateRad, -1.6, 1.6);
@@ -237,7 +274,7 @@ public sealed class VehicleSimulator
             {
                 var horiz = Math.Sqrt(tangent.X * tangent.X + tangent.Y * tangent.Y);
                 var pitchRaw = horiz > 1e-6
-                    ? Math.Atan2(tangent.Z, horiz) * 180.0 / Math.PI
+                    ? Math.Atan2(tangent.Z * (tangent.X * cos + tangent.Y * sin) / horiz, horiz) * 180.0 / Math.PI
                     : 0.0;
 
                 if (!_heightFilterInitialized)
@@ -254,7 +291,9 @@ public sealed class VehicleSimulator
                     _pitchFiltered += (pitchRaw - _pitchFiltered) * ap;
                 }
 
-                _z = _zFiltered;
+                // Ground contact is a geometric constraint, not a delayed response.
+                // Filtering height independently of XY sinks the car on climbs.
+                _z = groundZ;
                 _pitchDeg = _pitchFiltered;
             }
 
@@ -303,7 +342,8 @@ public sealed class VehicleSimulator
         var latitude = originLatitude + state.X / metersPerDegreeLatitude;
         var metersPerDegreeLongitude =
             metersPerDegreeLatitude * Math.Cos(originLatitude * Math.PI / 180.0);
-        var longitude = originLongitude + state.Y / metersPerDegreeLongitude;
+        // X is north, Y is west (left at heading zero). GPS heading is clockwise.
+        var longitude = originLongitude - state.Y / metersPerDegreeLongitude;
 
         var packet = new UdpPacket
         {
@@ -318,7 +358,7 @@ public sealed class VehicleSimulator
             Latitude = latitude,
             Longitude = longitude,
             Altitude = 10.0 + state.Z,
-            Heading = state.HeadingDeg
+            Heading = NormalizeHeading(-state.HeadingDeg)
         };
 
         await _udpSender.SendAsync(packet, CancellationToken.None).ConfigureAwait(false);

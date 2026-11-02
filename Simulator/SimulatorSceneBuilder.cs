@@ -51,7 +51,8 @@ public static class SimulatorSceneBuilder
             for (var i = 0; i <= nx; i++)
             {
                 var x = minX + i * dx;
-                var z = SpaTrackCenterline.SampleTerrainZ(x, y);
+                // Background terrain stays below the fitted track corridor.
+                var z = bounds.MinZ - 8.0;
                 mesh.Positions.Add(new Point3D(x, y, z));
             }
         }
@@ -96,6 +97,36 @@ public static class SimulatorSceneBuilder
         var edgeL = new MeshGeometry3D();
         var edgeR = new MeshGeometry3D();
         var barrierMesh = new MeshGeometry3D();
+        var valleyZ = SpaTrackCenterline.GetBounds().MinZ - 8.0;
+
+        // Fit the verge to exactly the same cross sections as the road. A
+        // coarse world grid cannot represent a twelve-metre-wide hillside road.
+        foreach (var side in new[] { -1.0, 1.0 })
+        {
+            var corridor = new MeshGeometry3D();
+            var offsets = new[] { halfW, halfW + 5.0, halfW + 18.0, halfW + 45.0 };
+            for (var band = 0; band < offsets.Length - 1; band++)
+            {
+                var inner = new Point3D[n];
+                var outer = new Point3D[n];
+                for (var i = 0; i < n; i++)
+                {
+                    Point3D At(double offset)
+                    {
+                        var blend = Math.Clamp((offset - halfW - 5.0) / 40.0, 0, 1);
+                        blend = blend * blend * (3 - 2 * blend);
+                        var z = pts[i].Z * (1 - blend) + valleyZ * blend;
+                        return new Point3D(pts[i].X + lefts[i].X * offset * side,
+                            pts[i].Y + lefts[i].Y * offset * side, z);
+                    }
+                    inner[i] = At(offsets[band]);
+                    outer[i] = At(offsets[band + 1]);
+                }
+                AppendRibbon(corridor, side > 0 ? inner : outer, side > 0 ? outer : inner);
+            }
+            var grass = CreateMaterial(Color.FromRgb(42, 78, 48));
+            root.Children.Add(new GeometryModel3D(corridor, grass) { BackMaterial = grass });
+        }
 
         // Continuous ribbon vertices: for each centerline point, left/right at asphalt height.
         var leftEdge = new Point3D[n];
@@ -274,12 +305,23 @@ public static class SimulatorSceneBuilder
         var light = CreateMaterial(Color.FromRgb(230, 240, 255));
         var rearLight = CreateMaterial(Color.FromRgb(180, 30, 30));
 
-        group.Children.Add(CreateBox(VehicleLength, VehicleWidth, 0.48, new Point3D(0, 0, 0.65), body));
-        group.Children.Add(CreateBox(2.55, 1.72, 0.48, new Point3D(-0.10, 0, 1.08), body));
-        group.Children.Add(CreateBox(1.65, 1.60, 0.10, new Point3D(-0.10, 0, 1.40), dark));
-        group.Children.Add(CreateBox(1.05, 1.70, 0.18, new Point3D(1.40, 0, 1.10), body));
-        group.Children.Add(CreateBox(0.70, 1.52, 0.06, new Point3D(0.75, 0, 1.32), glass));
-        group.Children.Add(CreateBox(0.55, 1.50, 0.06, new Point3D(-1.20, 0, 1.28), glass));
+        group.Children.Add(CreateLoft(new[] {
+            (-2.30, .78, .44, .79), (-1.95, .94, .38, .98),
+            (-1.25, .95, .38, 1.02), (.75, .94, .38, 1.00),
+            (1.65, .90, .42, .89), (2.30, .76, .49, .71) }, body));
+        group.Children.Add(CreateLoft(new[] {
+            (-1.48, .80, .97, 1.01), (-.78, .72, 1.00, 1.45),
+            (.35, .71, 1.00, 1.44), (1.03, .80, .96, 1.01) }, glass));
+        group.Children.Add(CreateBox(1.15, 1.42, .05, new Point3D(-.22, 0, 1.46), body));
+        group.Children.Add(CreateBox(.08, 1.10, .22, new Point3D(2.30, 0, .57), dark));
+        group.Children.Add(CreateBox(.15, 1.64, .08, new Point3D(2.25, 0, .43), dark));
+        foreach (var side in new[] { -1.0, 1.0 })
+        {
+            group.Children.Add(CreateBox(3.0, .08, .12, new Point3D(-.1, side * .94, .42), dark));
+            group.Children.Add(CreateBox(.23, .25, .13, new Point3D(.65, side * .98, 1.05), body));
+            group.Children.Add(CreateBox(.07, .05, .40, new Point3D(-.25, side * .74, 1.22), dark));
+            group.Children.Add(CreateBox(.18, .04, .04, new Point3D(-.48, side * .95, .94), light));
+        }
         group.Children.Add(CreateBox(0.08, 0.55, 0.18, new Point3D(2.28, 0.55, 0.78), light));
         group.Children.Add(CreateBox(0.08, 0.55, 0.18, new Point3D(2.28, -0.55, 0.78), light));
         group.Children.Add(CreateBox(0.06, 0.42, 0.16, new Point3D(-2.34, 0.58, 0.86), rearLight));
@@ -322,8 +364,8 @@ public static class SimulatorSceneBuilder
             steerRotation = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
             var steerTransform = new RotateTransform3D(steerRotation, x, y, z);
             var tg = new Transform3DGroup();
-            tg.Children.Add(steerTransform);
             tg.Children.Add(rollTransform);
+            tg.Children.Add(steerTransform);
             wheelGroup.Transform = tg;
         }
         else
@@ -370,7 +412,7 @@ public static class SimulatorSceneBuilder
         var u = Vector3D.CrossProduct(axis, up); u.Normalize();
         var v = Vector3D.CrossProduct(axis, u); v.Normalize();
         var mesh = new MeshGeometry3D();
-        const int segments = 18;
+        const int segments = 48;
         var p0 = center - axis * (height * 0.5);
         var p1 = center + axis * (height * 0.5);
         for (var i = 0; i < segments; i++)
@@ -384,11 +426,31 @@ public static class SimulatorSceneBuilder
             mesh.Positions.Add(p1 + r1); mesh.Positions.Add(p1 + r0);
             mesh.TriangleIndices.Add(idx); mesh.TriangleIndices.Add(idx + 1); mesh.TriangleIndices.Add(idx + 2);
             mesh.TriangleIndices.Add(idx); mesh.TriangleIndices.Add(idx + 2); mesh.TriangleIndices.Add(idx + 3);
+            var cap = mesh.Positions.Count;
+            mesh.Positions.Add(p0); mesh.Positions.Add(p0 + r1); mesh.Positions.Add(p0 + r0);
+            mesh.Positions.Add(p1); mesh.Positions.Add(p1 + r0); mesh.Positions.Add(p1 + r1);
+            for (var k = 0; k < 6; k++) mesh.TriangleIndices.Add(cap + k);
         }
         return new GeometryModel3D(mesh, material) { BackMaterial = material };
     }
 
     private static Material CreateMaterial(Color color) => new DiffuseMaterial(new SolidColorBrush(color));
+    private static GeometryModel3D CreateLoft((double X, double Width, double Bottom, double Top)[] sections, Material material)
+    {
+        var mesh = new MeshGeometry3D();
+        Point3D[] Ring((double X, double Width, double Bottom, double Top) s) => new[] {
+            new Point3D(s.X, -s.Width, s.Bottom), new Point3D(s.X, s.Width, s.Bottom),
+            new Point3D(s.X, s.Width * .93, s.Top), new Point3D(s.X, -s.Width * .93, s.Top) };
+        for (var i = 0; i < sections.Length - 1; i++)
+        {
+            var a = Ring(sections[i]); var b = Ring(sections[i + 1]);
+            for (var j = 0; j < 4; j++) AppendQuad(mesh, a[j], b[j], b[(j+1)%4], a[(j+1)%4]);
+        }
+        var first = Ring(sections[0]); var last = Ring(sections[^1]);
+        AppendQuad(mesh, first[3], first[2], first[1], first[0]);
+        AppendQuad(mesh, last[0], last[1], last[2], last[3]);
+        return new GeometryModel3D(mesh, material) { BackMaterial = material };
+    }
     private static Material CreateGlassMaterial() => new DiffuseMaterial(new SolidColorBrush(Color.FromArgb(160, 160, 200, 230)));
     private static Material CreateTireMaterial() => CreateMaterial(Color.FromRgb(28, 28, 30));
     private static Material CreateRimMaterial() => CreateMaterial(Color.FromRgb(180, 180, 185));

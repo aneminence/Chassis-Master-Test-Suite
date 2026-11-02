@@ -193,13 +193,13 @@ public static class SpaTrackCenterline
 
         var dense = new List<Point3D>();
         var keys = KeyPoints;
-        const int subdiv = 16;
         for (var i = 0; i < keys.Length; i++)
         {
             var p0 = keys[(i - 1 + keys.Length) % keys.Length];
             var p1 = keys[i];
             var p2 = keys[(i + 1) % keys.Length];
             var p3 = keys[(i + 2) % keys.Length];
+            var subdiv = Math.Max(16, (int)Math.Ceiling((p2 - p1).Length / 2.0));
             for (var s = 0; s < subdiv; s++)
             {
                 dense.Add(CatmullRom(p0, p1, p2, p3, s / (double)subdiv));
@@ -276,8 +276,16 @@ public static class SpaTrackCenterline
     {
         var t2 = t * t;
         var t3 = t2 * t;
-        double F(double a, double b, double c, double d) =>
-            0.5 * ((2 * b) + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
-        return new Point3D(F(p0.X, p1.X, p2.X, p3.X), F(p0.Y, p1.Y, p2.Y, p3.Y), F(p0.Z, p1.Z, p2.Z, p3.Z));
+        // Chord-length parameterization prevents short closure segments from
+        // inheriting the enormous tangent of an adjacent straight.
+        var d01 = (p1 - p0).Length;
+        var d12 = (p2 - p1).Length;
+        var d23 = (p3 - p2).Length;
+        var m1 = ((p1 - p0) / d01 - (p2 - p0) / (d01 + d12) + (p2 - p1) / d12) * d12;
+        var m2 = ((p2 - p1) / d12 - (p3 - p1) / (d12 + d23) + (p3 - p2) / d23) * d12;
+        return new Point3D(
+            (2*t3-3*t2+1)*p1.X + (t3-2*t2+t)*m1.X + (-2*t3+3*t2)*p2.X + (t3-t2)*m2.X,
+            (2*t3-3*t2+1)*p1.Y + (t3-2*t2+t)*m1.Y + (-2*t3+3*t2)*p2.Y + (t3-t2)*m2.Y,
+            (2*t3-3*t2+1)*p1.Z + (t3-2*t2+t)*m1.Z + (-2*t3+3*t2)*p2.Z + (t3-t2)*m2.Z);
     }
 }

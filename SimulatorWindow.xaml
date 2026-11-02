@@ -57,11 +57,6 @@
                            Foreground="{DynamicResource SimulatorMutedForeground}"
                            FontSize="12"
                            Margin="0,3,0,0"/>
-                <TextBlock x:Name="CameraModeText"
-                           Text="Camera: Chase  (C toggle)"
-                           Foreground="{DynamicResource SimulatorLabelForeground}"
-                           FontSize="12"
-                           Margin="0,6,0,0"/>
             </StackPanel>
         </Border>
 
@@ -192,48 +187,6 @@
             </Grid>
         </Border>
 
-        <Border HorizontalAlignment="Center"
-                VerticalAlignment="Bottom"
-                Margin="0,0,0,20"
-                Padding="20,12"
-                Background="{DynamicResource SimulatorPanelBackground}"
-                CornerRadius="8">
-            <StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <Border Width="42" Height="42" Margin="4"
-                            Background="{DynamicResource SimulatorButtonBackground}" CornerRadius="5">
-                        <TextBlock Text="W" Foreground="{DynamicResource TextPrimary}"
-                                   FontSize="18" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                    <Border Width="42" Height="42" Margin="4"
-                            Background="{DynamicResource SimulatorButtonBackground}" CornerRadius="5">
-                        <TextBlock Text="A" Foreground="{DynamicResource TextPrimary}"
-                                   FontSize="18" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <Border Width="42" Height="42" Margin="4"
-                            Background="{DynamicResource SimulatorButtonBackground}" CornerRadius="5">
-                        <TextBlock Text="S" Foreground="{DynamicResource TextPrimary}"
-                                   FontSize="18" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                    <Border Width="42" Height="42" Margin="4"
-                            Background="{DynamicResource SimulatorButtonBackground}" CornerRadius="5">
-                        <TextBlock Text="D" Foreground="{DynamicResource TextPrimary}"
-                                   FontSize="18" FontWeight="Bold"
-                                   HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                    </Border>
-                </StackPanel>
-                <TextBlock Text="W/S 油门/刹车   A/D 转向   SPACE 急刹   R 复位   C 跟车/自由视角   P 暂停"
-                           Foreground="{DynamicResource SimulatorLabelForeground}"
-                           FontSize="12"
-                           HorizontalAlignment="Center"
-                           Margin="0,8,0,0"/>
-            </StackPanel>
-        </Border>
     </Grid>
 </Window>
 
