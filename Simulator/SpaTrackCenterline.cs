@@ -13,54 +13,31 @@ public static class SpaTrackCenterline
     public const double BarrierOffset = 2.0;
     public const double AsphaltLift = 0.06;
 
-    // Keypoints deliberately keep return (Bus Stop / pit) clear of La Source hairpin
-    // so ribbons do not occupy the same XY corridor.
+    // Simple non-crossing elongated loop (plan-view ring) with Spa-like elevation:
+    // south pit → SE Eau Rouge/Raidillon climb → north Kemmel → west La Source.
+    // Verified: no segment crossings; nonlocal clearance >> track width.
     private static readonly Point3D[] KeyPoints =
     {
-        new(0, 40, 42),
-        new(220, 20, 42),
-        new(380, -40, 41),
-        // La Source hairpin (south lobe)
-        new(420, -140, 40),
-        new(360, -240, 39),
-        new(260, -280, 38),
-        new(180, -240, 37),
-        new(220, -160, 36),
-        // Eau Rouge bottom → Raidillon climb
-        new(400, -100, 35),
-        new(560, -70, 34),
-        new(720, -20, 46),
-        new(860, 60, 64),
-        new(980, 140, 80),
-        new(1100, 200, 86),
-        // Kemmel long straight
-        new(1350, 260, 90),
-        new(1650, 310, 93),
-        new(1950, 340, 95),
-        new(2250, 330, 96),
-        // Les Combes
-        new(2450, 260, 98),
-        new(2520, 150, 97),
-        new(2480, 40, 94),
-        new(2360, -40, 88),
-        // Rivage descent
-        new(2280, -180, 76),
-        new(2180, -340, 62),
-        new(2050, -480, 54),
-        // Pouhon / Fagnes
-        new(1850, -560, 51),
-        new(1600, -620, 49),
-        new(1350, -660, 47),
-        new(1100, -680, 46),
-        // Stavelot / Blanchimont
-        new(860, -640, 45),
-        new(640, -560, 44),
-        new(460, -440, 43),
-        // Bus Stop / return (north of La Source, clear corridor)
-        new(300, -280, 42),
-        new(200, -160, 42),
-        new(120, -40, 42),
-        new(40, 20, 42),
+        new(0, -220, 42),
+        new(400, -220, 42),
+        new(900, -210, 41),
+        new(1400, -200, 40),
+        new(1800, -180, 36),
+        new(2100, -100, 34),
+        new(2300, 40, 55),
+        new(2400, 200, 78),
+        new(2350, 360, 92),
+        new(2100, 480, 96),
+        new(1600, 520, 97),
+        new(1100, 530, 96),
+        new(600, 500, 94),
+        new(200, 450, 88),
+        new(-50, 320, 70),
+        new(-180, 160, 52),
+        new(-220, 20, 44),
+        new(-200, -100, 42),
+        new(-80, -180, 42),
+        new(-20, -210, 42),
     };
 
     private static List<Point3D>? _dense;

@@ -142,32 +142,19 @@ public static class SimulatorSceneBuilder
             AddKerbSegment(mesh, pts[i], pts[i1], lefts[i], lefts[i1], halfW, kerbW, lift);
         }
 
-        // Barriers: skip segments whose midpoint is too close to a non-local centerline point
-        // (avoids intersecting walls where the layout nearly doubles back).
+        // Barriers as short posts beside the ribbon only (no spanning walls that can chord across bends).
         var barrierOff = halfW + SpaTrackCenterline.BarrierOffset;
-        for (var i = 0; i < n; i += 2)
+        for (var i = 0; i < n; i += 3)
         {
-            var i1 = (i + 1) % n;
-            var mid = new Point3D(
-                (pts[i].X + pts[i1].X) * 0.5,
-                (pts[i].Y + pts[i1].Y) * 0.5,
-                (pts[i].Z + pts[i1].Z) * 0.5);
-            if (HasNonLocalProximity(pts, i, mid.X, mid.Y, halfW * 2.2))
-            {
-                continue;
-            }
-
+            var p = pts[i];
+            var ln = lefts[i];
             foreach (var side in new[] { 1.0, -1.0 })
             {
-                var a = pts[i];
-                var b = pts[i1];
-                var na = lefts[i];
-                var nb = lefts[i1];
-                var p0 = new Point3D(a.X + na.X * barrierOff * side, a.Y + na.Y * barrierOff * side, a.Z + lift);
-                var p1 = new Point3D(b.X + nb.X * barrierOff * side, b.Y + nb.Y * barrierOff * side, b.Z + lift);
-                var p0t = new Point3D(p0.X, p0.Y, p0.Z + 1.15);
-                var p1t = new Point3D(p1.X, p1.Y, p1.Z + 1.15);
-                AppendQuad(barrierMesh, p0, p1, p1t, p0t);
+                var cx = p.X + ln.X * barrierOff * side;
+                var cy = p.Y + ln.Y * barrierOff * side;
+                var cz = p.Z + lift;
+                // Small vertical box post ~0.25m square, 1.1m tall — never crosses driving line.
+                AppendAxisAlignedPost(barrierMesh, cx, cy, cz, 0.22, 1.1);
             }
         }
 
@@ -179,21 +166,6 @@ public static class SimulatorSceneBuilder
         root.Children.Add(new GeometryModel3D(barrierMesh, barrierMat) { BackMaterial = barrierMat });
     }
 
-    private static bool HasNonLocalProximity(IReadOnlyList<Point3D> pts, int index, double x, double y, double radius)
-    {
-        var n = pts.Count;
-        var r2 = radius * radius;
-        for (var j = 0; j < n; j++)
-        {
-            var distIdx = Math.Min(Math.Abs(j - index), n - Math.Abs(j - index));
-            if (distIdx < 12) continue;
-            var dx = pts[j].X - x;
-            var dy = pts[j].Y - y;
-            if (dx * dx + dy * dy < r2) return true;
-        }
-
-        return false;
-    }
 
     private static void AddKerbSegment(
         MeshGeometry3D mesh,
@@ -220,6 +192,27 @@ public static class SimulatorSceneBuilder
                 AppendQuad(mesh, a1, b1, b0, a0);
             }
         }
+    }
+
+
+    private static void AppendAxisAlignedPost(MeshGeometry3D mesh, double x, double y, double zBottom, double size, double height)
+    {
+        var h = size * 0.5;
+        var z0 = zBottom;
+        var z1 = zBottom + height;
+        var p0 = new Point3D(x - h, y - h, z0);
+        var p1 = new Point3D(x + h, y - h, z0);
+        var p2 = new Point3D(x + h, y + h, z0);
+        var p3 = new Point3D(x - h, y + h, z0);
+        var p4 = new Point3D(x - h, y - h, z1);
+        var p5 = new Point3D(x + h, y - h, z1);
+        var p6 = new Point3D(x + h, y + h, z1);
+        var p7 = new Point3D(x - h, y + h, z1);
+        AppendQuad(mesh, p0, p1, p5, p4);
+        AppendQuad(mesh, p1, p2, p6, p5);
+        AppendQuad(mesh, p2, p3, p7, p6);
+        AppendQuad(mesh, p3, p0, p4, p7);
+        AppendQuad(mesh, p4, p5, p6, p7);
     }
 
     private static void AppendRibbon(MeshGeometry3D mesh, Point3D[] sideA, Point3D[] sideB)

@@ -227,9 +227,6 @@ public partial class SimulatorWindow : Window
         var headingRad = state.HeadingDeg * Math.PI / 180.0;
         var forwardX = Math.Cos(headingRad);
         var forwardY = Math.Sin(headingRad);
-        var leftX = -forwardY;
-        var leftY = forwardX;
-
         const double cameraDistance = 11.0;
         const double cameraHeight = 4.2;
         const double lookAhead = 14.0;
@@ -246,13 +243,8 @@ public partial class SimulatorWindow : Window
             state.Y + forwardY * lookAhead,
             state.Z + 1.2);
 
-        // Bank from lateral accel (LFS-ish): lean into turn.
-        var bankRad = Math.Clamp(-state.LateralAcceleration * 0.035, -0.22, 0.22);
-        var up = new Vector3D(
-            leftX * Math.Sin(bankRad),
-            leftY * Math.Sin(bankRad),
-            Math.Cos(bankRad));
-        up.Normalize();
+        // Horizon stays level — no lateral camera bank/roll on steering.
+        var up = new Vector3D(0, 0, 1);
 
         if (!_chaseInitialized)
         {
@@ -282,11 +274,7 @@ public partial class SimulatorWindow : Window
                 if (_chaseLook.Length > 1e-6) _chaseLook.Normalize();
             }
 
-            _chaseUp = new Vector3D(
-                _chaseUp.X + (up.X - _chaseUp.X) * lookAlpha,
-                _chaseUp.Y + (up.Y - _chaseUp.Y) * lookAlpha,
-                _chaseUp.Z + (up.Z - _chaseUp.Z) * lookAlpha);
-            if (_chaseUp.Length > 1e-6) _chaseUp.Normalize();
+            _chaseUp = up;
         }
 
         if (Viewport.Camera is not PerspectiveCamera camera) return;
