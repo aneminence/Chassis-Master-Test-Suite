@@ -1,258 +1,118 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using Chassis_Master_Test_Suite.Communication;
 
 namespace Chassis_Master_Test_Suite.Simulator;
 
 /// <summary>
-/// CMTS 人工驾驶车辆模拟器。
+/// CMTS 人工驾驶车辆模拟器：100 Hz 运动学 + UDP 输出。
 ///
-/// 100 Hz 车辆动态计算 + UDP 输出。
+/// 车体 / 世界水平面约定（右手系，用户锁定）：
+///   X = 前进（Heading = 0° 时）
+///   Y = 车辆左侧
+///   Z = 向上
 ///
-/// ============================================================
-/// 坐标系约定（已用真实 WPF 3D 渲染实测确认）
-/// ============================================================
+/// Heading：0° = +X；+ = 左转（朝向 +Y）；- = 右转。
+/// forward = (cos(Heading), sin(Heading)) 在 X-Y 平面。
 ///
-/// X = 车辆左侧
-/// Y = 高度方向
-/// Z = 车辆前进方向（Heading = 0° 时）
-///
-/// 注意：
-/// 三维场景里 X 轴的正方向出现在屏幕左侧。
-/// 这一点已经实测验证，不是推测。
-///
-/// Heading：
-///
-/// 0°   = +Z 正前方
-/// +    = 左转
-/// -    = 右转
-///
-/// 车头方向向量：
-///
-/// forward = ( sin(Heading), cos(Heading) )
-///
-/// 这个定义必须与以下三处保持一致：
-///
-/// 1. 车辆模型绕 +Y 轴的旋转
-/// 2. 位置积分
-/// 3. 摄像机跟随
-///
-/// 任何一处用了 -sin(Heading)，
-/// 都会导致「车头朝左、车却向右走」这类错误。
-///
-/// 控制方式：
-///
-/// W       加速
-/// S       制动
-/// A       左转
-/// D       右转
-/// Space   紧急制动
-/// R       复位
+/// 虚拟 GPS：纬度沿 +X（北），经度沿 +Y（东，与旧版「左/前」映射到 lon/lat 的数值约定对齐，
+/// 即旧 Z→lat、旧 X→lon，现改为 X→lat、Y→lon）。
 /// </summary>
 public sealed class VehicleSimulator
 {
     private readonly UdpSender _udpSender;
-
     private readonly Stopwatch _stopwatch = new();
-
     private readonly object _stateLock = new();
-
     private long _sequence;
-
-    // ============================================================
-    // 当前 Simulator 实例
-    // ============================================================
 
     public static VehicleSimulator? Current { get; private set; }
 
-    // ============================================================
-    // 车辆基础参数
-    // ============================================================
-
     private const double WheelBase = 2.80;
-
     private const double MaxSteeringAngleDeg = 32.0;
-
     private const double MaxAcceleration = 4.0;
-
     private const double MaxBrakeDeceleration = 8.0;
-
     private const double RollingResistance = 0.12;
-
     private const double AeroDragCoefficient = 0.0025;
 
-    // ============================================================
-    // 车辆状态
-    // ============================================================
-
     private double _speedMps;
-
     private double _x;
-
-    private double _z;
-
-    /*
-     * Heading 定义：
-     *
-     * 0°   = +Z
-     * +    = 左转
-     * -    = 右转
-     */
-    private double _headingDeg = 0.0;
-
-    /*
-     * 前轮转角，采用 SAE 约定：
-     *
-     * + = 左转
-     * - = 右转
-     *
-     * 与 Heading（+ = 左）保持同一个方向约定，
-     * 这样前轮视觉、航向旋转、速度方向三者不会互相打架。
-     */
+    private double _y;
+    private double _headingDeg;
     private double _steeringAngleDeg;
-
     private double _longitudinalAcceleration;
-
     private double _lateralAcceleration;
-
     private double _yawRateDegPerSec;
-
-    // ============================================================
-    // 驾驶控制量
-    // ============================================================
-
     private double _throttle;
-
     private double _brake;
-
-    /*
-     * steering:
-     *
-     * -1 = 右
-     * +1 = 左
-     *
-     * 与外部 SetControls 的约定一致，
-     * 也与 Heading（+ = 左）一致。
-     */
     private double _steeringInput;
+    private bool _paused;
 
-    // ============================================================
-    // 构造函数
-    // ============================================================
+    private double _startX;
+    private double _startY;
+    private double _startHeadingDeg;
 
     public VehicleSimulator(UdpSender udpSender)
     {
-        _udpSender =
-            udpSender ??
-            throw new ArgumentNullException(
-                nameof(udpSender));
-
+        _udpSender = udpSender ?? throw new ArgumentNullException(nameof(udpSender));
         Current = this;
     }
 
-    // ============================================================
-    // 控制接口
-    // ============================================================
-
-    /// <summary>
-    /// 设置驾驶员控制量。
-    ///
-    /// throttle:
-    /// 0 ~ 1
-    ///
-    /// brake:
-    /// 0 ~ 1
-    ///
-    /// steering:
-    /// -1 = 右
-    /// +1 = 左
-    ///
-    /// 注意：
-    /// steering 采用「+ = 左，- = 右」，
-    /// 与 Heading（+ = 左）以及内部
-    /// _steeringAngleDeg 使用同一个方向约定，
-    /// 因此内部不做任何符号翻转。
-    /// </summary>
-    public void SetControls(
-        double throttle,
-        double brake,
-        double steering)
+    /// <summary>设置复位起点（赛道起点）。</summary>
+    public void SetStartPose(double x, double y, double headingDeg)
     {
         lock (_stateLock)
         {
-            _throttle =
-                Math.Clamp(
-                    throttle,
-                    0.0,
-                    1.0);
-
-            _brake =
-                Math.Clamp(
-                    brake,
-                    0.0,
-                    1.0);
-
-            // 外部接口：+ = 左，- = 右
-            // 内部角度：+ = 左，- = 右
-            //
-            // 两者约定一致，这里只做限幅，不做符号翻转。
-            _steeringInput =
-                Math.Clamp(
-                    steering,
-                    -1.0,
-                    1.0);
+            _startX = x;
+            _startY = y;
+            _startHeadingDeg = NormalizeHeading(headingDeg);
         }
     }
 
     /// <summary>
-    /// 立即释放驾驶控制。
+    /// throttle/brake: 0~1；steering: +1 = 左，-1 = 右。
     /// </summary>
+    public void SetControls(double throttle, double brake, double steering)
+    {
+        lock (_stateLock)
+        {
+            _throttle = Math.Clamp(throttle, 0.0, 1.0);
+            _brake = Math.Clamp(brake, 0.0, 1.0);
+            _steeringInput = Math.Clamp(steering, -1.0, 1.0);
+        }
+    }
+
+    public bool IsPaused
+    {
+        get { lock (_stateLock) { return _paused; } }
+        set { lock (_stateLock) { _paused = value; } }
+    }
+
     public void ReleaseControls()
     {
         lock (_stateLock)
         {
             _throttle = 0.0;
-
             _brake = 0.0;
-
             _steeringInput = 0.0;
         }
     }
-
-    // ============================================================
-    // 车辆复位
-    // ============================================================
 
     public void ResetVehicle()
     {
         lock (_stateLock)
         {
-            _speedMps = 0.0;
-
-            _x = 0.0;
-
-            _z = 0.0;
-
-            _headingDeg = 0.0;
-
+            _x = _startX;
+            _y = _startY;
+            _headingDeg = _startHeadingDeg;
             _steeringAngleDeg = 0.0;
-
+            _speedMps = 0.0;
             _longitudinalAcceleration = 0.0;
-
             _lateralAcceleration = 0.0;
-
             _yawRateDegPerSec = 0.0;
-
             _throttle = 0.0;
-
             _brake = 0.0;
-
             _steeringInput = 0.0;
         }
     }
-
-    // ============================================================
-    // 当前状态
-    // ============================================================
 
     public VehicleState GetState()
     {
@@ -261,436 +121,169 @@ public sealed class VehicleSimulator
             return new VehicleState
             {
                 X = _x,
-
-                Z = _z,
-
+                Y = _y,
                 SpeedMps = _speedMps,
-
                 HeadingDeg = _headingDeg,
-
-                SteeringAngleDeg =
-                    _steeringAngleDeg,
-
-                LongitudinalAcceleration =
-                    _longitudinalAcceleration,
-
-                LateralAcceleration =
-                    _lateralAcceleration,
-
-                YawRateDegPerSec =
-                    _yawRateDegPerSec
+                SteeringAngleDeg = _steeringAngleDeg,
+                LongitudinalAcceleration = _longitudinalAcceleration,
+                LateralAcceleration = _lateralAcceleration,
+                YawRateDegPerSec = _yawRateDegPerSec,
+                Throttle = _throttle,
+                Brake = _brake
             };
         }
     }
 
-    // ============================================================
-    // 100 Hz 主循环
-    // ============================================================
-
-    public async Task RunAsync(
-        CancellationToken cancellationToken)
+    public async Task RunAsync(CancellationToken cancellationToken)
     {
         const int frequencyHz = 100;
-        const double dt = 1.0 / frequencyHz;
-
-        const int periodMilliseconds = 10;
+        var period = TimeSpan.FromMilliseconds(1000.0 / frequencyHz);
 
         _stopwatch.Restart();
-
-        // ========================================================
-        // 这里刻意不使用 PeriodicTimer + WaitForNextTickAsync(token)。
-        //
-        // 那个写法在取消时会抛 OperationCanceledException，
-        // 而模拟器关闭是正常流程，
-        // 不应该靠异常来做控制流，
-        // 否则 Visual Studio 调试器会不断报告首次异常。
-        //
-        // 改为：
-        //
-        // 1. 循环前检查取消标志
-        //    （Task.Delay 不传 token，因此不会抛异常）
-        // 2. 关闭时最多多等一个周期（10 ms）
-        //
-        // 这样既不会抛异常，
-        // 也不会占用 WPF UI Dispatcher。
-        // ========================================================
+        var lastSeconds = _stopwatch.Elapsed.TotalSeconds;
 
         while (!cancellationToken.IsCancellationRequested)
         {
-            UpdateVehicle(dt);
+            var now = _stopwatch.Elapsed.TotalSeconds;
+            var dt = now - lastSeconds;
+            lastSeconds = now;
 
+            if (dt <= 0)
+            {
+                dt = period.TotalSeconds;
+            }
+            else if (dt > 0.05)
+            {
+                dt = 0.05;
+            }
+
+            bool paused;
+            lock (_stateLock)
+            {
+                paused = _paused;
+            }
+
+            if (!paused)
+            {
+                Step(dt);
+            }
+
+            // 暂停时仍发当前包，保持主窗链路活着
             await SendCurrentPacket().ConfigureAwait(false);
 
-            if (cancellationToken.IsCancellationRequested)
+            try
+            {
+                await Task.Delay(period, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
             {
                 break;
             }
-
-            // ====================================================
-            // 注意：这里刻意使用不接收 CancellationToken 的 Delay。
-            //
-            // Task.Delay(ms, token) 在 token 已取消时会立即抛出
-            // TaskCanceledException，
-            // 那会在 Visual Studio 调试器里显示为首次异常。
-            //
-            // 关闭时最多多等一个周期（10 ms），
-            // 但整个关闭过程不再产生任何异常。
-            // ====================================================
-
-            await Task.Delay(
-                periodMilliseconds).ConfigureAwait(false);
         }
     }
 
-    // ============================================================
-    // 车辆动力学
-    // ============================================================
-
-    private void UpdateVehicle(double dt)
+    private void Step(double dt)
     {
+        double throttle;
+        double brake;
+        double steeringInput;
+
         lock (_stateLock)
         {
-            // ====================================================
-            // 读取控制
-            // ====================================================
+            throttle = _throttle;
+            brake = _brake;
+            steeringInput = _steeringInput;
 
-            var throttle =
-                _throttle;
-
-            var brake =
-                _brake;
-
-            var steeringInput =
-                _steeringInput;
-
-            // ====================================================
-            // 转向
-            // ====================================================
-
-            var targetSteering =
-                steeringInput *
-                MaxSteeringAngleDeg;
-
+            var targetSteering = steeringInput * MaxSteeringAngleDeg;
             const double steeringResponse = 7.0;
+            var steeringDifference = targetSteering - _steeringAngleDeg;
+            _steeringAngleDeg += steeringDifference * Math.Clamp(steeringResponse * dt, 0.0, 1.0);
 
-            var steeringDifference =
-                targetSteering -
-                _steeringAngleDeg;
+            var accel = throttle * MaxAcceleration - brake * MaxBrakeDeceleration;
+            accel -= RollingResistance * Math.Sign(_speedMps);
+            accel -= AeroDragCoefficient * _speedMps * Math.Abs(_speedMps);
 
-            _steeringAngleDeg +=
-                steeringDifference *
-                Math.Clamp(
-                    steeringResponse * dt,
-                    0.0,
-                    1.0);
+            _longitudinalAcceleration = accel;
+            _speedMps += accel * dt;
 
-            // ====================================================
-            // 纵向动力学
-            // ====================================================
-
-            var driveAcceleration =
-                throttle *
-                MaxAcceleration;
-
-            var brakeAcceleration =
-                brake *
-                MaxBrakeDeceleration;
-
-            var rolling =
-                _speedMps > 0.01
-                    ? RollingResistance
-                    : 0.0;
-
-            var aerodynamicDrag =
-                AeroDragCoefficient *
-                _speedMps *
-                _speedMps;
-
-            var acceleration =
-                driveAcceleration -
-                brakeAcceleration -
-                rolling -
-                aerodynamicDrag;
-
-            // ====================================================
-            // 低速时防止车辆反向
-            // ====================================================
-
-            if (_speedMps <= 0.0 &&
-                acceleration < 0.0)
-            {
-                acceleration = 0.0;
-            }
-
-            _longitudinalAcceleration =
-                acceleration;
-
-            _speedMps +=
-                acceleration * dt;
-
-            if (_speedMps < 0.0)
+            if (brake > 0.05 && Math.Abs(_speedMps) < 0.05)
             {
                 _speedMps = 0.0;
+                _longitudinalAcceleration = 0.0;
             }
 
-            // ====================================================
-            // 前轮转角
-            // ====================================================
-
-            var steeringRad =
-                _steeringAngleDeg *
-                Math.PI /
-                180.0;
-
-            // ====================================================
-            // 车辆横摆运动
-            //
-            // 符号约定（已实测确认）：
-            //
-            // _steeringAngleDeg:
-            // + = 左转
-            // - = 右转
-            //
-            // Heading:
-            // + = 左转
-            // - = 右转
-            //
-            // 自行车模型：
-            //
-            // yawRate = v / L * tan(delta)
-            //
-            // delta > 0（左转）
-            //     → yawRate > 0
-            //     → Heading 增大
-            //
-            // Heading 增大在三维场景里是左转，
-            // 因为车头方向 forward = (sin h, cos h)，
-            // h 从 0° 增到 90° 时车头指向 +X，
-            // 而 +X 在屏幕左侧（已实测）。
-            //
-            // 因此这里使用正号。
-            // ====================================================
-
+            var steeringRad = _steeringAngleDeg * Math.PI / 180.0;
             double yawRateRad;
-
-            if (_speedMps > 0.01)
+            if (Math.Abs(_speedMps) > 0.05)
             {
-                yawRateRad =
-                    _speedMps /
-                    WheelBase *
-                    Math.Tan(
-                        steeringRad);
+                yawRateRad = _speedMps / WheelBase * Math.Tan(steeringRad);
             }
             else
             {
                 yawRateRad = 0.0;
             }
 
-            // ====================================================
-            // 横摆角速度
-            // ====================================================
+            _yawRateDegPerSec = yawRateRad * 180.0 / Math.PI;
+            _headingDeg = NormalizeHeading(_headingDeg + _yawRateDegPerSec * dt);
+            _lateralAcceleration = _speedMps * yawRateRad;
 
-            _yawRateDegPerSec =
-                yawRateRad *
-                180.0 /
-                Math.PI;
-
-            // ====================================================
-            // 航向积分
-            //
-            // + Heading = 左转
-            // - Heading = 右转
-            // ====================================================
-
-            _headingDeg +=
-                _yawRateDegPerSec *
-                dt;
-
-            _headingDeg =
-                NormalizeHeading(
-                    _headingDeg);
-
-            // ====================================================
-            // 横向加速度
-            // ====================================================
-
-            _lateralAcceleration =
-                _speedMps *
-                yawRateRad;
-
-            // ====================================================
-            // 世界坐标位置
-            //
-            // 车头方向向量（与车辆模型旋转、摄像机完全一致）：
-            //
-            // forward = ( sin(Heading), cos(Heading) )
-            //
-            // Heading = 0°   → forward = (0, 1)  → 向 +Z 前进
-            // Heading = 90°  → forward = (1, 0)  → 向 +X 前进
-            //
-            // 三维场景实测确认：
-            // +X 出现在屏幕左侧。
-            //
-            // 所以 Heading = +90° 时车辆向屏幕左侧行驶，
-            // 与「车头朝左」的画面完全一致。
-            //
-            // ----------------------------------------------------
-            // 历史问题记录：
-            //
-            // 这里曾经写成 velocityX = -_speedMps * sin(Heading)。
-            //
-            // 那个负号导致车辆的实际行驶方向
-            // 与车头朝向完全相反（点积 = -1），
-            // 表现为「车头左转、车却向右开」。
-            //
-            // 不要再加回负号。
-            // ====================================================
-
-            var headingRad =
-                _headingDeg *
-                Math.PI /
-                180.0;
-
-            var velocityX =
-                _speedMps *
-                Math.Sin(
-                    headingRad);
-
-            var velocityZ =
-                _speedMps *
-                Math.Cos(
-                    headingRad);
-
-            _x +=
-                velocityX * dt;
-
-            _z +=
-                velocityZ * dt;
+            var headingRad = _headingDeg * Math.PI / 180.0;
+            var velocityX = _speedMps * Math.Cos(headingRad);
+            var velocityY = _speedMps * Math.Sin(headingRad);
+            _x += velocityX * dt;
+            _y += velocityY * dt;
         }
     }
-
-    // ============================================================
-    // UDP 数据
-    // ============================================================
 
     private async Task SendCurrentPacket()
     {
         VehicleState state;
-
         lock (_stateLock)
         {
             state = new VehicleState
             {
                 X = _x,
-
-                Z = _z,
-
+                Y = _y,
                 SpeedMps = _speedMps,
-
                 HeadingDeg = _headingDeg,
-
-                SteeringAngleDeg =
-                    _steeringAngleDeg,
-
-                LongitudinalAcceleration =
-                    _longitudinalAcceleration,
-
-                LateralAcceleration =
-                    _lateralAcceleration,
-
-                YawRateDegPerSec =
-                    _yawRateDegPerSec
+                SteeringAngleDeg = _steeringAngleDeg,
+                LongitudinalAcceleration = _longitudinalAcceleration,
+                LateralAcceleration = _lateralAcceleration,
+                YawRateDegPerSec = _yawRateDegPerSec,
+                Throttle = _throttle,
+                Brake = _brake
             };
         }
 
-        // ========================================================
-        // 本地坐标 -> 虚拟 GPS
-        // ========================================================
+        const double originLatitude = 31.2304;
+        const double originLongitude = 121.4737;
+        const double metersPerDegreeLatitude = 111320.0;
 
-        const double originLatitude =
-            31.2304;
-
-        const double originLongitude =
-            121.4737;
-
-        const double metersPerDegreeLatitude =
-            111320.0;
-
-        var latitude =
-            originLatitude +
-            state.Z /
-            metersPerDegreeLatitude;
-
-        var longitudeScale =
-            Math.Cos(
-                originLatitude *
-                Math.PI /
-                180.0);
-
+        var latitude = originLatitude + state.X / metersPerDegreeLatitude;
         var metersPerDegreeLongitude =
-            metersPerDegreeLatitude *
-            longitudeScale;
-
-        var longitude =
-            originLongitude +
-            state.X /
-            metersPerDegreeLongitude;
-
-        // ========================================================
-        // UDP Packet
-        // ========================================================
+            metersPerDegreeLatitude * Math.Cos(originLatitude * Math.PI / 180.0);
+        var longitude = originLongitude + state.Y / metersPerDegreeLongitude;
 
         var packet = new UdpPacket
         {
             Version = 1,
-
-            Sequence =
-                _sequence++,
-
-            // 墙钟 Unix 毫秒（与 GSpot serverTime 一致），供曲线北京时间轴使用。
-            // 物理积分仍用 _stopwatch，不受 NTP 跳变影响。
-            Timestamp =
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
-
-            SpeedKph =
-                state.SpeedMps * 3.6,
-
-            LongitudinalAcceleration =
-                state.LongitudinalAcceleration,
-
-            LateralAcceleration =
-                state.LateralAcceleration,
-
-            VerticalAcceleration =
-                0.0,
-
-            YawRate =
-                state.YawRateDegPerSec,
-
-            Latitude =
-                latitude,
-
-            Longitude =
-                longitude,
-
-            Altitude =
-                10.0,
-
-            Heading =
-                state.HeadingDeg
+            Sequence = _sequence++,
+            Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            SpeedKph = state.SpeedMps * 3.6,
+            LongitudinalAcceleration = state.LongitudinalAcceleration,
+            LateralAcceleration = state.LateralAcceleration,
+            VerticalAcceleration = 0.0,
+            YawRate = state.YawRateDegPerSec,
+            Latitude = latitude,
+            Longitude = longitude,
+            Altitude = 10.0,
+            Heading = state.HeadingDeg
         };
 
-        await _udpSender.SendAsync(
-            packet,
-            CancellationToken.None);
+        await _udpSender.SendAsync(packet, CancellationToken.None).ConfigureAwait(false);
     }
 
-    // ============================================================
-    // Heading 归一化
-    // ============================================================
-
-    private static double NormalizeHeading(
-        double heading)
+    private static double NormalizeHeading(double heading)
     {
         while (heading >= 360.0)
         {
@@ -706,36 +299,17 @@ public sealed class VehicleSimulator
     }
 }
 
-/// <summary>
-/// Simulator 当前车辆状态。
-/// </summary>
 public sealed class VehicleState
 {
     public double X { get; init; }
-
-    public double Z { get; init; }
-
+    public double Y { get; init; }
     public double SpeedMps { get; init; }
-
     public double HeadingDeg { get; init; }
-
     public double SteeringAngleDeg { get; init; }
-
-    public double LongitudinalAcceleration
-    {
-        get;
-        init;
-    }
-
-    public double LateralAcceleration
-    {
-        get;
-        init;
-    }
-
-    public double YawRateDegPerSec
-    {
-        get;
-        init;
-    }
+    public double LongitudinalAcceleration { get; init; }
+    public double LateralAcceleration { get; init; }
+    public double YawRateDegPerSec { get; init; }
+    public double Throttle { get; init; }
+    public double Brake { get; init; }
 }
+
