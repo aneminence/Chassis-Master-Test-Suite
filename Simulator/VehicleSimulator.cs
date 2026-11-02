@@ -51,6 +51,11 @@ public sealed class VehicleSimulator
     private double _prevZ;
     private double _prevVz;
     private bool _hasPrevZ;
+    private double _zFiltered;
+    private double _pitchFiltered;
+    private bool _heightFilterInitialized;
+    private const double HeightFilterTau = 0.10;
+    private const double PitchFilterTau = 0.14;
 
     private double _startX;
     private double _startY;
@@ -122,6 +127,9 @@ public sealed class VehicleSimulator
             _brake = 0.0;
             _steeringInput = 0.0;
             _hasPrevZ = false;
+            _heightFilterInitialized = false;
+            _zFiltered = _startZ;
+            _pitchFiltered = 0.0;
         }
     }
 
@@ -227,11 +235,27 @@ public sealed class VehicleSimulator
 
             if (SpaTrackCenterline.TrySampleAt(_x, _y, out var groundZ, out var tangent, out _))
             {
-                _z = groundZ;
                 var horiz = Math.Sqrt(tangent.X * tangent.X + tangent.Y * tangent.Y);
-                _pitchDeg = horiz > 1e-6
+                var pitchRaw = horiz > 1e-6
                     ? Math.Atan2(tangent.Z, horiz) * 180.0 / Math.PI
                     : 0.0;
+
+                if (!_heightFilterInitialized)
+                {
+                    _zFiltered = groundZ;
+                    _pitchFiltered = pitchRaw;
+                    _heightFilterInitialized = true;
+                }
+                else
+                {
+                    var az = 1.0 - Math.Exp(-dt / HeightFilterTau);
+                    var ap = 1.0 - Math.Exp(-dt / PitchFilterTau);
+                    _zFiltered += (groundZ - _zFiltered) * az;
+                    _pitchFiltered += (pitchRaw - _pitchFiltered) * ap;
+                }
+
+                _z = _zFiltered;
+                _pitchDeg = _pitchFiltered;
             }
 
             if (_hasPrevZ)

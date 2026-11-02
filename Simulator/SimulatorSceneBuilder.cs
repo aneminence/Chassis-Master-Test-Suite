@@ -4,7 +4,7 @@ using System.Windows.Media.Media3D;
 namespace Chassis_Master_Test_Suite.Simulator;
 
 /// <summary>
-/// Helix scene: Spa-inspired elevated closed track + procedural car. World Z-up.
+/// Helix scene: Spa-inspired elevated track on matching terrain + procedural car. World Z-up.
 /// </summary>
 public static class SimulatorSceneBuilder
 {
@@ -22,128 +22,245 @@ public static class SimulatorSceneBuilder
     public static Model3DGroup BuildEnvironment()
     {
         var root = new Model3DGroup();
-        var pts = SpaTrackCenterline.DenseCenterline;
-
-        double minX = double.MaxValue, minY = double.MaxValue, maxX = double.MinValue, maxY = double.MinValue, minZ = double.MaxValue, maxZ = double.MinValue;
-        foreach (var p in pts)
-        {
-            minX = Math.Min(minX, p.X); maxX = Math.Max(maxX, p.X);
-            minY = Math.Min(minY, p.Y); maxY = Math.Max(maxY, p.Y);
-            minZ = Math.Min(minZ, p.Z); maxZ = Math.Max(maxZ, p.Z);
-        }
-
-        var cx = (minX + maxX) * 0.5;
-        var cy = (minY + maxY) * 0.5;
-        var spanX = maxX - minX + 400;
-        var spanY = maxY - minY + 400;
-        var grassZ = minZ - 8;
-        var grass = CreateMaterial(Color.FromRgb(38, 72, 44));
-        root.Children.Add(CreateBox(spanX, spanY, 0.4, new Point3D(cx, cy, grassZ), grass));
-
-        AddElevatedTrack(root, pts);
+        root.Children.Add(BuildTerrainMesh());
+        AddContinuousTrack(root);
         return root;
     }
 
-    private static void AddElevatedTrack(Model3DGroup root, IReadOnlyList<Point3D> pts)
+    private static GeometryModel3D BuildTerrainMesh()
     {
-        var asphalt = CreateMaterial(Color.FromRgb(56, 58, 62));
-        var line = CreateMaterial(Color.FromRgb(235, 235, 225));
+        var bounds = SpaTrackCenterline.GetBounds();
+        var pad = 280.0;
+        var minX = bounds.MinX - pad;
+        var maxX = bounds.MaxX + pad;
+        var minY = bounds.MinY - pad;
+        var maxY = bounds.MaxY + pad;
+
+        const int nx = 96;
+        const int ny = 72;
+        var dx = (maxX - minX) / nx;
+        var dy = (maxY - minY) / ny;
+
+        var mesh = new MeshGeometry3D();
+        var grass = CreateMaterial(Color.FromRgb(42, 78, 48));
+
+        // Vertices
+        for (var j = 0; j <= ny; j++)
+        {
+            var y = minY + j * dy;
+            for (var i = 0; i <= nx; i++)
+            {
+                var x = minX + i * dx;
+                var z = SpaTrackCenterline.SampleTerrainZ(x, y);
+                mesh.Positions.Add(new Point3D(x, y, z));
+            }
+        }
+
+        // Quads as triangles
+        var stride = nx + 1;
+        for (var j = 0; j < ny; j++)
+        {
+            for (var i = 0; i < nx; i++)
+            {
+                var i0 = j * stride + i;
+                var i1 = i0 + 1;
+                var i2 = i0 + stride;
+                var i3 = i2 + 1;
+                mesh.TriangleIndices.Add(i0);
+                mesh.TriangleIndices.Add(i1);
+                mesh.TriangleIndices.Add(i3);
+                mesh.TriangleIndices.Add(i0);
+                mesh.TriangleIndices.Add(i3);
+                mesh.TriangleIndices.Add(i2);
+            }
+        }
+
+        return new GeometryModel3D(mesh, grass) { BackMaterial = grass };
+    }
+
+    private static void AddContinuousTrack(Model3DGroup root)
+    {
+        var pts = SpaTrackCenterline.DenseCenterline;
+        var lefts = SpaTrackCenterline.LeftNormals;
+        var n = pts.Count;
+        var halfW = SpaTrackCenterline.TrackWidth * 0.5;
+        var lift = SpaTrackCenterline.AsphaltLift;
+
+        var asphaltMat = CreateMaterial(Color.FromRgb(56, 58, 62));
+        var lineMat = CreateMaterial(Color.FromRgb(235, 235, 225));
         var kerbA = CreateMaterial(Color.FromRgb(210, 50, 45));
         var kerbB = CreateMaterial(Color.FromRgb(235, 235, 235));
-        var barrier = CreateMaterial(Color.FromRgb(150, 155, 160));
+        var barrierMat = CreateMaterial(Color.FromRgb(150, 155, 160));
 
-        var halfW = SpaTrackCenterline.TrackWidth * 0.5;
-        var n = pts.Count;
+        var asphalt = new MeshGeometry3D();
+        var edgeL = new MeshGeometry3D();
+        var edgeR = new MeshGeometry3D();
+        var barrierMesh = new MeshGeometry3D();
 
+        // Continuous ribbon vertices: for each centerline point, left/right at asphalt height.
+        var leftEdge = new Point3D[n];
+        var rightEdge = new Point3D[n];
         for (var i = 0; i < n; i++)
         {
-            var a = pts[i];
-            var b = pts[(i + 1) % n];
-            var dx = b.X - a.X;
-            var dy = b.Y - a.Y;
-            var horiz = Math.Sqrt(dx * dx + dy * dy);
-            if (horiz < 0.05)
+            var p = pts[i];
+            var ln = lefts[i];
+            leftEdge[i] = new Point3D(p.X + ln.X * halfW, p.Y + ln.Y * halfW, p.Z + lift);
+            rightEdge[i] = new Point3D(p.X - ln.X * halfW, p.Y - ln.Y * halfW, p.Z + lift);
+        }
+
+        AppendRibbon(asphalt, rightEdge, leftEdge);
+
+        // Edge lines: inset, slight extra lift to avoid z-fight with asphalt (unique strip, shared verts).
+        const double lineInset = 0.22;
+        var lineLift = lift + 0.025;
+        var leftInner = new Point3D[n];
+        var leftOuter = new Point3D[n];
+        var rightInner = new Point3D[n];
+        var rightOuter = new Point3D[n];
+        for (var i = 0; i < n; i++)
+        {
+            var p = pts[i];
+            var ln = lefts[i];
+            leftOuter[i] = new Point3D(p.X + ln.X * halfW, p.Y + ln.Y * halfW, p.Z + lineLift);
+            leftInner[i] = new Point3D(p.X + ln.X * (halfW - lineInset), p.Y + ln.Y * (halfW - lineInset), p.Z + lineLift);
+            rightOuter[i] = new Point3D(p.X - ln.X * halfW, p.Y - ln.Y * halfW, p.Z + lineLift);
+            rightInner[i] = new Point3D(p.X - ln.X * (halfW - lineInset), p.Y - ln.Y * (halfW - lineInset), p.Z + lineLift);
+        }
+
+        AppendRibbon(edgeL, leftInner, leftOuter);
+        AppendRibbon(edgeR, rightOuter, rightInner);
+
+        // Kerbs: outward strip, alternating materials via two meshes every other segment pair.
+        var kerbAMesh = new MeshGeometry3D();
+        var kerbBMesh = new MeshGeometry3D();
+        const double kerbW = 0.6;
+        for (var i = 0; i < n; i++)
+        {
+            var i1 = (i + 1) % n;
+            var useA = (i / 3) % 2 == 0;
+            var mesh = useA ? kerbAMesh : kerbBMesh;
+            AddKerbSegment(mesh, pts[i], pts[i1], lefts[i], lefts[i1], halfW, kerbW, lift);
+        }
+
+        // Barriers: skip segments whose midpoint is too close to a non-local centerline point
+        // (avoids intersecting walls where the layout nearly doubles back).
+        var barrierOff = halfW + SpaTrackCenterline.BarrierOffset;
+        for (var i = 0; i < n; i += 2)
+        {
+            var i1 = (i + 1) % n;
+            var mid = new Point3D(
+                (pts[i].X + pts[i1].X) * 0.5,
+                (pts[i].Y + pts[i1].Y) * 0.5,
+                (pts[i].Z + pts[i1].Z) * 0.5);
+            if (HasNonLocalProximity(pts, i, mid.X, mid.Y, halfW * 2.2))
             {
                 continue;
             }
 
-            var tx = dx / horiz;
-            var ty = dy / horiz;
-            // Left normal in XY (Y is left when facing +tangent horizontally)
-            var nx = -ty;
-            var ny = tx;
-
-            var aL = new Point3D(a.X + nx * halfW, a.Y + ny * halfW, a.Z);
-            var aR = new Point3D(a.X - nx * halfW, a.Y - ny * halfW, a.Z);
-            var bL = new Point3D(b.X + nx * halfW, b.Y + ny * halfW, b.Z);
-            var bR = new Point3D(b.X - nx * halfW, b.Y - ny * halfW, b.Z);
-
-            root.Children.Add(CreateQuad(aR, bR, bL, aL, asphalt));
-
-            // Edge lines
-            const double lineW = 0.18;
-            var aLe = new Point3D(a.X + nx * (halfW - lineW), a.Y + ny * (halfW - lineW), a.Z + 0.03);
-            var aLo = new Point3D(a.X + nx * halfW, a.Y + ny * halfW, a.Z + 0.03);
-            var bLe = new Point3D(b.X + nx * (halfW - lineW), b.Y + ny * (halfW - lineW), b.Z + 0.03);
-            var bLo = new Point3D(b.X + nx * halfW, b.Y + ny * halfW, b.Z + 0.03);
-            root.Children.Add(CreateQuad(aLe, bLe, bLo, aLo, line));
-
-            var aRi = new Point3D(a.X - nx * (halfW - lineW), a.Y - ny * (halfW - lineW), a.Z + 0.03);
-            var aRo = new Point3D(a.X - nx * halfW, a.Y - ny * halfW, a.Z + 0.03);
-            var bRi = new Point3D(b.X - nx * (halfW - lineW), b.Y - ny * (halfW - lineW), b.Z + 0.03);
-            var bRo = new Point3D(b.X - nx * halfW, b.Y - ny * halfW, b.Z + 0.03);
-            root.Children.Add(CreateQuad(aRo, bRo, bRi, aRi, line));
-
-            // Kerbs outside edges
-            var kerbMat = (i / 2) % 2 == 0 ? kerbA : kerbB;
-            const double kerbW = 0.55;
-            var aLk0 = new Point3D(a.X + nx * halfW, a.Y + ny * halfW, a.Z);
-            var aLk1 = new Point3D(a.X + nx * (halfW + kerbW), a.Y + ny * (halfW + kerbW), a.Z + 0.08);
-            var bLk0 = new Point3D(b.X + nx * halfW, b.Y + ny * halfW, b.Z);
-            var bLk1 = new Point3D(b.X + nx * (halfW + kerbW), b.Y + ny * (halfW + kerbW), b.Z + 0.08);
-            root.Children.Add(CreateQuad(aLk0, bLk0, bLk1, aLk1, kerbMat));
-
-            var aRk0 = new Point3D(a.X - nx * halfW, a.Y - ny * halfW, a.Z);
-            var aRk1 = new Point3D(a.X - nx * (halfW + kerbW), a.Y - ny * (halfW + kerbW), a.Z + 0.08);
-            var bRk0 = new Point3D(b.X - nx * halfW, b.Y - ny * halfW, b.Z);
-            var bRk1 = new Point3D(b.X - nx * (halfW + kerbW), b.Y - ny * (halfW + kerbW), b.Z + 0.08);
-            root.Children.Add(CreateQuad(aRk1, bRk1, bRk0, aRk0, kerbMat));
-
-            // Barriers
-            if (i % 2 == 0)
+            foreach (var side in new[] { 1.0, -1.0 })
             {
-                var off = halfW + SpaTrackCenterline.BarrierOffset;
-                foreach (var side in new[] { 1.0, -1.0 })
-                {
-                    var p0 = new Point3D(a.X + nx * off * side, a.Y + ny * off * side, a.Z);
-                    var p1 = new Point3D(b.X + nx * off * side, b.Y + ny * off * side, b.Z);
-                    var p0t = new Point3D(p0.X, p0.Y, p0.Z + 1.1);
-                    var p1t = new Point3D(p1.X, p1.Y, p1.Z + 1.1);
-                    root.Children.Add(CreateQuad(p0, p1, p1t, p0t, barrier));
-                }
+                var a = pts[i];
+                var b = pts[i1];
+                var na = lefts[i];
+                var nb = lefts[i1];
+                var p0 = new Point3D(a.X + na.X * barrierOff * side, a.Y + na.Y * barrierOff * side, a.Z + lift);
+                var p1 = new Point3D(b.X + nb.X * barrierOff * side, b.Y + nb.Y * barrierOff * side, b.Z + lift);
+                var p0t = new Point3D(p0.X, p0.Y, p0.Z + 1.15);
+                var p1t = new Point3D(p1.X, p1.Y, p1.Z + 1.15);
+                AppendQuad(barrierMesh, p0, p1, p1t, p0t);
             }
         }
 
-        // Center dashes every other segment
-        for (var i = 0; i < n; i += 3)
+        root.Children.Add(new GeometryModel3D(asphalt, asphaltMat) { BackMaterial = asphaltMat });
+        root.Children.Add(new GeometryModel3D(edgeL, lineMat) { BackMaterial = lineMat });
+        root.Children.Add(new GeometryModel3D(edgeR, lineMat) { BackMaterial = lineMat });
+        root.Children.Add(new GeometryModel3D(kerbAMesh, kerbA) { BackMaterial = kerbA });
+        root.Children.Add(new GeometryModel3D(kerbBMesh, kerbB) { BackMaterial = kerbB });
+        root.Children.Add(new GeometryModel3D(barrierMesh, barrierMat) { BackMaterial = barrierMat });
+    }
+
+    private static bool HasNonLocalProximity(IReadOnlyList<Point3D> pts, int index, double x, double y, double radius)
+    {
+        var n = pts.Count;
+        var r2 = radius * radius;
+        for (var j = 0; j < n; j++)
         {
-            var a = pts[i];
-            var b = pts[(i + 1) % n];
-            var dx = b.X - a.X;
-            var dy = b.Y - a.Y;
-            var horiz = Math.Sqrt(dx * dx + dy * dy);
-            if (horiz < 0.2) continue;
-            var tx = dx / horiz;
-            var ty = dy / horiz;
-            var nx = -ty;
-            var ny = tx;
-            const double hw = 0.08;
-            var a0 = new Point3D(a.X - nx * hw, a.Y - ny * hw, a.Z + 0.04);
-            var a1 = new Point3D(a.X + nx * hw, a.Y + ny * hw, a.Z + 0.04);
-            var b0 = new Point3D(b.X - nx * hw, b.Y - ny * hw, b.Z + 0.04);
-            var b1 = new Point3D(b.X + nx * hw, b.Y + ny * hw, b.Z + 0.04);
-            root.Children.Add(CreateQuad(a0, b0, b1, a1, line));
+            var distIdx = Math.Min(Math.Abs(j - index), n - Math.Abs(j - index));
+            if (distIdx < 12) continue;
+            var dx = pts[j].X - x;
+            var dy = pts[j].Y - y;
+            if (dx * dx + dy * dy < r2) return true;
         }
+
+        return false;
+    }
+
+    private static void AddKerbSegment(
+        MeshGeometry3D mesh,
+        Point3D a,
+        Point3D b,
+        Vector3D na,
+        Vector3D nb,
+        double halfW,
+        double kerbW,
+        double lift)
+    {
+        foreach (var side in new[] { 1.0, -1.0 })
+        {
+            var a0 = new Point3D(a.X + na.X * halfW * side, a.Y + na.Y * halfW * side, a.Z + lift);
+            var a1 = new Point3D(a.X + na.X * (halfW + kerbW) * side, a.Y + na.Y * (halfW + kerbW) * side, a.Z + lift + 0.07);
+            var b0 = new Point3D(b.X + nb.X * halfW * side, b.Y + nb.Y * halfW * side, b.Z + lift);
+            var b1 = new Point3D(b.X + nb.X * (halfW + kerbW) * side, b.Y + nb.Y * (halfW + kerbW) * side, b.Z + lift + 0.07);
+            if (side > 0)
+            {
+                AppendQuad(mesh, a0, b0, b1, a1);
+            }
+            else
+            {
+                AppendQuad(mesh, a1, b1, b0, a0);
+            }
+        }
+    }
+
+    private static void AppendRibbon(MeshGeometry3D mesh, Point3D[] sideA, Point3D[] sideB)
+    {
+        var n = sideA.Length;
+        var baseIndex = mesh.Positions.Count;
+        for (var i = 0; i < n; i++)
+        {
+            mesh.Positions.Add(sideA[i]);
+            mesh.Positions.Add(sideB[i]);
+        }
+
+        for (var i = 0; i < n; i++)
+        {
+            var i0 = baseIndex + i * 2;
+            var i1 = i0 + 1;
+            var j = (i + 1) % n;
+            var j0 = baseIndex + j * 2;
+            var j1 = j0 + 1;
+            mesh.TriangleIndices.Add(i0);
+            mesh.TriangleIndices.Add(j0);
+            mesh.TriangleIndices.Add(j1);
+            mesh.TriangleIndices.Add(i0);
+            mesh.TriangleIndices.Add(j1);
+            mesh.TriangleIndices.Add(i1);
+        }
+    }
+
+    private static void AppendQuad(MeshGeometry3D mesh, Point3D p0, Point3D p1, Point3D p2, Point3D p3)
+    {
+        var i = mesh.Positions.Count;
+        mesh.Positions.Add(p0);
+        mesh.Positions.Add(p1);
+        mesh.Positions.Add(p2);
+        mesh.Positions.Add(p3);
+        mesh.TriangleIndices.Add(i);
+        mesh.TriangleIndices.Add(i + 1);
+        mesh.TriangleIndices.Add(i + 2);
+        mesh.TriangleIndices.Add(i);
+        mesh.TriangleIndices.Add(i + 2);
+        mesh.TriangleIndices.Add(i + 3);
     }
 
     public static Model3DGroup BuildVehicle(
@@ -180,7 +297,6 @@ public static class SimulatorSceneBuilder
         group.Children.Add(CreateWheelAssembly(RearAxleX, WheelHalfTrack, WheelRadius, false, out _, out rearLeftRoll));
         group.Children.Add(CreateWheelAssembly(RearAxleX, -WheelHalfTrack, WheelRadius, false, out _, out rearRightRoll));
 
-        // Pitch about +Y (left), then yaw about +Z (up), then translate.
         pitchRotation = new AxisAngleRotation3D(new Vector3D(0, 1, 0), 0);
         headingRotation = new AxisAngleRotation3D(new Vector3D(0, 0, 1), 0);
         translation = new TranslateTransform3D(0, 0, 0);
@@ -226,29 +342,6 @@ public static class SimulatorSceneBuilder
         return wheelGroup;
     }
 
-    private static GeometryModel3D CreateQuad(Point3D p0, Point3D p1, Point3D p2, Point3D p3, Material material)
-    {
-        var mesh = new MeshGeometry3D();
-        mesh.Positions.Add(p0);
-        mesh.Positions.Add(p1);
-        mesh.Positions.Add(p2);
-        mesh.Positions.Add(p3);
-        mesh.TriangleIndices.Add(0);
-        mesh.TriangleIndices.Add(1);
-        mesh.TriangleIndices.Add(2);
-        mesh.TriangleIndices.Add(0);
-        mesh.TriangleIndices.Add(2);
-        mesh.TriangleIndices.Add(3);
-        // backface
-        mesh.TriangleIndices.Add(0);
-        mesh.TriangleIndices.Add(2);
-        mesh.TriangleIndices.Add(1);
-        mesh.TriangleIndices.Add(0);
-        mesh.TriangleIndices.Add(3);
-        mesh.TriangleIndices.Add(2);
-        return new GeometryModel3D(mesh, material) { BackMaterial = material };
-    }
-
     private static GeometryModel3D CreateBox(double sizeX, double sizeY, double sizeZ, Point3D center, Material material)
     {
         var hx = sizeX * 0.5; var hy = sizeY * 0.5; var hz = sizeZ * 0.5;
@@ -260,8 +353,6 @@ public static class SimulatorSceneBuilder
         var p5 = new Point3D(center.X + hx, center.Y - hy, center.Z + hz);
         var p6 = new Point3D(center.X + hx, center.Y + hy, center.Z + hz);
         var p7 = new Point3D(center.X - hx, center.Y + hy, center.Z + hz);
-        var group = new Model3DGroup();
-        // Use quads via CreateQuad merged - simpler single mesh:
         var mesh = new MeshGeometry3D();
         void AddQuad(Point3D a, Point3D b, Point3D c, Point3D d)
         {
