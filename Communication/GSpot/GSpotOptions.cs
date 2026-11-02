@@ -16,14 +16,20 @@ public sealed class GSpotOptions
     public required string Password { get; init; }
 
     /// <summary>
-    /// 可选：只接收该 GUserId。为 null 时锁定首辆出现的车。
+    /// 可选：只接收该 GUserId。为 null 时由 AcceptAllVehicles 决定：true=收全部；false=锁首车。
     /// </summary>
     public string? FilterGUserId { get; init; }
 
     /// <summary>
-    /// 可选：只接收该车编号（cNum）。为 null 时锁定首辆出现的车。
+    /// 可选：只接收该车编号（cNum）。为 null 时由 AcceptAllVehicles 决定：true=收全部；false=锁首车。
     /// </summary>
     public string? FilterCNum { get; init; }
+
+    /// <summary>
+    /// 未设置 FilterGUserId / FilterCNum 时是否接收房间内全部车辆。
+    /// true（默认）：多车监控；false：锁定首辆出现的车（旧行为）。
+    /// </summary>
+    public bool AcceptAllVehicles { get; init; } = true;
 
     /// <summary>
     /// 断线后首次重连等待（毫秒）。之后指数退避直至 MaxReconnectDelayMs。

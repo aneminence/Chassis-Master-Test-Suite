@@ -10,7 +10,7 @@ namespace Chassis_Master_Test_Suite.Communication.GSpot;
 /// <summary>
 /// GSpot Telemetry 数据源：
 /// HTTP 取 token → properties（按 pos）→ subscribe → WebSocket 实时推流，
-/// 过滤多车后写入 <see cref="DataBus"/>。
+/// 按 Filter / AcceptAllVehicles 分流后写入 <see cref="DataBus"/>。
 ///
 /// 速率由设备事件驱动，非固定 100 Hz；无包序号，Sequence 本地合成。
 /// Lost / OutOfOrder 对 GSpot 无协议意义，固定为 0（UI 可显示为 N/A）。
@@ -69,7 +69,7 @@ public sealed class GSpotDataSource : IDataSource
 
     public event EventHandler<DataSourceState>? StateChanged;
 
-    /// <summary>当前锁定的车辆（多车房间里首包或过滤条件）。</summary>
+    /// <summary>过滤锁定的车辆（Filter 或 AcceptAllVehicles=false 时的首车）；多车全收时可能为空。</summary>
     public string? LockedGUserId => _lockedGUserId;
 
     public string? LockedCNum => _lockedCNum;
@@ -467,36 +467,15 @@ public sealed class GSpotDataSource : IDataSource
 
     private bool PassVehicleFilter(
         string? gUserId,
-        string? cNum)
-    {
-        // 尚未锁定：用首辆有效车锁定（或已配置的过滤条件）
-        if (_lockedGUserId is null && _lockedCNum is null)
-        {
-            _lockedGUserId = gUserId;
-            _lockedCNum = cNum;
-            return true;
-        }
-
-        if (_lockedGUserId is not null &&
-            !string.Equals(
-                _lockedGUserId,
-                gUserId,
-                StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        if (_lockedCNum is not null &&
-            !string.Equals(
-                _lockedCNum,
-                cNum,
-                StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return true;
-    }
+        string? cNum) =>
+        GSpotVehicleFilter.ShouldAccept(
+            _options.FilterGUserId,
+            _options.FilterCNum,
+            _options.AcceptAllVehicles,
+            ref _lockedGUserId,
+            ref _lockedCNum,
+            gUserId,
+            cNum);
 
     private void MaybeLogRaw(byte[] rawJson)
     {

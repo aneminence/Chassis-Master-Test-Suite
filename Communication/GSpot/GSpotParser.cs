@@ -188,6 +188,12 @@ public static class GSpotParser
             Longitude = longitude,
             Altitude = altitude,
             Heading = heading,
+            VehicleId = !string.IsNullOrWhiteSpace(gUserId)
+                ? gUserId
+                : cNum,
+            VehicleLabel = !string.IsNullOrWhiteSpace(cNum)
+                ? cNum
+                : gUserId,
             Channels = VehicleSample.BuildCoreChannels(
                 speed,
                 ax,

@@ -71,6 +71,17 @@ public sealed class VehicleSample
     public double Heading { get; init; }
 
     /// <summary>
+    /// 在线多车时的稳定车辆键（GSpot: GUserId，缺省时回退 cNum）。
+    /// 单车 UDP / 离线文件可为空。
+    /// </summary>
+    public string? VehicleId { get; init; }
+
+    /// <summary>
+    /// 车辆显示名（GSpot: cNum 优先，否则 GUserId）。
+    /// </summary>
+    public string? VehicleLabel { get; init; }
+
+    /// <summary>
     /// 全部通道数值，键为 VBO 列短名（或 live 核心 Id）。
     /// UI / 曲线统一通过 <see cref="GetChannel"/> 读取。
     /// </summary>

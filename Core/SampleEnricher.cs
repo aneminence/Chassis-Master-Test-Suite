@@ -83,6 +83,8 @@ public static class SampleEnricher
             Longitude = sample.Longitude,
             Altitude = sample.Altitude,
             Heading = sample.Heading,
+            VehicleId = sample.VehicleId,
+            VehicleLabel = sample.VehicleLabel,
             Channels = channels
         };
     }

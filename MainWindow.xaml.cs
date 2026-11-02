@@ -147,6 +147,16 @@ public partial class MainWindow : Window
 
     private VehicleSample? _livePreviousSample;
 
+    private readonly LiveVehicleRoster _liveRoster = new();
+    private readonly Dictionary<string, LiveVehicleEnrichState> _liveVehicleEnrich = new(StringComparer.Ordinal);
+
+    private sealed class LiveVehicleEnrichState
+    {
+        public long? OriginMs;
+        public double DistanceM;
+        public VehicleSample? Previous;
+    }
+
     // ============================================================
     // Simulator
     // ============================================================
@@ -1060,12 +1070,26 @@ public partial class MainWindow : Window
 
     private void OnVehicleSummaryClicked(string displayName)
     {
-        var file = _offlineFiles.Files.FirstOrDefault(f =>
-            string.Equals(f.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
-        if (file is null || _offlineFiles.Selected?.Id == file.Id)
+        if (_isOfflineMode)
+        {
+            var file = _offlineFiles.Files.FirstOrDefault(f =>
+                string.Equals(f.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
+            if (file is null || _offlineFiles.Selected?.Id == file.Id)
+                return;
+
+            SelectOfflineFileKeepingCursor(file.Id);
+            return;
+        }
+
+        // Online GSpot multi-vehicle: switch focus for plots / dashboard / trail.
+        if (!_liveRoster.TrySetFocusByLabel(displayName))
             return;
 
-        SelectOfflineFileKeepingCursor(file.Id);
+        _sampleHistory.Clear();
+        _latestSample = _liveRoster.GetFocusLatest();
+        _forcePlotRebuild = true;
+        UpdateNumericDisplay();
+        RefreshAllPlots(force: true);
     }
 
 
@@ -1239,6 +1263,8 @@ public partial class MainWindow : Window
         _liveSessionOriginMs = null;
         _liveDistanceM = 0;
         _livePreviousSample = null;
+        _liveRoster.Clear();
+        _liveVehicleEnrich.Clear();
         ChannelRegistry.Instance.SetLiveCore();
         RefreshChannelSelectorsFromRegistry();
         RefreshAllPlots(force: true);
@@ -5603,6 +5629,11 @@ public partial class MainWindow : Window
     private void EnterLiveSourceMode()
     {
         _historyOfflineMode = false;
+        _liveRoster.Clear();
+        _liveVehicleEnrich.Clear();
+        _liveSessionOriginMs = null;
+        _liveDistanceM = 0;
+        _livePreviousSample = null;
         ChannelRegistry.Instance.SetLiveCore();
         RefreshChannelSelectorsFromRegistry();
     }
@@ -5677,11 +5708,11 @@ public partial class MainWindow : Window
 
         AddLabeled(0, "Room ID", roomBox);
         AddLabeled(1, "Password", pwBox);
-        AddLabeled(2, "Filter cNum (optional)", cNumBox);
+        AddLabeled(2, "Filter cNum (optional — empty = all cars)", cNumBox);
 
         var hint = new TextBlock
         {
-            Text = "Base: weixin.jichexiaozi.com/transponder",
+            Text = "Base: weixin.jichexiaozi.com/transponder\nLeave Filter empty to monitor ALL cars; click Dashboard chips to focus.",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
             Margin = new Thickness(0, 0, 0, 12)
@@ -5753,7 +5784,8 @@ public partial class MainWindow : Window
             Password = pwBox.Password,
             FilterCNum = string.IsNullOrWhiteSpace(cNumBox.Text)
                 ? null
-                : cNumBox.Text.Trim()
+                : cNumBox.Text.Trim(),
+            AcceptAllVehicles = string.IsNullOrWhiteSpace(cNumBox.Text)
         };
         return true;
     }
@@ -5870,7 +5902,7 @@ public partial class MainWindow : Window
             enriched,
             cursorFrozen: cursorSample is not null);
 
-        // 多车摘要（线下多文件）；点选芯片后 Primary 对应当前文件
+        // Multi-vehicle summary: offline files OR live GSpot roster.
         if (_isOfflineMode && _offlineFiles.Count > 0)
         {
             var selected = _offlineFiles.Selected;
@@ -5878,7 +5910,6 @@ public partial class MainWindow : Window
                 .Select(f =>
                 {
                     var s = f.Samples.Count > 0 ? f.Samples[^1] : null;
-                    // 当前选中文件：有光标时用光标样本
                     if (cursorSample is not null &&
                         selected is not null &&
                         f.Id == selected.Id)
@@ -5893,17 +5924,76 @@ public partial class MainWindow : Window
                 summary,
                 selected?.DisplayName);
         }
+        else if (!_isOfflineMode && _liveRoster.Count > 0)
+        {
+            var roster = _liveRoster.Snapshot();
+            var summary = roster
+                .Select(v => (
+                    v.Label,
+                    v.ColorHex,
+                    v.Latest?.SpeedKph ?? 0.0))
+                .ToList();
+            string? focusLabel = null;
+            foreach (var v in roster)
+            {
+                if (!v.IsFocus)
+                    continue;
+                focusLabel = v.Label;
+                break;
+            }
+            focusLabel ??= roster.Count > 0 ? roster[0].Label : null;
+            DashboardPanelControl.SetMultiVehicleSummary(
+                summary,
+                focusLabel);
+        }
         else
         {
             DashboardPanelControl.SetMultiVehicleSummary(
                 Array.Empty<(string, string, double)>());
         }
 
-        // 光标移动时 Track Map 车辆位置跟着走；清除光标后回到实时最新点
+        // Track Map markers: compare runs, live multi-car, or single cursor.
         if (IsCompareModeActive)
+        {
             TrackMapPanelControl.SetCompareCursorSamples(compareCursors);
+        }
+        else if (!_isOfflineMode && _liveRoster.Count > 1)
+        {
+            var liveCursors = BuildLiveVehicleCursors(cursorSample);
+            TrackMapPanelControl.SetCompareCursorSamples(liveCursors);
+        }
         else
+        {
             TrackMapPanelControl.SetCursorSample(cursorSample);
+        }
+    }
+
+    private IReadOnlyList<TrackMapPanel.CompareCursor> BuildLiveVehicleCursors(
+        VehicleSample? focusOverride)
+    {
+        var roster = _liveRoster.Snapshot();
+        if (roster.Count == 0)
+            return Array.Empty<TrackMapPanel.CompareCursor>();
+
+        var list = new List<TrackMapPanel.CompareCursor>(roster.Count);
+        var run = 1;
+        foreach (var v in roster)
+        {
+            var sample = v.IsFocus && focusOverride is not null
+                ? focusOverride
+                : v.Latest;
+            if (sample is null)
+                continue;
+            if (!Controls.TrackProjection.IsValidGps(sample))
+                continue;
+
+            list.Add(new TrackMapPanel.CompareCursor(
+                sample,
+                v.ColorHex,
+                run++));
+        }
+
+        return list;
     }
 
     private IReadOnlyList<TrackMapPanel.CompareCursor> TryGetCompareCursorSamples()
@@ -6175,42 +6265,50 @@ public partial class MainWindow : Window
             while (reader.TryRead(
                        out var sample))
             {
-                // 线下模式：丢弃实时包，避免污染 VBO 历史
+                // Offline mode: drop live packets so they do not pollute VBO history.
                 if (_historyOfflineMode || _isOfflineMode)
                 {
                     Interlocked.Increment(ref _sampleCount);
                     continue;
                 }
 
-                _liveSessionOriginMs ??= sample.Timestamp;
-                sample = SampleEnricher.EnrichLive(
-                    sample,
-                    _liveSessionOriginMs.Value,
-                    ref _liveDistanceM,
-                    _livePreviousSample);
-                _livePreviousSample = sample;
-
-                _latestSample =
-                    sample;
-
-                // 离线 VBO 回放时不把实时样本写入历史。
-                if (!_historyOfflineMode)
+                var vehicleKey = _liveRoster.Upsert(sample);
+                if (!_liveVehicleEnrich.TryGetValue(vehicleKey, out var enrich))
                 {
-                    _sampleHistory.Add(sample);
+                    enrich = new LiveVehicleEnrichState();
+                    _liveVehicleEnrich[vehicleKey] = enrich;
                 }
 
-                Interlocked.Increment(
-                    ref _sampleCount);
+                enrich.OriginMs ??= sample.Timestamp;
+                var distance = enrich.DistanceM;
+                sample = SampleEnricher.EnrichLive(
+                    sample,
+                    enrich.OriginMs.Value,
+                    ref distance,
+                    enrich.Previous);
+                enrich.DistanceM = distance;
+                enrich.Previous = sample;
+                _liveRoster.Upsert(sample);
 
+                var focusId = _liveRoster.FocusId;
+                var isFocus = focusId is null ||
+                    string.Equals(vehicleKey, focusId, StringComparison.Ordinal);
 
-                // 只有正在录制时才写入文件（RecordingSession）。
-                //
-                // 暂停时刻意让"经过时间"按真实时间继续走：
-                // VboRecorder 内部以第一条数据为原点，
-                // 恢复后第一行的 Elapsed_time 会自然跳过暂停时长。
-                // TryWrite 失败会计入 DroppedSamples，
-                // 并由 UpdateNetworkDisplay 在 Lost 区展示。
-                _recordingSession.TryWriteIfRecording(sample);
+                if (isFocus)
+                {
+                    // Keep legacy single-vehicle enrich mirrors for any remaining callers.
+                    _liveSessionOriginMs = enrich.OriginMs;
+                    _liveDistanceM = enrich.DistanceM;
+                    _livePreviousSample = enrich.Previous;
+                    _latestSample = sample;
+
+                    if (!_historyOfflineMode)
+                        _sampleHistory.Add(sample);
+
+                    _recordingSession.TryWriteIfRecording(sample);
+                }
+
+                Interlocked.Increment(ref _sampleCount);
             }
         }
     }

@@ -69,5 +69,42 @@ public class GSpotParserTests
         Assert.Equal(121.47, sample.Longitude);
         Assert.Equal(90.0, sample.Heading);
         Assert.Equal("user-1", gUserId);
+        Assert.Equal("user-1", sample.VehicleId);
+    }
+
+    [Fact]
+    public void TryMap_PrefersCNumAsVehicleLabel()
+    {
+        const string propsJson = """
+            [
+              { "name": "serverTime", "pos": 0 },
+              { "name": "speed", "pos": 1 },
+              { "name": "latitude", "pos": 2 },
+              { "name": "longitude", "pos": 3 },
+              { "name": "GUserId", "pos": 4 },
+              { "name": "cNum", "pos": 5 }
+            ]
+            """;
+
+        const string bodyJson = """
+            [1700000000456, 12.0, 31.0, 121.0, "uid-9", "42"]
+            """;
+
+        using var propsDoc = JsonDocument.Parse(propsJson);
+        using var bodyDoc = JsonDocument.Parse(bodyJson);
+        var index = GSpotPropertyIndex.FromPropertiesBody(propsDoc.RootElement);
+
+        Assert.True(GSpotParser.TryMap(
+            bodyDoc.RootElement,
+            index,
+            sequence: 1,
+            out var sample,
+            out var gUserId,
+            out var cNum));
+
+        Assert.Equal("uid-9", gUserId);
+        Assert.Equal("42", cNum);
+        Assert.Equal("uid-9", sample!.VehicleId);
+        Assert.Equal("42", sample.VehicleLabel);
     }
 }
