@@ -59,6 +59,14 @@
                             Margin="0"
                             Click="ResetLayoutButton_Click"
                             ToolTip="Reset gauges to default layout"/>
+                    <Button x:Name="MaximizeButton"
+                            Content="□"
+                            Style="{StaticResource DashToolButton}"
+                            Margin="0"
+                            MinWidth="28"
+                            FontSize="14"
+                            Click="MaximizeButton_Click"
+                            ToolTip="Expand this panel to fill the workspace"/>
                 </StackPanel>
             </Grid>
 

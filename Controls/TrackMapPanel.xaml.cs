@@ -233,6 +233,28 @@ public partial class TrackMapPanel : UserControl
     /// </summary>
     public event Action<VehicleSample, int>? SampleSelected;
 
+    /// <summary>Raised when the header maximize / restore button is clicked.</summary>
+    public event Action? MaximizeToggleRequested;
+
+    private bool _workspaceMaximized;
+
+    private void MaximizeButton_Click(object sender, RoutedEventArgs e)
+        => MaximizeToggleRequested?.Invoke();
+
+    public void SetWorkspaceMaximized(bool maximized)
+    {
+        _workspaceMaximized = maximized;
+        ApplyMaximizeChrome();
+    }
+
+    private void ApplyMaximizeChrome()
+    {
+        if (MaximizeButton is null)
+            return;
+        MaximizeButton.Content = _workspaceMaximized ? "❐" : "□";
+        MaximizeButton.ToolTip = Loc.T(_workspaceMaximized ? "Layout.RestoreTip" : "Layout.MaximizeTip");
+    }
+
     // ============================================================
     // 初始化
     // ============================================================
@@ -1574,6 +1596,7 @@ public partial class TrackMapPanel : UserControl
         // Title texts in XAML that we can reach by name where present.
         if (TitleText is not null)
             TitleText.Text = Loc.T("Map.Title");
+            ApplyMaximizeChrome();
         if (Mode2DButton is not null)
             Mode2DButton.ToolTip = Loc.T("Map.Mode2DTip");
         if (Mode3DButton is not null)

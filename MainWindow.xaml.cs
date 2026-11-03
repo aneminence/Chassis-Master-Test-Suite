@@ -95,6 +95,7 @@ public partial class MainWindow : Window
     private bool _layoutShowTestResults = true;
     private bool _layoutShowMap = true;
     private bool _layoutShowChart = true;
+    private readonly WorkspaceMaximizeState _workspaceMaximize = new();
     private GridLength? _layoutDashboardWidth;
     private GridLength? _layoutTestResultsWidth;
     private GridLength? _layoutMapWidth;
@@ -292,6 +293,9 @@ public partial class MainWindow : Window
 
         TrackMapPanelControl.SampleSelected += ApplyCursorFromTrackSample;
         DashboardPanelControl.VehicleSummaryClicked += OnVehicleSummaryClicked;
+        DashboardPanelControl.MaximizeToggleRequested += () => ToggleWorkspaceMaximize(WorkspacePanelKind.Dashboard);
+        TestResultsPanelControl.MaximizeToggleRequested += () => ToggleWorkspaceMaximize(WorkspacePanelKind.TestResults);
+        TrackMapPanelControl.MaximizeToggleRequested += () => ToggleWorkspaceMaximize(WorkspacePanelKind.Map);
 
         GateStore.Instance.Changed += (_, _) =>
         {
@@ -1605,6 +1609,7 @@ public partial class MainWindow : Window
 
         if (CurvesTitleText is not null)
             CurvesTitleText.Text = Loc.T("Curves.Title");
+        SyncWorkspaceMaximizeChrome();
         if (XAxisLabelText is not null)
             XAxisLabelText.Text = Loc.T("Curves.XAxis");
         if (XAxisAutoScaleCheckBox is not null)
@@ -1706,6 +1711,43 @@ public partial class MainWindow : Window
     }
 
     // ============================================================
+
+    private LayoutVisibilityFlags CurrentLayoutVisibility() =>
+        new(_layoutShowDashboard, _layoutShowTestResults, _layoutShowMap, _layoutShowChart);
+
+    private void ApplyVisibilityFlags(LayoutVisibilityFlags flags)
+    {
+        _layoutShowDashboard = flags.Dashboard;
+        _layoutShowTestResults = flags.TestResults;
+        _layoutShowMap = flags.Map;
+        _layoutShowChart = flags.Chart;
+    }
+
+    private void ToggleWorkspaceMaximize(WorkspacePanelKind panel)
+    {
+        var next = _workspaceMaximize.Toggle(panel, CurrentLayoutVisibility());
+        ApplyVisibilityFlags(next);
+        ApplyLayoutVisibility();
+        SyncLayoutMapVisuals();
+    }
+
+    private void CurvesMaximizeButton_Click(object sender, RoutedEventArgs e)
+        => ToggleWorkspaceMaximize(WorkspacePanelKind.Chart);
+
+    private void SyncWorkspaceMaximizeChrome()
+    {
+        var max = _workspaceMaximize.MaximizedPanel;
+        DashboardPanelControl?.SetWorkspaceMaximized(max == WorkspacePanelKind.Dashboard);
+        TestResultsPanelControl?.SetWorkspaceMaximized(max == WorkspacePanelKind.TestResults);
+        TrackMapPanelControl?.SetWorkspaceMaximized(max == WorkspacePanelKind.Map);
+
+        if (CurvesMaximizeButton is not null)
+        {
+            var chartMax = max == WorkspacePanelKind.Chart;
+            CurvesMaximizeButton.Content = chartMax ? "❐" : "□";
+            CurvesMaximizeButton.ToolTip = Loc.T(chartMax ? "Layout.RestoreTip" : "Layout.MaximizeTip");
+        }
+    }
     // Layout: VBTS-style panel map (Dashboard / Chart / Test Results / Map)
     // ============================================================
 
@@ -1715,6 +1757,9 @@ public partial class MainWindow : Window
             return;
 
         e.Handled = true;
+
+        if (_workspaceMaximize.IsMaximized)
+            ApplyVisibilityFlags(_workspaceMaximize.Exit());
 
         switch (tag)
         {
@@ -1743,6 +1788,7 @@ public partial class MainWindow : Window
     {
         e.Handled = true;
 
+        _workspaceMaximize.Clear();
         _layoutShowDashboard = true;
         _layoutShowTestResults = true;
         _layoutShowMap = true;
@@ -1937,6 +1983,7 @@ public partial class MainWindow : Window
         SetLayoutRegionVisual(LayoutCellTestResults, _layoutShowTestResults);
         SetLayoutRegionVisual(LayoutCellMap, _layoutShowMap);
         SetLayoutRegionVisual(LayoutCellChart, _layoutShowChart);
+        SyncWorkspaceMaximizeChrome();
     }
 
 

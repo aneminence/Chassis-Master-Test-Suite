@@ -78,12 +78,35 @@ public partial class DashboardPanel : UserControl
             ResetLayoutButton.Content = Loc.T("Dashboard.Reset");
             ResetLayoutButton.ToolTip = Loc.T("Dashboard.ResetTip");
         }
+        ApplyMaximizeChrome();
         if (CursorModeText is not null && _cursorFrozen)
             CursorModeText.Text = Loc.T("Dashboard.Cursor");
     }
 
     /// <summary>Raised when a multi-vehicle chip is clicked.</summary>
     public event Action<string>? VehicleSummaryClicked;
+
+    /// <summary>Raised when the header maximize / restore button is clicked.</summary>
+    public event Action? MaximizeToggleRequested;
+
+    private bool _workspaceMaximized;
+
+    private void MaximizeButton_Click(object sender, RoutedEventArgs e)
+        => MaximizeToggleRequested?.Invoke();
+
+    public void SetWorkspaceMaximized(bool maximized)
+    {
+        _workspaceMaximized = maximized;
+        ApplyMaximizeChrome();
+    }
+
+    private void ApplyMaximizeChrome()
+    {
+        if (MaximizeButton is null)
+            return;
+        MaximizeButton.Content = _workspaceMaximized ? "❐" : "□";
+        MaximizeButton.ToolTip = Loc.T(_workspaceMaximized ? "Layout.RestoreTip" : "Layout.MaximizeTip");
+    }
 
     /// <summary>
     /// Push the current live / cursor sample; updates all live-channel gauges.

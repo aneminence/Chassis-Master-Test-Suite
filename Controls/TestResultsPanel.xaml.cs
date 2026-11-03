@@ -73,6 +73,28 @@ public partial class TestResultsPanel : UserControl
     /// <summary>Maths channel store changed 鈥?MainWindow should refresh channel lists.</summary>
     public event Action? MathsChanged;
 
+    /// <summary>Raised when the header maximize / restore button is clicked.</summary>
+    public event Action? MaximizeToggleRequested;
+
+    private bool _workspaceMaximized;
+
+    private void MaximizeButton_Click(object sender, RoutedEventArgs e)
+        => MaximizeToggleRequested?.Invoke();
+
+    public void SetWorkspaceMaximized(bool maximized)
+    {
+        _workspaceMaximized = maximized;
+        ApplyMaximizeChrome();
+    }
+
+    private void ApplyMaximizeChrome()
+    {
+        if (MaximizeButton is null)
+            return;
+        MaximizeButton.Content = _workspaceMaximized ? "❐" : "□";
+        MaximizeButton.ToolTip = Loc.T(_workspaceMaximized ? "Layout.RestoreTip" : "Layout.MaximizeTip");
+    }
+
     public TestResultsPanel()
     {
         InitializeComponent();
@@ -146,6 +168,7 @@ public partial class TestResultsPanel : UserControl
             SessionButton.Content = Loc.T("Results.Session");
             SessionButton.ToolTip = Loc.T("Results.SessionTip");
         }
+        ApplyMaximizeChrome();
         if (TypeLabel is not null)
             TypeLabel.Text = Loc.T("Results.Type");
         if (ChannelLabel is not null)

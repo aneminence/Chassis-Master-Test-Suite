@@ -27,6 +27,7 @@
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
                 <TextBlock Grid.Column="0"
@@ -118,6 +119,15 @@
                     <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
                             Click="Fit3DButton_Click"/>
                 </StackPanel>
+                <Button x:Name="MaximizeButton"
+                        Grid.Column="6"
+                        Content="□"
+                        Style="{StaticResource HeaderButtonStyle}"
+                        MinWidth="28"
+                        FontSize="14"
+                        VerticalAlignment="Center"
+                        Click="MaximizeButton_Click"
+                        ToolTip="Expand this panel to fill the workspace"/>
             </Grid>
 
             <!-- 地图区 -->
