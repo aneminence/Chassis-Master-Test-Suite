@@ -2121,6 +2121,10 @@ public partial class MainWindow : Window
         if (!IsInitialized)
             return;
 
+        // X unit changed (Time OADate ↔ Distance m, …): drop locked limits from the prior unit.
+        foreach (var plot in _plots)
+            plot.LockedLimits = null;
+
         RefreshAllPlots(force: true);
         ScheduleSessionMemorySave();
     }
@@ -4431,16 +4435,24 @@ public partial class MainWindow : Window
         if (plot.WpfPlot is null)
             return;
 
-        if (!string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
-            return;
-
-        var axis =
-            plot.WpfPlot.Plot.Axes.DateTimeTicksBottom();
-
-        if (axis.TickGenerator is
-            ScottPlot.TickGenerators.DateTimeAutomatic tickGen)
+        if (string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
         {
-            tickGen.LabelFormatter = FormatBeijingTickLabel;
+            var axis =
+                plot.WpfPlot.Plot.Axes.DateTimeTicksBottom();
+
+            if (axis.TickGenerator is
+                ScottPlot.TickGenerators.DateTimeAutomatic tickGen)
+            {
+                tickGen.LabelFormatter = FormatBeijingTickLabel;
+            }
+        }
+        else
+        {
+            // Leaving Time: DateTimeTicksBottom replaces the bottom tick generator.
+            // Restore numeric ticks so Distance / Elapsed / channels do not keep HH:mm labels
+            // (UTC midnight → Beijing 08:00 repeating is the usual leftover symptom).
+            plot.WpfPlot.Plot.Axes.Bottom.TickGenerator =
+                new ScottPlot.TickGenerators.NumericAutomatic();
         }
 
         // DateTimeTicksBottom 会把刻度字重置成黑色，必须再刷浅色

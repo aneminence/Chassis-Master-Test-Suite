@@ -78,6 +78,7 @@
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
     <Compile Include="..\Recorder\OxTS\XcomContainerReader.cs" Link="Linked\Recorder\OxTS\XcomContainerReader.cs" />
     <Compile Include="..\Recorder\OxTS\NcomDecoder.cs" Link="Linked\Recorder\OxTS\NcomDecoder.cs" />
+    <Compile Include="..\Recorder\OxTS\NcomTime.cs" Link="Linked\Recorder\OxTS\NcomTime.cs" />
     <Compile Include="..\Recorder\OxTS\RcomDecoder.cs" Link="Linked\Recorder\OxTS\RcomDecoder.cs" />
     <Compile Include="..\Recorder\OxTS\XcomImporter.cs" Link="Linked\Recorder\OxTS\XcomImporter.cs" />
   </ItemGroup>

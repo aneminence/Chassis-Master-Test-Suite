@@ -173,10 +173,12 @@ public static class XcomImporter
 
     private static List<VehicleSample> ToVehicleSamples(IReadOnlyList<NcomMeasurement> measurements)
     {
+        var timestamps = NcomTime.AssignUnixTimestamps(measurements);
         var list = new List<VehicleSample>(measurements.Count);
         long seq = 0;
-        foreach (var m in measurements)
+        for (var mi = 0; mi < measurements.Count; mi++)
         {
+            var m = measurements[mi];
             if (!m.IsKinematicsValid && !m.IsImuValid)
                 continue;
 
@@ -218,7 +220,7 @@ public static class XcomImporter
 
             list.Add(new VehicleSample
             {
-                Timestamp = ToTimestampMs(m.TimePrefixNs),
+                Timestamp = timestamps[mi],
                 Sequence = seq++,
                 SpeedKph = double.IsNaN(speedKph) ? 0 : speedKph,
                 LongitudinalAcceleration = double.IsNaN(longAcc) ? 0 : longAcc,
@@ -288,16 +290,8 @@ public static class XcomImporter
             return ns / 1_000_000L;
         }
 
-        // GPS time in nanoseconds since GPS epoch.
-        try
-        {
-            var ms = ns / 1_000_000L;
-            return ms;
-        }
-        catch
-        {
-            return 0;
-        }
+        // GPS time in nanoseconds since GPS epoch → Unix ms for VehicleSample / Curves OADate.
+        return NcomTime.GpsNsToUnixMs(ns);
     }
 
     private static double NormalizeHeading(double deg)

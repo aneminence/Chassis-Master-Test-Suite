@@ -121,6 +121,7 @@ public static class NcomDecoder
         var pitchRad = ReadInt24(pkt, 55) * 1e-6;
         var rollRad = ReadInt24(pkt, 58) * 1e-6;
         var statusChannel = pkt[62];
+        var statusData = pkt.Slice(63, 8).ToArray();
 
         var usable = UsableNavStatuses.Contains(nav) && nav != 0 && nav != 1;
         // nav 0 = all invalid; nav 1 = raw IMU only
@@ -134,6 +135,7 @@ public static class NcomDecoder
             TimeMsIntoMinute = timeMs,
             NavigationStatus = nav,
             StatusChannel = statusChannel,
+            StatusData = statusData,
             IsKinematicsValid = usable && nav != 1,
             IsImuValid = nav is 1 or 2 or 3 or 4 or 20 or 21 or 22,
             AccelXMps2 = ax,
@@ -179,6 +181,8 @@ public sealed class NcomMeasurement
     public ushort TimeMsIntoMinute { get; init; }
     public byte NavigationStatus { get; init; }
     public byte StatusChannel { get; init; }
+    /// <summary>Batch S (bytes 63–70). Channel 0: GPS minutes (u32 LE) + sat/mode bytes.</summary>
+    public byte[] StatusData { get; init; } = Array.Empty<byte>();
     public bool IsKinematicsValid { get; init; }
     public bool IsImuValid { get; init; }
 
