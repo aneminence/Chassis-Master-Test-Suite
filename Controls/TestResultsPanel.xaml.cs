@@ -91,7 +91,7 @@ public partial class TestResultsPanel : UserControl
     {
         if (MaximizeButton is null)
             return;
-        MaximizeButton.Content = _workspaceMaximized ? "❐" : "□";
+        MaximizeButton.Content = _workspaceMaximized ? WorkspaceMaximizeChrome.RestoreGlyph : WorkspaceMaximizeChrome.ExpandGlyph;
         MaximizeButton.ToolTip = Loc.T(_workspaceMaximized ? "Layout.RestoreTip" : "Layout.MaximizeTip");
     }
 

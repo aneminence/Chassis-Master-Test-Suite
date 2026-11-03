@@ -1744,7 +1744,7 @@ public partial class MainWindow : Window
         if (CurvesMaximizeButton is not null)
         {
             var chartMax = max == WorkspacePanelKind.Chart;
-            CurvesMaximizeButton.Content = chartMax ? "❐" : "□";
+            CurvesMaximizeButton.Content = chartMax ? WorkspaceMaximizeChrome.RestoreGlyph : WorkspaceMaximizeChrome.ExpandGlyph;
             CurvesMaximizeButton.ToolTip = Loc.T(chartMax ? "Layout.RestoreTip" : "Layout.MaximizeTip");
         }
     }

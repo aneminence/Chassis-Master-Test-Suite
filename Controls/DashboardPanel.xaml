@@ -60,10 +60,10 @@
                             Click="ResetLayoutButton_Click"
                             ToolTip="Reset gauges to default layout"/>
                     <Button x:Name="MaximizeButton"
-                            Content="□"
+                            Content="↗↙"
                             Style="{StaticResource DashToolButton}"
                             Margin="0"
-                            MinWidth="28"
+                            MinWidth="34"
                             FontSize="14"
                             Click="MaximizeButton_Click"
                             ToolTip="Expand this panel to fill the workspace"/>

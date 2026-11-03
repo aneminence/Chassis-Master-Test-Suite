@@ -121,9 +121,9 @@
                 </StackPanel>
                 <Button x:Name="MaximizeButton"
                         Grid.Column="6"
-                        Content="□"
+                        Content="↗↙"
                         Style="{StaticResource HeaderButtonStyle}"
-                        MinWidth="28"
+                        MinWidth="34"
                         FontSize="14"
                         VerticalAlignment="Center"
                         Click="MaximizeButton_Click"
