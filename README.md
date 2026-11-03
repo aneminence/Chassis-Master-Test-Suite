@@ -6,62 +6,77 @@
 
 ---
 
-## 最近更新（2026-11-03）
+## 最近更新
 
-相对上一版 README（2026-10-26）之后合入 `main` 的已交付能力汇总。更早的 OxTS 导入、3D Track Map、按文件着色、KML 裁剪、Splash、Lap/Sector、主题/语言等仍见下文各节，此处不再重复展开。
+各功能后的日期为合入 `main` 的落地日（`YYYY-MM-DD`，Asia/Shanghai 本地 git 日期）。文首不再单独充当更新记录。
 
-### 四面板最大化 / 工具栏布局
-- **Dashboard / Test Results / Track Map / Curves** 各面板标题栏**右上角**可最大化：最大化后填满主工作区；再点恢复四格布局。图标为 **45° 外扩 / 内收双箭头**（Path 绘制）。
-- **Track Map** 工具栏为**两行**：Follow、2D·3D、Basemap、瓦片图源等控件**靠右对齐**；**Gate 操作**叠在地图视口 **左上角**，位于 **Gates 图例上方**（避免与图例重叠）。
+### 四面板最大化 / 工具栏布局（2026-11-03）
+- **Dashboard / Test Results / Track Map / Curves** 各面板标题栏**右上角**可最大化：最大化后填满主工作区；再点恢复四格布局。图标为 **45° 外扩 / 内收双箭头**（Path 绘制）。（`0c3dc74`）
+- **Track Map** 工具栏为**两行**：Follow、2D·3D、Basemap、瓦片图源等控件**靠右对齐**；**Gate 操作**叠在地图视口 **左上角**，位于 **Gates 图例上方**（避免与图例重叠）。（`8a9cbf5`）
+- **Follow**：2D / 3D Track Map 跟随 / 居中当前车辆。（`54c5a13`，2026-11-03）
 - **Curves** 工具栏：左侧 **Reset View → Mark Region → Add Gate**；**Add Plot** 在 **Remove Plot** 左侧；标记/裁剪类编辑按钮靠右；**最大化箭头在最右侧**。
 
-### OxTS XCOM / NCOM / RCOM 离线导入
+### Simulator（Helix 3D）（2026-11-02）
+- 仿真窗由粗略 **Viewport3D** 换为 **HelixToolkit.Wpf**（`HelixViewport3D`）三维场景。（`0a33175`）
+- 赛道：**Spa 风格**大型封闭赛道、高程起伏明显（风格参考，**非官方 Spa 地图**），**非椭圆**；地形与赛道连续贴合（不悬空），边线/屏障处已处理自交与 Z-fight。（`7c560e2` / `2e2020d`，抛光 `fc86664`）
+- 车体/世界坐标：**X 前、Y 左、Z 上**（右手系）；**Roll / Pitch / Yaw** 分别绕 **X / Y / Z**。
+- 动力学：方向盘 **一阶滤波 + 车速衰减**（软转向）；**单轨 / 自行车**横向模型；**追逐相机**（位置/视线滞后，过弯不侧倾）。
+- 仍经 **UDP / `VehicleSimulator`**（约 100 Hz）推主窗 Dashboard / 曲线 / Track Map——数据通路不变。
+
+### GSpot 多车房间监控（2026-11-02）
+- GSpot WebSocket 房间支持**多车监控**（过滤 / 选车等，见 `GSpotDataSource`）。（`08225f9`）
+
+### OxTS XCOM / NCOM / RCOM 离线导入（2026-10-26）
 - **Offline Open** 过滤器增加 `*.xcom;*.ncom`（与 VBO / KML / KMZ 并列）。
 - **多流拆分**：一个 XCOM 内每个 NCOM/RCOM 流各自成为一条 Offline 条目，命名形如 `basename#sN-…`，**不混成一路**。
 - **NCOM** → 导航量写入 `VehicleSample`；**RCOM** → 相对测距等通道（见 `docs/xcom-channels.md`）。
 - 实现：`Recorder/OxTS/`（`XcomContainerReader` / `NcomDecoder` / `RcomDecoder` / `XcomImporter`）；说明见 `docs/xcom-ANALYSIS.md`、`docs/xcom-channels.md`；冒烟工具 `tools/OxTSSmoke`。
 - 说明：部分 XCOM 内两路 NCOM 地速在文件内容上即近乎相同，曲线会重合；RCOM 的通用 Speed 映射为猎人车前进速度，可能与 NCOM 地速接近——相对运动请看 RCOM 自有通道（如 `range_long_m` / `range_lat_m`）。
 
-### Track Map 2D / 3D（Cesium WebView2）
-- 可选 **3D** 轨迹（高度）；默认 **Ground** 海拔模式（DEM 采样贴地）；**无多倍高程夸张**（固定 1×）。
+### Track Map 2D / 3D（Cesium WebView2）（2026-10-14 … 2026-10-26）
+- 可选 **3D** 轨迹（高度）；默认 **Ground** 海拔模式（DEM 采样贴地）；**无多倍高程夸张**（固定 1×）。（初版 `e31fa40` 2026-10-14；贴地/门/光标抛光至 2026-10-26）
 - **车辆光标**：航向对齐的长方体约 5×2×1.8 m；2D/3D 与曲线光标双向同步（含圈速对比地图点击）。
 - **Gate**：贴轨扁条（无 U 型立柱、无圆点）；**无 S/E 起终点标记**。
-- **GateStore 共享**：2D / 3D / 曲线竖线同步；门颜色走 `ColorHex`。
+- **GateStore 共享**：2D / 3D / 曲线竖线同步；门颜色走 `ColorHex`。（`047dc14`，2026-10-26）
 - **底图开** → 隐藏轨迹区网格；**底图关** → 保留网格；去掉左下角 online/terrain 状态角标。
-- 在线底图图源逻辑与此前一致（OSM / OpenTopo / Esri / Carto / 自定义 XYZ）。
+- 在线底图图源逻辑与此前一致（OSM / OpenTopo / Esri / Carto / 自定义 XYZ）。（底图初版 `621121f`，2026-10-10）
 - 其它：工具栏控件更紧凑；KML 航向估计；渲染开销与闪烁修复。
 
-### 按文件着色
-- Files 芯片颜色按钮：色块（swatch）+ 十六进制；曲线与 Track Map 共用 `ColorHex`，按文件路径记忆。
+### 按文件着色（2026-10-26）
+- Files 芯片颜色按钮：色块（swatch）+ 十六进制；曲线与 Track Map 共用 `ColorHex`，按文件路径记忆。（`047dc14`）
 - 单文件打开时曲线也跟芯片色（不再只走默认调色板）；色板菜单可见色块（`adfbd86`）。
 
-### KML 非破坏裁剪 / 会话
-- KML 轨迹支持**非破坏裁剪**（不改源文件）。
-- 启动时从会话记忆恢复上次的 KML/KMZ 离线轨。
+### KML 导入 / 非破坏裁剪 / 会话（2026-10-12 … 2026-10-26）
+- KML/KMZ Phase 1 导入叠画 Track Map。（`4a11f66`，2026-10-12）
+- KML 轨迹支持**非破坏裁剪**（不改源文件）。（`320c409`，2026-10-26）
+- 启动时从会话记忆恢复上次的 KML/KMZ 离线轨。（`d737c32`，2026-10-14）
 
-### 启动动画 Splash
-- 启动时显示动画 Splash（`Assets/Splash`）。
+### 启动动画 Splash（2026-10-26）
+- 启动时显示动画 Splash（`Assets/Splash`）。（`331ecf2`）
 
-### 圈速 / 扇区与对比联动
-- Lap / Sector 计时分析；圈速操作区保持可见。
+### 圈速 / 扇区与对比联动（2026-10-14）
+- Lap / Sector 计时分析；圈速操作区保持可见。（`0b086d3`）
 - 对比模式：尊重所选 X 轴；对比光标与地图同步；圈速对比下地图点击同步；对比 Elapsed 轴对齐。
 
-### 曲线区
-- 多 Plot **共用 X 轴缩放/平移**。
-- 新增通道示例：`slope_pct`（距离窗坡度）。
+### 曲线区（2026-10-09 … 2026-10-14）
+- 北京时间轴 / 光标 / 区间 Measure。（`efa4c82`，2026-10-09）
+- 多 Plot **共用 X 轴缩放/平移**。（`5396dcc`，2026-10-14）
+- 新增通道示例：`slope_pct`（距离窗坡度）。（`4f153f1`，2026-10-14）
 
-### GSpot / iCell VBO
-- 修正 GSpot/iCell VBO 经纬度解码（Track Map 可用）。
-- 重映射 speed / heading / time / height 列；识别标准与移位布局。
+### GSpot / iCell VBO（2026-10-14）
+- 修正 GSpot/iCell VBO 经纬度解码（Track Map 可用）。（`c5ec939`）
+- 重映射 speed / heading / time / height 列；识别标准与移位布局。（`c5a7755` / `307bb8c`）
 
-### 主题 / 语言 UI
-- Light 主题对齐 VI skin H（白底红黑）；UI chrome 走 `DynamicResource`。
-- 顶栏 **Language / Theme** 改为分体按钮（主面快速切换 + chevron 其它项）；其它主题含 Icon Gold；中英切换时宽度固定，避免挤动 Start。
+### 主题 / 语言 UI（2026-10-10 … 2026-10-27）
+- 在线底图 + 中/英 i18n + 暗黑/明亮/自定义主题骨架。（`621121f`，2026-10-10）
+- Light 主题对齐 VI skin H（白底红黑）；UI chrome 走 `DynamicResource`；Icon Gold。（`1799d73` / `6c6f136`，2026-10-13）
+- 顶栏 **Language / Theme** 分体按钮（主面快速切换 + chevron 其它项）；中英切换时宽度固定，避免挤动 Start。（`82bad1b` 等，2026-10-13）
+- 半透明亚克力玻璃主题。（`302ffde`，2026-10-27）
 
-### 文档与代理工作流
-- `AGENTS.md` + `.ai-workflows/`（skills / rules / product-management 模板）。
-- `VERSIONING.md`（SemVer 2.0.0，0.x.y 预览线；本地 packs 基线）。
-- 硬件 / 架构 / 产品文档归入 `docs/`（`docs/hardware`、`docs/architecture`、`docs/product`）。
+### 文档与代理工作流（2026-10-24 … 2026-10-26）
+- `AGENTS.md` + `.ai-workflows/`（skills / rules / product-management 模板）。（`e2a183d`，2026-10-24）
+- `VERSIONING.md`（SemVer 2.0.0，0.x.y 预览线；本地 packs 基线）。（`e2857a6`，2026-10-25）
+- 硬件 / 架构 / 产品文档归入 `docs/`。（`f4166ba`，2026-10-26）
 
 ---
 
@@ -156,7 +171,7 @@ Chassis Master Test Suite/
 ├─ Recorder/
 │   ├─ VboRecorder / VboReader / CsvRecorder（未接线）
 │   └─ OxTS/   XcomContainerReader / NcomDecoder / RcomDecoder / XcomImporter
-├─ Simulator/   VehicleSimulator
+├─ Simulator/   VehicleSimulator · SimulatorSceneBuilder · SpaTrackCenterline（Helix 3D）
 ├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / SessionMetadata
 ├─ Analysis/
 │   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
@@ -174,7 +189,7 @@ Chassis Master Test Suite/
 ├─ AGENTS.md · .ai-workflows/ · VERSIONING.md
 ├─ ChassisMasterTestSuite.Tests/   xUnit（纯逻辑，无 WPF）
 ├─ MainWindow.* 外壳、Layout、录制、多文件曲线、光标联动、文件着色
-├─ SimulatorWindow.* 三维仿真
+├─ SimulatorWindow.* Helix 3D 仿真窗（Spa 风格赛道 + 追逐相机）
 └─ rebuild.cmd
 ```
 
@@ -188,6 +203,7 @@ Chassis Master Test Suite/
 | .NET | 10.0（`net10.0-windows`） |
 | UI | WPF |
 | 绘图 | ScottPlot.WPF 5.x |
+| 3D 仿真 | HelixToolkit.Wpf 3.x |
 | IDE | Visual Studio 2022 / 2026 |
 
 > 编译时 `NU1701`（SkiaSharp.Views.WPF）为已知警告，**不影响运行**。
@@ -230,7 +246,7 @@ dotnet test "Chassis Master Test Suite.sln" -c Release
 ### 2. Online：UDP + Simulator（本机仿真）
 
 1. 顶部切到 **Online**，确认工具为 **UDP**（或点一次 **UDP**）。  
-2. 点 **Simulator**，用 WASD / Space / R 驾驶：
+2. 点 **Simulator** 打开 Helix 3D 窗（Spa 风格高程赛道），用 WASD / Space / R 驾驶；样本仍经本机 UDP 进主窗：
 
 | 按键 | 功能 |
 |---|---|
@@ -358,49 +374,55 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 |---|---|
 | Latitude | 正 = 北纬 |
 | Longitude | 正 = 东经（内部） |
-| 三维场景 +X / +Y / +Z | 左 / 上 / Heading0° 前方 |
+| 三维仿真车体/世界 +X / +Y / +Z | 前（航向 0°）/ 左 / 上（右手系；Roll/Pitch/Yaw 绕 X/Y/Z） |
 | Track Map 米平面 | +X 东 / +Y 北 |
 
 ---
 
 ## 已完成功能（对照代码）
 
-- [x] UDP + DataBus + Simulator  
-- [x] `IDataSource` + GSpot（WebSocket）  
-- [x] VBO 录制（Start/Pause/Stop）与多文件回放（Load）  
-- [x] 多 Plot / 通道曲线 / 北京时间轴 / 光标联动 / Auto 缩放  
-- [x] 多文件曲线始终叠加 + Test Results 勾选对比叠图  
-- [x] Track Map（轨迹、光标同步、run 高亮）  
-- [x] Layout 分区开关（Dashboard / Test Results / Map / Chart，无 Video）  
-- [x] 四面板最大化/恢复（45° 双箭头；填满主工作区）  
-- [x] Track Map 两行工具栏靠右；Gate 操作地图左上（Gates 图例上方）  
-- [x] Curves 工具栏：Reset→Mark→Add Gate；Add Plot 左于 Remove；编辑靠右；最大化最右  
-- [x] Online / Offline / Load / Clear  
-- [x] 可定制 Dashboard（增删/拖动/缩放、Live + Test Results 绑定）  
-- [x] Test Results：Accel / Decel / Custom / Gate + CSV  
-- [x] Gate 管理（颜色、宽度、重命名、地图点选）+ `.vbts` 门导入  
-- [x] Pass Condition + Pass values 高亮  
-- [x] Maths Channels 对话框（基础表达式）  
-- [x] Chart Measure（min/max/avg）  
-- [x] Session 元数据写入 VBO `[SessionData]`  
-- [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）  
-- [x] 通道注册表（实时 vs 文件）  
-- [x] UI 主题（暗黑 / 明亮 / Light H / Icon Gold / 自定义占位）+ 中英语言（分体按钮）  
-- [x] Track Map 在线底图（可开关、多图源）  
-- [x] KML/KMZ 导入（Phase 1：gx:Track / LineString → TrackMap 叠画；两步路速度 m/s→km/h）  
-- [x] Layout：关 Test Results 后 Dashboard|Map 并排可拖  
-- [x] Test Curve UX：滚轮滚动优先、点击聚焦缩放、通道芯片、可调高度、光标联动  
-- [x] Cesium 3D Track Map（Ground 默认、航向光标、贴轨 Gate、无夸张倍率、底图开关网格）  
-- [x] Gate 跨 2D / 3D / 曲线同步（GateStore + ColorHex）  
-- [x] 按文件着色（芯片色块 + 曲线/地图同色，路径记忆）  
-- [x] OxTS XCOM/NCOM/RCOM 离线导入（多流拆分）  
-- [x] KML 非破坏裁剪 + 会话恢复 KML/KMZ  
-- [x] 启动动画 Splash  
-- [x] Lap / Sector 计时与对比↔地图光标同步  
-- [x] 多 Plot 共用 X 轴缩放/平移；`slope_pct` 通道  
-- [x] GSpot/iCell VBO 经纬度与列布局兼容  
-- [x] Light（VI H）/ Icon Gold 等主题 + Language/Theme 分体按钮  
-- [x] `AGENTS.md` / `.ai-workflows` / `VERSIONING.md` / `docs/` 文档布局  
+日期为合入 `main` 的落地日（可核对对应 commit）；同一能力后续抛光仍以首次落地日为主，重大升级另注。
+
+- [x] UDP + DataBus + Simulator（2026-10-07）
+- [x] Simulator Helix 3D：Spa 风格封闭高程赛道、软转向 + 单轨横向、追逐相机；UDP 仍推主窗（2026-11-02）
+- [x] `IDataSource` + GSpot（WebSocket）（2026-10-09）
+- [x] GSpot 多车房间监控（2026-11-02）
+- [x] VBO 录制（Start/Pause/Stop）与多文件回放（Load）（2026-10-08）
+- [x] 多 Plot / 通道曲线 / 北京时间轴 / 光标联动 / Auto 缩放（2026-10-09）
+- [x] 多文件曲线始终叠加 + Test Results 勾选对比叠图（2026-10-10）
+- [x] Track Map（轨迹、光标同步、run 高亮）（2026-10-08）
+- [x] Layout 分区开关（Dashboard / Test Results / Map / Chart，无 Video）（2026-10-10）
+- [x] 四面板最大化/恢复（45° 双箭头；填满主工作区）（2026-11-03）
+- [x] Track Map 两行工具栏靠右；Gate 操作地图左上（Gates 图例上方）；Follow 跟随/居中（2026-11-03）
+- [x] Curves 工具栏：Reset→Mark→Add Gate；Add Plot 左于 Remove；编辑靠右；最大化最右（2026-11-03）
+- [x] Online / Offline / Load / Clear（2026-10-10）
+- [x] 可定制 Dashboard（增删/拖动/缩放、Live + Test Results 绑定）（2026-10-10）
+- [x] Test Results：Accel / Decel / Custom / Gate + CSV（2026-10-10）
+- [x] Gate 管理（颜色、宽度、重命名、地图点选）+ `.vbts` 门导入（2026-10-10）
+- [x] Pass Condition + Pass values 高亮（2026-10-10）
+- [x] Maths Channels 对话框（基础表达式）（2026-10-10）
+- [x] Chart Measure（min/max/avg）（2026-10-09）
+- [x] Session 元数据写入 VBO `[SessionData]`（2026-10-10）
+- [x] 会话记忆（VBO / `.vbts` 门 / Test Results / Maths）（2026-10-10）
+- [x] 通道注册表（实时 vs 文件）（2026-10-09）
+- [x] UI 主题（暗黑 / 明亮 / Light H / Icon Gold / 自定义占位）+ 中英语言（分体按钮）（2026-10-10 … 2026-10-13）
+- [x] 半透明亚克力玻璃主题（2026-10-27）
+- [x] Track Map 在线底图（可开关、多图源）（2026-10-10）
+- [x] KML/KMZ 导入（Phase 1：gx:Track / LineString → TrackMap 叠画；两步路速度 m/s→km/h）（2026-10-12）
+- [x] Layout：关 Test Results 后 Dashboard|Map 并排可拖（2026-10-12）
+- [x] Test Curve UX：滚轮滚动优先、点击聚焦缩放、通道芯片、可调高度、光标联动（2026-10-10）
+- [x] Cesium 3D Track Map（Ground 默认、航向光标、贴轨 Gate、无夸张倍率、底图开关网格）（2026-10-14 … 2026-10-26）
+- [x] Gate 跨 2D / 3D / 曲线同步（GateStore + ColorHex）（2026-10-26）
+- [x] 按文件着色（芯片色块 + 曲线/地图同色，路径记忆）（2026-10-26）
+- [x] OxTS XCOM/NCOM/RCOM 离线导入（多流拆分）（2026-10-26）
+- [x] KML 非破坏裁剪 + 会话恢复 KML/KMZ（2026-10-26 / 2026-10-14）
+- [x] 启动动画 Splash（2026-10-26）
+- [x] Lap / Sector 计时与对比↔地图光标同步（2026-10-14）
+- [x] 多 Plot 共用 X 轴缩放/平移；`slope_pct` 通道（2026-10-14）
+- [x] GSpot/iCell VBO 经纬度与列布局兼容（2026-10-14）
+- [x] Light（VI H）/ Icon Gold 等主题 + Language/Theme 分体按钮（2026-10-13）
+- [x] `AGENTS.md` / `.ai-workflows` / `VERSIONING.md` / `docs/` 文档布局（2026-10-24 … 2026-10-26）
+- [x] xUnit 纯逻辑测试套件（2026-10-09）
 
 ---
 
@@ -409,17 +431,19 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 与用户确认后的规划一致（不做 / 砍掉的项已从路线图移除）。
 
 **已完成（本分支 / 近期）**
-- [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）  
-- [x] 界面语言中/英；Language/Theme 分体按钮；Light（VI H）/ Icon Gold  
-- [x] 皮肤：暗黑 / 明亮 + 自定义配色（占位）  
-- [x] KML/KMZ Phase 1 + 非破坏裁剪 + 会话恢复  
-- [x] Layout 关 Test Results 后 Dashboard/Map 并排  
-- [x] Cesium 3D 轨迹图（Ground、航向光标、贴轨门、无夸张）  
-- [x] Gate 2D/3D/曲线同步；按文件着色  
-- [x] OxTS XCOM/NCOM/RCOM 离线导入  
-- [x] Lap/Sector；对比↔地图同步；多 Plot 共用 X 缩放  
-- [x] Splash；`docs/` + AGENTS / `.ai-workflows` / VERSIONING  
-- [x] 四面板最大化/恢复；Track Map / Curves 工具栏布局（Gate 左上、Curves 按钮分区）  
+- [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）（2026-10-10）
+- [x] 界面语言中/英；Language/Theme 分体按钮；Light（VI H）/ Icon Gold（2026-10-10 … 2026-10-13）
+- [x] 皮肤：暗黑 / 明亮 + 自定义配色（占位）（2026-10-10）；亚克力玻璃（2026-10-27）
+- [x] KML/KMZ Phase 1 + 非破坏裁剪 + 会话恢复（2026-10-12 … 2026-10-26）
+- [x] Layout 关 Test Results 后 Dashboard/Map 并排（2026-10-12）
+- [x] Cesium 3D 轨迹图（Ground、航向光标、贴轨门、无夸张）（2026-10-14 … 2026-10-26）
+- [x] Gate 2D/3D/曲线同步；按文件着色（2026-10-26）
+- [x] OxTS XCOM/NCOM/RCOM 离线导入（2026-10-26）
+- [x] Lap/Sector；对比↔地图同步；多 Plot 共用 X 缩放（2026-10-14）
+- [x] Splash；`docs/` + AGENTS / `.ai-workflows` / VERSIONING（2026-10-24 … 2026-10-26）
+- [x] 四面板最大化/恢复；Track Map / Curves 工具栏布局（Gate 左上、Curves 按钮分区）；Follow（2026-11-03）
+- [x] Simulator Helix 3D：Spa 风格高程赛道、软转向 + 单轨模型、追逐相机（UDP 通路不变）（2026-11-02）
+- [x] GSpot 多车房间监控（2026-11-02）
 
 **延后**
 - [ ] Settings 正式页  
@@ -437,7 +461,7 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 ## 已知限制
 
-- 仿真为纯运动学模型，高速极限工况偏大。  
+- 仿真为简化单轨（自行车）模型 + 软转向，高速极限工况仍偏理想。  
 - GSpot 部分 IMU 映射为临时方案，需标定（`acc`/`gyro`/`exts` 临时约定见 `GSpotParser`）。  
 - 曲线按可见窗口 + min-max 降采样绘制（上限约 12,000 点）；全量历史仍在内存缓冲。  
 - 内存历史缓冲上限约 **1,000,000** 条样本（环形丢最旧，线程安全快照）。  
