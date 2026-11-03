@@ -606,10 +606,11 @@
                 <Grid Grid.Row="0"
                       Margin="0,0,0,8">
 
-                    <Grid.ColumnDefinitions>
+                                        <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
@@ -663,14 +664,7 @@
                                   Checked="XAxisAutoScaleCheckBox_Changed"
                                   Unchecked="XAxisAutoScaleCheckBox_Changed"/>
 
-                        <!-- 操作按钮（Add Plot 已移到各 plot 行 Remove Plot 左侧） -->
-                        <Button x:Name="AddGateAtCursorButton"
-                                Content="Add Gate"
-                                Style="{StaticResource ToolButtonStyle}"
-                                Margin="0,0,6,0"
-                                Click="AddGateAtCursorButton_Click"
-                                ToolTip="Add a gate at the yellow cursor and sync to the map"/>
-
+                        <!-- Left actions: Reset View → Mark Region → Add Gate -->
                         <Button x:Name="ResetViewButton"
                                 Content="Reset View"
                                 Style="{StaticResource ToolButtonStyle}"
@@ -683,6 +677,22 @@
                                 Margin="0,0,6,0"
                                 Click="MarkRegionButton_Click"
                                 ToolTip="Place two boundaries for min/max/average measurement"/>
+
+                        <Button x:Name="AddGateAtCursorButton"
+                                Content="Add Gate"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="AddGateAtCursorButton_Click"
+                                ToolTip="Add a gate at the yellow cursor and sync to the map"/>
+
+                    </StackPanel>
+
+                    <!-- Mark / cut edit actions: right-aligned before Rx/Maximize -->
+                    <StackPanel Grid.Column="3"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Center"
+                                Margin="8,0,8,0">
 
                         <Button x:Name="AddKmlMarkButton"
                                 Content="Add Mark"
@@ -739,7 +749,6 @@
                                 Visibility="Collapsed"/>
 
                     </StackPanel>
-
                     <!-- 右侧：网络质量 -->
                     <!-- File list: always expanded, uses stretch column -->
                 <DockPanel Grid.Column="2"
@@ -760,7 +769,7 @@
                     </ScrollViewer>
                 </DockPanel>
 
-                <StackPanel Grid.Column="3"
+                <StackPanel Grid.Column="4"
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
