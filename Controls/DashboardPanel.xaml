@@ -23,51 +23,70 @@
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
-            <!-- Header -->
+            <!-- Header: fixed maximize column so it is never covered -->
             <Grid Grid.Row="0" Margin="0,0,0,8">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*" MinWidth="0"/>
+                    <ColumnDefinition Width="36"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Center">
-                    <TextBlock x:Name="TitleText"
-                               Text="Dashboard"
-                               Foreground="{DynamicResource TextPrimary}"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"/>
-                    <TextBlock x:Name="CursorModeText"
-                               Text=""
-                               Foreground="{DynamicResource AccentBrush}"
-                               FontSize="12"
-                               Margin="10,0,0,0"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
+                <Grid Grid.Column="0" ClipToBounds="True" Margin="0,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal">
-                    <Button x:Name="AddGaugeButton"
-                            Content="Add Gauge"
-                            Style="{StaticResource DashToolButton}"
-                            Click="AddGaugeButton_Click"
-                            ToolTip="Add a Default numeric gauge"/>
-                    <Button x:Name="ResetLayoutButton"
-                            Content="Reset"
-                            Style="{StaticResource DashToolButton}"
-                            Margin="0"
-                            Click="ResetLayoutButton_Click"
-                            ToolTip="Reset gauges to default layout"/>
-                    <Button x:Name="MaximizeButton"
-                            Content="{x:Null}"
-                            Style="{StaticResource DashToolButton}"
-                            Margin="0"
-                            MinWidth="34"
-                            FontSize="14"
-                            Click="MaximizeButton_Click"
-                            ToolTip="Expand this panel to fill the workspace"/>
-                </StackPanel>
+                    <StackPanel Grid.Column="0"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText"
+                                   Text="Dashboard"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                        <TextBlock x:Name="CursorModeText"
+                                   Text=""
+                                   Foreground="{DynamicResource AccentBrush}"
+                                   FontSize="12"
+                                   Margin="10,0,0,0"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Column="1"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="AddGaugeButton"
+                                    Content="Add Gauge"
+                                    Style="{StaticResource DashToolButton}"
+                                    Click="AddGaugeButton_Click"
+                                    ToolTip="Add a Default numeric gauge"/>
+                            <Button x:Name="ResetLayoutButton"
+                                    Content="Reset"
+                                    Style="{StaticResource DashToolButton}"
+                                    Margin="0"
+                                    Click="ResetLayoutButton_Click"
+                                    ToolTip="Reset gauges to default layout"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <Button x:Name="MaximizeButton"
+                        Grid.Column="1"
+                        Content="{x:Null}"
+                        Style="{StaticResource DashToolButton}"
+                        Width="34"
+                        MinWidth="34"
+                        Margin="0"
+                        Padding="0"
+                        FontSize="14"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Panel.ZIndex="10"
+                        Click="MaximizeButton_Click"
+                        ToolTip="Expand this panel to fill the workspace"/>
             </Grid>
 
             <!-- Multi-vehicle summary chips -->

@@ -84,43 +84,61 @@
 
             <Grid Grid.Row="0" Margin="0,0,0,10">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*" MinWidth="0"/>
+                    <ColumnDefinition Width="36"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0"
-                            Orientation="Horizontal"
-                            VerticalAlignment="Center">
-                    <TextBlock x:Name="TitleText"
-                               Text="Test Results"
-                               Foreground="{DynamicResource TextPrimary}"
-                               FontSize="14"
-                               FontWeight="SemiBold"
-                               VerticalAlignment="Center"/>
-                    <Button x:Name="ToggleConditionsButton"
-                            Content="Hide conditions"
-                            Style="{StaticResource HeaderButtonStyle}"
-                            Margin="12,0,0,0"
-                            Padding="10,2"
-                            Click="ToggleConditionsButton_Click"
-                            ToolTip="Collapse / expand the conditions area above the results table"/>
-                </StackPanel>
+                <Grid Grid.Column="0" ClipToBounds="True" Margin="0,0,8,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="SessionButton"
-                            Content="Session"
-                            Style="{StaticResource HeaderButtonStyle}"
-                            Click="SessionButton_Click"
-                            ToolTip="Edit session metadata written to VBO [SessionData]"/>
-                    <Button x:Name="MaximizeButton"
-                            Content="{x:Null}"
-                            Style="{StaticResource HeaderButtonStyle}"
-                            MinWidth="34"
-                            FontSize="14"
-                            Margin="6,0,0,0"
-                            Click="MaximizeButton_Click"
-                            ToolTip="Expand this panel to fill the workspace"/>
-                </StackPanel>
+                    <StackPanel Grid.Column="0"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <TextBlock x:Name="TitleText"
+                                   Text="Test Results"
+                                   Foreground="{DynamicResource TextPrimary}"
+                                   FontSize="14"
+                                   FontWeight="SemiBold"
+                                   VerticalAlignment="Center"/>
+                        <Button x:Name="ToggleConditionsButton"
+                                Content="Hide conditions"
+                                Style="{StaticResource HeaderButtonStyle}"
+                                Margin="12,0,0,0"
+                                Padding="10,2"
+                                Click="ToggleConditionsButton_Click"
+                                ToolTip="Collapse / expand the conditions area above the results table"/>
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Column="1"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="SessionButton"
+                                    Content="Session"
+                                    Style="{StaticResource HeaderButtonStyle}"
+                                    Click="SessionButton_Click"
+                                    ToolTip="Edit session metadata written to VBO [SessionData]"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+
+                <Button x:Name="MaximizeButton"
+                        Grid.Column="1"
+                        Content="{x:Null}"
+                        Style="{StaticResource HeaderButtonStyle}"
+                        Width="34"
+                        MinWidth="34"
+                        Padding="0"
+                        FontSize="14"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Panel.ZIndex="10"
+                        Click="MaximizeButton_Click"
+                        ToolTip="Expand this panel to fill the workspace"/>
             </Grid>
 
             <ScrollViewer x:Name="ConditionsScroll"

@@ -24,20 +24,21 @@
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" MinWidth="0"/>
+                    <ColumnDefinition Width="36"/>
+                </Grid.ColumnDefinitions>
 
-                <!--
-                  Shared full-width rows. Right cluster on row 1 = map tools + maximize.
-                  Row 2 gate ops Dock=Right so Export shares the same outer right edge as maximize.
-                -->
-                <Grid Grid.Row="0">
+                <!-- Row 1 content: title + tools; clipped so never paints over maximize -->
+                <Grid Grid.Row="0"
+                      Grid.Column="0"
+                      ClipToBounds="True"
+                      Margin="0,0,8,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
                     </Grid.ColumnDefinitions>
 
-                    <!-- Title stays left -->
                     <StackPanel Grid.Column="0"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
@@ -55,79 +56,88 @@
                                    VerticalAlignment="Center"/>
                     </StackPanel>
 
-                    <!-- Spacer column (*) — keeps tools+max pinned to the right -->
+                    <ScrollViewer Grid.Column="1"
+                                  HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  HorizontalAlignment="Stretch"
+                                  VerticalAlignment="Center"
+                                  Padding="0"
+                                  Margin="0">
+                        <StackPanel Orientation="Horizontal"
+                                    HorizontalAlignment="Right"
+                                    VerticalAlignment="Center">
+                            <CheckBox x:Name="FollowVehicleCheck" Content="Follow vehicle" Margin="0,0,10,0"
+                                      Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
+                                      Checked="FollowVehicleChanged" Unchecked="FollowVehicleChanged"
+                                      ToolTip="Keep the current vehicle centered. Drag to stop following."/>
+                            <Button x:Name="Mode2DButton" Content="2D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
+                                    Click="Mode2DButton_Click" ToolTip="Use the classic 2D track map"/>
+                            <Button x:Name="Mode3DButton" Content="3D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,10,0"
+                                    Click="Mode3DButton_Click" ToolTip="Use the interactive 3D globe"/>
 
-                    <!-- Row1 map tools: immediately left of maximize -->
-                    <StackPanel Grid.Column="2"
-                                Orientation="Horizontal"
-                                VerticalAlignment="Center"
-                                HorizontalAlignment="Right"
-                                Margin="0,0,8,0">
-                        <CheckBox x:Name="FollowVehicleCheck" Content="Follow vehicle" Margin="0,0,10,0"
-                                  Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
-                                  Checked="FollowVehicleChanged" Unchecked="FollowVehicleChanged"
-                                  ToolTip="Keep the current vehicle centered. Drag to stop following."/>
-                        <Button x:Name="Mode2DButton" Content="2D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
-                                Click="Mode2DButton_Click" ToolTip="Use the classic 2D track map"/>
-                        <Button x:Name="Mode3DButton" Content="3D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,10,0"
-                                Click="Mode3DButton_Click" ToolTip="Use the interactive 3D globe"/>
+                            <StackPanel x:Name="Map2DToolbar" Orientation="Horizontal" VerticalAlignment="Center">
+                                <CheckBox x:Name="BasemapCheck"
+                                          Content="Basemap"
+                                          Margin="0,0,8,0"
+                                          VerticalAlignment="Center"
+                                          Checked="BasemapCheck_Changed"
+                                          Unchecked="BasemapCheck_Changed"
+                                          ToolTip="Toggle online map tiles under the track"/>
+                                <ComboBox x:Name="BasemapSourceCombo"
+                                          Width="150"
+                                          Height="26"
+                                          Style="{StaticResource DarkComboBoxStyle}"
+                                          SelectionChanged="BasemapSourceCombo_SelectionChanged"
+                                          ToolTip="Basemap source (Ovi-style)"/>
+                            </StackPanel>
 
-                        <StackPanel x:Name="Map2DToolbar" Orientation="Horizontal" VerticalAlignment="Center">
-                            <CheckBox x:Name="BasemapCheck"
-                                      Content="Basemap"
-                                      Margin="0,0,8,0"
-                                      VerticalAlignment="Center"
-                                      Checked="BasemapCheck_Changed"
-                                      Unchecked="BasemapCheck_Changed"
-                                      ToolTip="Toggle online map tiles under the track"/>
-                            <ComboBox x:Name="BasemapSourceCombo"
-                                      Width="150"
-                                      Height="26"
-                                      Style="{StaticResource DarkComboBoxStyle}"
-                                      SelectionChanged="BasemapSourceCombo_SelectionChanged"
-                                      ToolTip="Basemap source (Ovi-style)"/>
+                            <StackPanel x:Name="Map3DToolbar" Orientation="Horizontal" VerticalAlignment="Center"
+                                        Visibility="Collapsed">
+                                <TextBlock x:Name="Map3DSourceLabel" Text="Source" Foreground="{DynamicResource TextSecondary}"
+                                           FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <ComboBox x:Name="Map3DSourceCombo" Width="145" Height="26" Margin="0,0,8,0"
+                                          Style="{StaticResource DarkComboBoxStyle}"
+                                          SelectionChanged="Map3DSourceCombo_SelectionChanged"/>
+                                <TextBlock x:Name="AltitudeModeLabel" Text="Height" Foreground="{DynamicResource TextSecondary}"
+                                           FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                                <ComboBox x:Name="AltitudeModeCombo" Width="92" Height="26" Margin="0,0,8,0"
+                                          Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="AltitudeModeCombo_SelectionChanged">
+                                    <ComboBoxItem Tag="recorded" Content="Recorded"/>
+                                    <ComboBoxItem Tag="ground" Content="Ground" IsSelected="True"/>
+                                </ComboBox>
+                                <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
+                                        Click="Fit3DButton_Click"/>
+                            </StackPanel>
                         </StackPanel>
-
-                        <StackPanel x:Name="Map3DToolbar" Orientation="Horizontal" VerticalAlignment="Center"
-                                    Visibility="Collapsed">
-                            <TextBlock x:Name="Map3DSourceLabel" Text="Source" Foreground="{DynamicResource TextSecondary}"
-                                       FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <ComboBox x:Name="Map3DSourceCombo" Width="145" Height="26" Margin="0,0,8,0"
-                                      Style="{StaticResource DarkComboBoxStyle}"
-                                      SelectionChanged="Map3DSourceCombo_SelectionChanged"/>
-                            <TextBlock x:Name="AltitudeModeLabel" Text="Height" Foreground="{DynamicResource TextSecondary}"
-                                       FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
-                            <ComboBox x:Name="AltitudeModeCombo" Width="92" Height="26" Margin="0,0,8,0"
-                                      Style="{StaticResource DarkComboBoxStyle}" SelectionChanged="AltitudeModeCombo_SelectionChanged">
-                                <ComboBoxItem Tag="recorded" Content="Recorded"/>
-                                <ComboBoxItem Tag="ground" Content="Ground" IsSelected="True"/>
-                            </ComboBox>
-                            <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
-                                    Click="Fit3DButton_Click"/>
-                        </StackPanel>
-                    </StackPanel>
-
-                    <!-- Maximize: outermost right of row 1 -->
-                    <Button x:Name="MaximizeButton"
-                            Grid.Column="3"
-                            Content="{x:Null}"
-                            Style="{StaticResource HeaderButtonStyle}"
-                            MinWidth="34"
-                            Padding="0"
-                            FontSize="14"
-                            VerticalAlignment="Center"
-                            HorizontalAlignment="Right"
-                            Click="MaximizeButton_Click"
-                            ToolTip="Expand this panel to fill the workspace"/>
+                    </ScrollViewer>
                 </Grid>
 
-                <!-- Row 2: full width; gate ops docked Right → Export shares maximize's right edge -->
-                <DockPanel Grid.Row="1"
-                           LastChildFill="False"
-                           Margin="0,8,0,0">
+                <!-- Fixed maximize slot — never overlapped -->
+                <Button x:Name="MaximizeButton"
+                        Grid.Row="0"
+                        Grid.Column="1"
+                        Content="{x:Null}"
+                        Style="{StaticResource HeaderButtonStyle}"
+                        Width="34"
+                        MinWidth="34"
+                        Padding="0"
+                        FontSize="14"
+                        VerticalAlignment="Center"
+                        HorizontalAlignment="Center"
+                        Panel.ZIndex="10"
+                        Click="MaximizeButton_Click"
+                        ToolTip="Expand this panel to fill the workspace"/>
+
+                <!-- Row 2 gates: clipped / scrollable; right-aligned in content column -->
+                <ScrollViewer Grid.Row="1"
+                              Grid.Column="0"
+                              Margin="0,8,8,0"
+                              HorizontalScrollBarVisibility="Auto"
+                              VerticalScrollBarVisibility="Disabled"
+                              ClipToBounds="True">
                     <StackPanel x:Name="GateToolbar"
-                                DockPanel.Dock="Right"
                                 Orientation="Horizontal"
+                                HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
                         <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
                                 Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
@@ -157,7 +167,7 @@
                                 Click="ExportGatesButton_Click"
                                 ToolTip="Export gates (.spl)"/>
                     </StackPanel>
-                </DockPanel>
+                </ScrollViewer>
             </Grid>
             <Border x:Name="MapSurface" Grid.Row="1"
                     Background="{DynamicResource MapCanvasBackground}"

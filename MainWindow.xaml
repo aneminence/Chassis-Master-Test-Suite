@@ -606,12 +606,13 @@
                 <Grid Grid.Row="0"
                       Margin="0,0,0,8">
 
-                                        <Grid.ColumnDefinitions>
+                                                            <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*" MinWidth="0"/>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="36"/>
                     </Grid.ColumnDefinitions>
 
                     <!-- 标题 -->
@@ -821,16 +822,21 @@
                                    Text="0"
                                    Visibility="Collapsed"/>
 
-                        <Button x:Name="CurvesMaximizeButton"
-                                Content="{x:Null}"
-                                Style="{StaticResource HeaderButtonStyle}"
-                                MinWidth="34"
-                                FontSize="14"
-                                VerticalAlignment="Center"
-                                Click="CurvesMaximizeButton_Click"
-                                ToolTip="Expand this panel to fill the workspace"/>
-
                     </StackPanel>
+
+                    <Button x:Name="CurvesMaximizeButton"
+                            Grid.Column="5"
+                            Content="{x:Null}"
+                            Style="{StaticResource HeaderButtonStyle}"
+                            Width="34"
+                            MinWidth="34"
+                            Padding="0"
+                            FontSize="14"
+                            VerticalAlignment="Center"
+                            HorizontalAlignment="Center"
+                            Panel.ZIndex="10"
+                            Click="CurvesMaximizeButton_Click"
+                            ToolTip="Expand this panel to fill the workspace"/>
 
                 </Grid>
 
