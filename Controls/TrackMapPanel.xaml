@@ -124,6 +124,8 @@
                         Click="MaximizeButton_Click"
                         ToolTip="Expand this panel to fill the workspace"/>
 
+            </Grid>
+
             <Border x:Name="MapSurface" Grid.Row="1"
                     Background="{DynamicResource MapCanvasBackground}"
                     BorderBrush="{DynamicResource BorderBrushSoft}"
