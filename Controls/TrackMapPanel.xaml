@@ -263,76 +263,79 @@
 
                     <!-- Gate color legend overlays both 2D and 3D (above Map3DHost in z-order for 2D;
                          3D also mirrors legend inside Cesium HTML because WebView2 HWND airspace). -->
-                                        <!-- Gate ops overlay: top-right of map viewport (2D/3D host) -->
-                    <Border x:Name="GateToolbarPanel"
-                            Panel.ZIndex="21"
-                            HorizontalAlignment="Right"
-                            VerticalAlignment="Top"
-                            Margin="10,10,10,0"
-                            Background="{DynamicResource OverlayScrim}"
-                            BorderBrush="{DynamicResource BorderBrushSoft}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="8,6"
-                            MaxWidth="720">
-                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                      VerticalScrollBarVisibility="Disabled"
-                                      Focusable="False">
-                            <StackPanel x:Name="GateToolbar"
-                                        Orientation="Horizontal"
-                                        VerticalAlignment="Center">
-                                <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                        Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
-                                <ComboBox x:Name="GateCombo" Width="100" Height="26" Margin="0,0,6,0"
-                                          Style="{StaticResource DarkComboBoxStyle}"
-                                          SelectionChanged="GateCombo_SelectionChanged"
-                                          ToolTip="Select gate"/>
-                                <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
-                                         Text="20" Style="{StaticResource DarkTextBoxStyle}"
-                                         VerticalContentAlignment="Center"
-                                         ToolTip="Gate width (meters)"
-                                         LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
-                                <TextBlock Text="m" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                        Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
-                                <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                        Click="DeleteGateButton_Click" ToolTip="Delete selected gate"/>
-                                <Button x:Name="DeleteAllGatesButton" Content="Delete All" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                        Click="DeleteAllGatesButton_Click" ToolTip="Remove every gate"/>
-                                <Button x:Name="ImportGatesButton" Content="Import" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                        Click="ImportGatesButton_Click" ToolTip="Import gates from VBTS (.vbts)"/>
-                                <Button x:Name="ExportGatesButton"
-                                        Content="Export"
-                                        Style="{StaticResource HeaderButtonStyle}"
-                                        Padding="6,2,0,2"
-                                        Click="ExportGatesButton_Click"
-                                        ToolTip="Export gates (.spl)"/>
+                    <!-- Gate ops + legend: top-left stack; ops above legend, no overlap -->
+                    <StackPanel Panel.ZIndex="21"
+                                HorizontalAlignment="Left"
+                                VerticalAlignment="Top"
+                                Margin="10,10,0,0"
+                                MaxWidth="720">
+                        <Border x:Name="GateToolbarPanel"
+                                HorizontalAlignment="Left"
+                                Background="{DynamicResource OverlayScrim}"
+                                BorderBrush="{DynamicResource BorderBrushSoft}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="8,6"
+                                Margin="0,0,0,8">
+                            <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                          VerticalScrollBarVisibility="Disabled"
+                                          Focusable="False">
+                                <StackPanel x:Name="GateToolbar"
+                                            Orientation="Horizontal"
+                                            VerticalAlignment="Center">
+                                    <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                            Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
+                                    <ComboBox x:Name="GateCombo" Width="100" Height="26" Margin="0,0,6,0"
+                                              Style="{StaticResource DarkComboBoxStyle}"
+                                              SelectionChanged="GateCombo_SelectionChanged"
+                                              ToolTip="Select gate"/>
+                                    <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                                    <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
+                                             Text="20" Style="{StaticResource DarkTextBoxStyle}"
+                                             VerticalContentAlignment="Center"
+                                             ToolTip="Gate width (meters)"
+                                             LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
+                                    <TextBlock Text="m" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                    <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                            Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
+                                    <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                            Click="DeleteGateButton_Click" ToolTip="Delete selected gate"/>
+                                    <Button x:Name="DeleteAllGatesButton" Content="Delete All" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                            Click="DeleteAllGatesButton_Click" ToolTip="Remove every gate"/>
+                                    <Button x:Name="ImportGatesButton" Content="Import" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                            Click="ImportGatesButton_Click" ToolTip="Import gates from VBTS (.vbts)"/>
+                                    <Button x:Name="ExportGatesButton"
+                                            Content="Export"
+                                            Style="{StaticResource HeaderButtonStyle}"
+                                            Padding="6,2,0,2"
+                                            Click="ExportGatesButton_Click"
+                                            ToolTip="Export gates (.spl)"/>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Border>
+
+                        <!-- Gate color legend below ops (WebView2 3D mirrors legend in HTML for HWND airspace). -->
+                        <Border x:Name="GateLegendPanel"
+                                Visibility="Collapsed"
+                                HorizontalAlignment="Left"
+                                Background="{DynamicResource OverlayScrim}"
+                                BorderBrush="{DynamicResource BorderBrushSoft}"
+                                BorderThickness="1"
+                                CornerRadius="4"
+                                Padding="8,6"
+                                IsHitTestVisible="False"
+                                MaxWidth="200">
+                            <StackPanel>
+                                <TextBlock Text="Gates"
+                                           Foreground="{DynamicResource TextSecondary}"
+                                           FontSize="10"
+                                           FontWeight="SemiBold"
+                                           Margin="0,0,0,4"/>
+                                <ItemsControl x:Name="GateLegendItems"/>
                             </StackPanel>
-                        </ScrollViewer>
-                    </Border>
-<Border x:Name="GateLegendPanel"
-                            Panel.ZIndex="20"
-                            Visibility="Collapsed"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            Margin="10,10,0,0"
-                            Background="{DynamicResource OverlayScrim}"
-                            BorderBrush="{DynamicResource BorderBrushSoft}"
-                            BorderThickness="1"
-                            CornerRadius="4"
-                            Padding="8,6"
-                            IsHitTestVisible="False"
-                            MaxWidth="200">
-                        <StackPanel>
-                            <TextBlock Text="Gates"
-                                       Foreground="{DynamicResource TextSecondary}"
-                                       FontSize="10"
-                                       FontWeight="SemiBold"
-                                       Margin="0,0,0,4"/>
-                            <ItemsControl x:Name="GateLegendItems"/>
-                        </StackPanel>
-                    </Border>
+                        </Border>
+                    </StackPanel>
+
 
                 </Grid>
 
