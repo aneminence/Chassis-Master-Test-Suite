@@ -139,6 +139,7 @@ public partial class TrackMapPanel : UserControl
         BuildPlot();
         _map3D = new TrackMap3DController(Map3DWebView);
         _map3D.StatusChanged += message => Dispatcher.Invoke(() => Show3DStatus(message));
+        _map3D.ManualDrag += () => Dispatcher.Invoke(() => FollowVehicleCheck.IsChecked = false);
         _map3D.SampleSelected += (trackIndex, sampleIndex) => Dispatcher.Invoke(() =>
         {
             if (trackIndex < 0 || trackIndex >= _tracks.Count)
@@ -494,7 +495,10 @@ public partial class TrackMapPanel : UserControl
     {
         // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
         if (ReferenceEquals(_cursorSample, sample) && _compareCursors.Count == 0)
+        {
+            CenterCurrentVehicle();
             return;
+        }
 
         _cursorSample = sample;
         _compareCursors = Array.Empty<CompareCursor>();
@@ -502,6 +506,30 @@ public partial class TrackMapPanel : UserControl
         UpdateCoordinateReadout();
         _map3D?.SetCompareCursors(Array.Empty<CompareCursor>());
         _map3D?.SetCursor(sample);
+        CenterCurrentVehicle();
+    }
+
+    private void FollowVehicleChanged(object sender, RoutedEventArgs e)
+    {
+        _map3D?.SetFollowVehicle(FollowVehicleCheck.IsChecked == true);
+        CenterCurrentVehicle();
+    }
+
+    private void CenterCurrentVehicle()
+    {
+        if (FollowVehicleCheck?.IsChecked != true) return;
+        var sample = _cursorSample ?? _samples.LastOrDefault(TrackProjection.IsValidGps);
+        if (sample is null || !TrackProjection.IsValidGps(sample)) return;
+        _map3D?.SetCursor(sample);
+        if (_projection is null) return;
+        _userHasAdjustedView = true;
+        var (x, y) = _projection.ToMeters(sample.Latitude, sample.Longitude);
+        var limits = _wpfPlot.Plot.Axes.GetLimits();
+        var halfWidth = Math.Max(1, (limits.Right - limits.Left) / 2);
+        var halfHeight = Math.Max(1, (limits.Top - limits.Bottom) / 2);
+        _wpfPlot.Plot.Axes.SetLimits(x - halfWidth, x + halfWidth, y - halfHeight, y + halfHeight);
+        if (!_is3DMode) _wpfPlot.Refresh();
+        _tileLayer?.Invalidate();
     }
 
     public void SetCompareCursorSamples(IReadOnlyList<CompareCursor> cursors)
@@ -511,6 +539,7 @@ public partial class TrackMapPanel : UserControl
         UpdateCursorMarker(refresh: true);
         UpdateCoordinateReadout();
         _map3D?.SetCompareCursors(_compareCursors);
+        CenterCurrentVehicle();
     }
 
     private void Mode2DButton_Click(object sender, RoutedEventArgs e) => SetMapMode(false);
@@ -741,6 +770,7 @@ public partial class TrackMapPanel : UserControl
 
         RedrawRunHighlights();
         RedrawGates();
+        CenterCurrentVehicle();
         _tileLayer?.Invalidate(force: true);
     }
 
@@ -1113,8 +1143,11 @@ public partial class TrackMapPanel : UserControl
         // 左键拖动画布平移：按住左键移动且不是点选轨迹时，退出自动取景
         if (e.LeftButton == MouseButtonState.Pressed && !_leftDownWasTrackPick)
         {
+            FollowVehicleCheck.IsChecked = false;
             MarkUserAdjustedView();
         }
+        if (e.MiddleButton == MouseButtonState.Pressed || e.RightButton == MouseButtonState.Pressed)
+            FollowVehicleCheck.IsChecked = false;
 
         if (!_hasData || _projection is null || _samples.Count == 0)
         {
@@ -1593,6 +1626,8 @@ public partial class TrackMapPanel : UserControl
         }
         if (BasemapCheck is not null)
         {
+            FollowVehicleCheck.Content = Loc.T("Map.FollowVehicle");
+            FollowVehicleCheck.ToolTip = Loc.T("Map.FollowVehicleTip");
             BasemapCheck.Content = Loc.T("Map.Basemap");
             BasemapCheck.ToolTip = Loc.T("Map.BasemapTip");
         }

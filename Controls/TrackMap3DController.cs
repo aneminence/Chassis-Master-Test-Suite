@@ -45,6 +45,7 @@ internal sealed class TrackMap3DController
 
     public event Action<string>? StatusChanged;
     public event Action? Ready;
+    public event Action? ManualDrag;
     public event Action<int, int>? SampleSelected;
 
     public async Task EnsureInitializedAsync()
@@ -213,6 +214,12 @@ internal sealed class TrackMap3DController
             SendImagery();
     }
 
+    private bool _followVehicle;
+    public void SetFollowVehicle(bool enabled)
+    {
+        _followVehicle = enabled;
+        Post(new { type = "followVehicle", enabled });
+    }
     public void Fit() => Post(new { type = "fit" });
 
     private void RebuildSampleLocations()
@@ -238,6 +245,7 @@ internal sealed class TrackMap3DController
             {
                 case "ready":
                     _pageReady = true;
+                    SetFollowVehicle(_followVehicle);
                     StatusChanged?.Invoke(string.Empty);
                     if (_active)
                     {
@@ -254,6 +262,10 @@ internal sealed class TrackMap3DController
                 case "status":
                     if (root.TryGetProperty("message", out var message))
                         StatusChanged?.Invoke(message.GetString() ?? string.Empty);
+                    break;
+                case "manualDrag":
+                    _followVehicle = false;
+                    ManualDrag?.Invoke();
                     break;
                 case "sampleSelected":
                     if (root.TryGetProperty("trackId", out var trackIdElement)

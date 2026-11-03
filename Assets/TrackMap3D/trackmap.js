@@ -27,6 +27,7 @@
   let gateEntityIds = new Set();
   let cursorEntity;
   let cursorPoint;
+  let followVehicle = false;
   let compareCursorPoints = [];
   const compareCursorEntities = new Map();
   let lastDatasetKey = "";
@@ -496,6 +497,7 @@
     } else {
       applyCursorBox(cursorEntity, point, resolved, color);
     }
+    if (followVehicle) viewer.trackedEntity = cursorEntity;
     viewer.scene.requestRender();
   }
 
@@ -574,6 +576,10 @@
       }
     } else if (data.type === "imagery") {
       setImagery(data.payload);
+    } else if (data.type === "followVehicle") {
+      followVehicle = !!data.enabled;
+      viewer.trackedEntity = followVehicle ? cursorEntity : undefined;
+      viewer.scene.requestRender();
     } else if (data.type === "cursor") {
       setCursor(data.payload);
     } else if (data.type === "cursors") {
@@ -658,6 +664,21 @@
       }
     });
     const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    let dragStart;
+    const canvas = viewer.scene.canvas;
+    canvas.addEventListener("pointerdown", event => {
+      dragStart = { x: event.clientX, y: event.clientY };
+    });
+    canvas.addEventListener("pointermove", event => {
+      if (!event.buttons || !dragStart || !followVehicle) return;
+      if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < 4) return;
+      followVehicle = false;
+      viewer.trackedEntity = undefined;
+      window.chrome.webview.postMessage({ type: "manualDrag" });
+      viewer.scene.requestRender();
+    });
+    window.addEventListener("pointerup", () => { dragStart = undefined; });
+    canvas.addEventListener("pointercancel", () => { dragStart = undefined; });
     clickHandler.setInputAction(movement => {
       const picked = viewer.scene.pick(movement.position);
       const entityId = picked && picked.id && picked.id.id;
