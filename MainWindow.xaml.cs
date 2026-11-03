@@ -1614,8 +1614,6 @@ public partial class MainWindow : Window
             XAxisLabelText.Text = Loc.T("Curves.XAxis");
         if (XAxisAutoScaleCheckBox is not null)
             XAxisAutoScaleCheckBox.Content = Loc.T("Curves.XAutoScale");
-        if (AddPlotButton is not null)
-            AddPlotButton.Content = Loc.T("Curves.AddPlot");
         if (AddGateAtCursorButton is not null)
         {
             AddGateAtCursorButton.Content = Loc.T("Curves.AddGate");
@@ -1696,6 +1694,8 @@ public partial class MainWindow : Window
                 plot.AutoScaleYCheckBox.Content = Loc.T("Curves.AutoY");
             if (plot.AddChannelButton is not null)
                 plot.AddChannelButton.Content = Loc.T("Curves.AddChannel");
+            if (plot.AddPlotButton is not null)
+                plot.AddPlotButton.Content = Loc.T("Curves.AddPlot");
             if (plot.RemovePlotButton is not null)
                 plot.RemovePlotButton.Content = Loc.T("Curves.RemovePlot");
         }
@@ -2216,12 +2216,6 @@ public partial class MainWindow : Window
     // 添加 Plot
     // ============================================================
 
-    private void AddPlotButton_Click(
-        object sender,
-        RoutedEventArgs e)
-    {
-        AddPlot();
-    }
 
     private void MarkRegionButton_Click(object sender, RoutedEventArgs e)
     {
@@ -2828,7 +2822,7 @@ public partial class MainWindow : Window
 
 
         // ========================================================
-        // Plot Header: name / Auto Y / + Channel / channels (wrap) / Remove
+        // Plot Header: name / Auto Y / + Channel / channels (wrap) / Add Plot / Remove
         // ========================================================
 
         var header = new DockPanel
@@ -2837,11 +2831,12 @@ public partial class MainWindow : Window
             Margin = new Thickness(0, 0, 0, 6)
         };
 
+        // Dock order: first Right = rightmost. Remove stays far right; Add Plot sits to its left.
         var removePlotButton = new Button
         {
             Content = Loc.T("Curves.RemovePlot"),
             Height = 26,
-            Margin = new Thickness(8, 0, 0, 0),
+            Margin = new Thickness(0, 0, 0, 0),
             VerticalAlignment = VerticalAlignment.Top
         };
         removePlotButton.SetResourceReference(
@@ -2851,6 +2846,21 @@ public partial class MainWindow : Window
         DockPanel.SetDock(removePlotButton, Dock.Right);
         header.Children.Add(removePlotButton);
         plot.RemovePlotButton = removePlotButton;
+
+        var addPlotButton = new Button
+        {
+            Content = Loc.T("Curves.AddPlot"),
+            Height = 26,
+            Margin = new Thickness(8, 0, 6, 0),
+            VerticalAlignment = VerticalAlignment.Top
+        };
+        addPlotButton.SetResourceReference(
+            FrameworkElement.StyleProperty,
+            "ToolButtonStyle");
+        addPlotButton.Click += (_, _) => AddPlot();
+        DockPanel.SetDock(addPlotButton, Dock.Right);
+        header.Children.Add(addPlotButton);
+        plot.AddPlotButton = addPlotButton;
 
         // Wrap: Plot Name | name box | Auto Y | + Channel | channel chips...
         var chrome = new WrapPanel
@@ -6598,6 +6608,7 @@ public partial class MainWindow : Window
 
         public TextBlock? NameLabel { get; set; }
         public Button? AddChannelButton { get; set; }
+        public Button? AddPlotButton { get; set; }
         public Button? RemovePlotButton { get; set; }
 
         /// <summary>

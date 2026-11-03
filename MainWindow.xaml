@@ -663,13 +663,7 @@
                                   Checked="XAxisAutoScaleCheckBox_Changed"
                                   Unchecked="XAxisAutoScaleCheckBox_Changed"/>
 
-                        <!-- 操作按钮 -->
-                        <Button x:Name="AddPlotButton"
-                                Content="+ Add Plot"
-                                Style="{StaticResource ToolButtonStyle}"
-                                Margin="0,0,6,0"
-                                Click="AddPlotButton_Click"/>
-
+                        <!-- 操作按钮（Add Plot 已移到各 plot 行 Remove Plot 左侧） -->
                         <Button x:Name="AddGateAtCursorButton"
                                 Content="Add Gate"
                                 Style="{StaticResource ToolButtonStyle}"
