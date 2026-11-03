@@ -33,11 +33,11 @@ namespace Chassis_Master_Test_Suite.Controls;
 public partial class TrackMapPanel : UserControl
 {
     /// <summary>
-    /// 轨迹最多画这么多个点，超了按步长抽稀。
-    /// 步长抽稀对轨迹形状影响很小（只是圆会略微多边形化），
-    /// 但能把实时刷新的开销压住。
+    /// Soft cap for drawn polyline vertices (stride decimation above this).
+    /// 15k keeps ScottPlot + basemap responsive on multi-million-sample NCOM;
+    /// full samples stay in _samples for cursor / gate / analysis sync.
     /// </summary>
-    private const int MaxDisplayPoints = 50_000;
+    private const int MaxDisplayPoints = 15_000;
 
     /// <summary>
     /// 网格线大致每隔这么多像素一条。
@@ -394,6 +394,15 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
+        // Offline UI timer (~10 Hz) re-presents the same OfflineFileSet samples.
+        // Rebuilding a multi-million-point track that often freezes the UI — skip
+        // when layer identity (sample list refs + name/color) is unchanged.
+        if (AreSameTracks(valid, _tracks) && _hasData && _projection is not null)
+        {
+            _map3D?.SetTracks(valid);
+            return;
+        }
+
         var total = valid.Sum(t => t.Samples.Count);
         var countDelta = total - _samples.Count;
 
@@ -414,6 +423,29 @@ public partial class TrackMapPanel : UserControl
         Rebuild(valid);
         _map3D?.SetTracks(valid);
         PushGatesTo3D();
+    }
+
+    private static bool AreSameTracks(
+        IReadOnlyList<TrackLayer> current,
+        IReadOnlyList<TrackLayer> previous)
+    {
+        if (current.Count != previous.Count)
+            return false;
+
+        for (var i = 0; i < current.Count; i++)
+        {
+            var a = current[i];
+            var b = previous[i];
+            if (!ReferenceEquals(a.Samples, b.Samples)
+                || !string.Equals(a.Name, b.Name, StringComparison.Ordinal)
+                || !string.Equals(a.ColorHex, b.ColorHex, StringComparison.Ordinal)
+                || a.Samples.Count != b.Samples.Count)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>
@@ -629,7 +661,15 @@ public partial class TrackMapPanel : UserControl
         IReadOnlyList<AnnotatedTestRun> runs,
         int? selectedRunNumber = null)
     {
-        _runHighlights = runs ?? Array.Empty<AnnotatedTestRun>();
+        var next = runs ?? Array.Empty<AnnotatedTestRun>();
+        // UI timer re-pushes the same annotation list; avoid ScottPlot Clear/Refresh storms.
+        if (ReferenceEquals(_runHighlights, next)
+            && _selectedRunNumber == selectedRunNumber)
+        {
+            return;
+        }
+
+        _runHighlights = next;
         _selectedRunNumber = selectedRunNumber;
         RedrawRunHighlights();
         RedrawGates();
@@ -859,7 +899,7 @@ public partial class TrackMapPanel : UserControl
         return kept.Count > 0 ? kept : layers;
     }
 
-        private static (double MinX, double MaxX, double MinY, double MaxY) GetBounds(
+    private static (double MinX, double MaxX, double MinY, double MaxY) GetBounds(
         IReadOnlyList<VehicleSample> samples,
         TrackProjection projection)
     {
@@ -869,8 +909,11 @@ public partial class TrackMapPanel : UserControl
         var maxY = double.MinValue;
         var any = false;
 
-        foreach (var sample in samples)
+        // Bounds only need a coarse envelope; stride long tracks.
+        var stride = Math.Max(1, samples.Count / MaxDisplayPoints);
+        for (var i = 0; i < samples.Count; i += stride)
         {
+            var sample = samples[i];
             if (!TrackProjection.IsValidGps(sample))
                 continue;
 
@@ -883,6 +926,21 @@ public partial class TrackMapPanel : UserControl
             maxX = Math.Max(maxX, x);
             minY = Math.Min(minY, y);
             maxY = Math.Max(maxY, y);
+        }
+
+        // Always include the last sample so a long out-and-back is not clipped.
+        if (samples.Count > 0)
+        {
+            var sample = samples[^1];
+            if (TrackProjection.IsValidGps(sample))
+            {
+                any = true;
+                var (x, y) = projection.ToMeters(sample.Latitude, sample.Longitude);
+                minX = Math.Min(minX, x);
+                maxX = Math.Max(maxX, x);
+                minY = Math.Min(minY, y);
+                maxY = Math.Max(maxY, y);
+            }
         }
 
         if (!any)
@@ -2185,8 +2243,10 @@ public partial class TrackMapPanel : UserControl
         var bestDist = double.PositiveInfinity;
         const double mPerDegLat = 111320.0;
         var mPerLon = mPerDegLat * Math.Cos(latitude * Math.PI / 180.0);
-        foreach (var sample in _samples)
+        var stride = Math.Max(1, _samples.Count / MaxDisplayPoints);
+        for (var i = 0; i < _samples.Count; i += stride)
         {
+            var sample = _samples[i];
             if (!TrackProjection.IsValidGps(sample))
                 continue;
             var dx = (sample.Longitude - longitude) * mPerLon;
@@ -2262,7 +2322,8 @@ public partial class TrackMapPanel : UserControl
     {
         var projection = _projection!;
 
-        var stride = Math.Max(1, _samples.Count / 200_000);
+        // Cap pick cost on multi-million-sample tracks (hover is coarse anyway).
+        var stride = Math.Max(1, _samples.Count / MaxDisplayPoints);
 
         var bestIndex = -1;
         var bestDistanceSquared = thresholdMeters * thresholdMeters;

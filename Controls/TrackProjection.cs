@@ -162,15 +162,17 @@ public sealed class TrackProjection
         IReadOnlyList<VehicleSample> samples,
         double maxDistanceMeters = 5_000.0)
     {
-        var valid = samples.Where(IsValidGps).ToList();
+        var valid = new List<VehicleSample>(Math.Min(samples.Count, 1024));
+        foreach (var sample in samples)
+        {
+            if (IsValidGps(sample))
+                valid.Add(sample);
+        }
+
         if (valid.Count < 3)
             return valid;
 
-        var lats = valid.Select(s => s.Latitude).OrderBy(v => v).ToList();
-        var lons = valid.Select(s => s.Longitude).OrderBy(v => v).ToList();
-        var medLat = lats[lats.Count / 2];
-        var medLon = lons[lons.Count / 2];
-
+        var (medLat, medLon) = ApproximateCoordinateMedian(valid);
         var mPerLon = MetersPerDegreeLatitude *
                       Math.Cos(medLat * Math.PI / 180.0);
 
@@ -186,24 +188,33 @@ public sealed class TrackProjection
         }
 
         var maxSq = maxDistanceMeters * maxDistanceMeters;
-        var filtered = valid.Where(s =>
-            DistSq(s, medLat, medLon, mPerLon) <= maxSq).ToList();
+        var filtered = new List<VehicleSample>(valid.Count);
+        foreach (var s in valid)
+        {
+            if (DistSq(s, medLat, medLon, mPerLon) <= maxSq)
+                filtered.Add(s);
+        }
 
-        // Long drives / bimodal routes (e.g. 两步路 day trips): a fixed 5 km
-        // radius around the coordinate median can wipe the track or keep only
-        // a tiny mid-segment. Widen to the 99th-percentile distance so true
-        // teleport spikes are still dropped while continuous routes remain.
+        // Long drives / bimodal routes: a fixed 5 km radius around the
+        // coordinate median can wipe the track or keep only a tiny mid-segment.
+        // Widen to the 99th-percentile distance so true teleport spikes are
+        // still dropped while continuous routes remain.
         if (filtered.Count < Math.Max(2, valid.Count / 2))
         {
-            var dists = valid
-                .Select(s => Math.Sqrt(DistSq(s, medLat, medLon, mPerLon)))
-                .OrderBy(d => d)
-                .ToList();
-            var p99 = dists[(int)((dists.Count - 1) * 0.99)];
+            var p99 = ApproximateDistancePercentile(
+                valid,
+                medLat,
+                medLon,
+                mPerLon,
+                percentile: 0.99);
             var limit = Math.Max(maxDistanceMeters, p99);
             var limitSq = limit * limit;
-            filtered = valid.Where(s =>
-                DistSq(s, medLat, medLon, mPerLon) <= limitSq).ToList();
+            filtered = new List<VehicleSample>(valid.Count);
+            foreach (var s in valid)
+            {
+                if (DistSq(s, medLat, medLon, mPerLon) <= limitSq)
+                    filtered.Add(s);
+            }
         }
 
         // Absolute fallback: never return an empty GPS set when valid points exist.
@@ -211,9 +222,60 @@ public sealed class TrackProjection
     }
 
     /// <summary>
-    /// 经纬度 -> Web Mercator 米（全局坐标）。
-    /// 给以后的地图瓦片图层用，当前显示路径不调用。
+    /// Median lat/lon. Full sort is O(n log n) and allocates hard on multi-million
+    /// NCOM tracks — for large n, sort an evenly spaced subsample instead.
     /// </summary>
+    private static (double Latitude, double Longitude) ApproximateCoordinateMedian(
+        IReadOnlyList<VehicleSample> valid)
+    {
+        const int sampleCap = 8192;
+        if (valid.Count <= sampleCap)
+        {
+            var lats = valid.Select(s => s.Latitude).OrderBy(v => v).ToList();
+            var lons = valid.Select(s => s.Longitude).OrderBy(v => v).ToList();
+            return (lats[lats.Count / 2], lons[lons.Count / 2]);
+        }
+
+        var step = Math.Max(1, valid.Count / sampleCap);
+        var subset = new List<VehicleSample>((valid.Count / step) + 1);
+        for (var i = 0; i < valid.Count; i += step)
+            subset.Add(valid[i]);
+        if (!ReferenceEquals(subset[^1], valid[^1]))
+            subset.Add(valid[^1]);
+
+        var subLats = subset.Select(s => s.Latitude).OrderBy(v => v).ToList();
+        var subLons = subset.Select(s => s.Longitude).OrderBy(v => v).ToList();
+        return (subLats[subLats.Count / 2], subLons[subLons.Count / 2]);
+    }
+
+    private static double ApproximateDistancePercentile(
+        IReadOnlyList<VehicleSample> valid,
+        double medLat,
+        double medLon,
+        double mPerLon,
+        double percentile)
+    {
+        const int sampleCap = 8192;
+        var count = valid.Count;
+        var step = count <= sampleCap ? 1 : Math.Max(1, count / sampleCap);
+        var dists = new List<double>((count / step) + 1);
+        for (var i = 0; i < count; i += step)
+        {
+            var s = valid[i];
+            var dx = (s.Longitude - medLon) * mPerLon;
+            var dy = (s.Latitude - medLat) * MetersPerDegreeLatitude;
+            dists.Add(Math.Sqrt(dx * dx + dy * dy));
+        }
+
+        dists.Sort();
+        var idx = (int)((dists.Count - 1) * percentile);
+        if (idx < 0)
+            idx = 0;
+        if (idx >= dists.Count)
+            idx = dists.Count - 1;
+        return dists[idx];
+    }
+
     public static (double X, double Y) ToMercator(
         double latitude,
         double longitude)

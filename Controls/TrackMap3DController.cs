@@ -224,12 +224,10 @@ internal sealed class TrackMap3DController
 
     private void RebuildSampleLocations()
     {
+        // Do not pre-index every sample: a multi-million-point NCOM track would
+        // allocate a Dictionary with millions of entries and hitch the UI.
+        // Cursor look-ups use Sequence (O(tracks)) with a small LRU cache.
         _sampleLocations.Clear();
-        for (var trackId = 0; trackId < _tracks.Count; trackId++)
-        {
-            for (var sampleIndex = 0; sampleIndex < _tracks[trackId].Samples.Count; sampleIndex++)
-                _sampleLocations[_tracks[trackId].Samples[sampleIndex]] = (trackId, sampleIndex);
-        }
     }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -461,16 +459,42 @@ internal sealed class TrackMap3DController
         for (var trackId = 0; trackId < _tracks.Count; trackId++)
         {
             var samples = _tracks[trackId].Samples;
+            // Importers assign Sequence = index in the track list; O(1) when true.
+            if (sample.Sequence >= 0
+                && sample.Sequence < samples.Count
+                && ReferenceEquals(samples[(int)sample.Sequence], sample))
+            {
+                var location = (trackId, (int)sample.Sequence);
+                CacheSampleLocation(sample, location);
+                return location;
+            }
+        }
+
+        // Rare fallback (trimmed history / mismatched Sequence): linear scan.
+        for (var trackId = 0; trackId < _tracks.Count; trackId++)
+        {
+            var samples = _tracks[trackId].Samples;
             for (var sampleIndex = samples.Count - 1; sampleIndex >= 0; sampleIndex--)
             {
                 if (!ReferenceEquals(samples[sampleIndex], sample))
                     continue;
                 var location = (trackId, sampleIndex);
-                _sampleLocations[sample] = location;
+                CacheSampleLocation(sample, location);
                 return location;
             }
         }
+
         return (-1, -1);
+    }
+
+    private void CacheSampleLocation(
+        VehicleSample sample,
+        (int TrackId, int SampleIndex) location)
+    {
+        // Keep the cache tiny so large offline tracks do not grow it unbounded.
+        if (_sampleLocations.Count > 256)
+            _sampleLocations.Clear();
+        _sampleLocations[sample] = location;
     }
 
     private void Post(object value)
