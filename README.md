@@ -6,9 +6,14 @@
 
 ---
 
-## 最近更新（2026-10-26）
+## 最近更新（2026-11-03）
 
-相对上一版 README（2026-10-12 / `0ab045d`）之后合入 `main` 的已交付能力汇总。更早的 KML Phase 1、在线底图、中英语言、主题外壳、Dashboard / Gate / Maths / 多文件对比等仍见下文各节，此处不再重复展开。
+相对上一版 README（2026-10-26）之后合入 `main` 的已交付能力汇总。更早的 OxTS 导入、3D Track Map、按文件着色、KML 裁剪、Splash、Lap/Sector、主题/语言等仍见下文各节，此处不再重复展开。
+
+### 四面板最大化 / 工具栏布局
+- **Dashboard / Test Results / Track Map / Curves** 各面板标题栏**右上角**可最大化：最大化后填满主工作区；再点恢复四格布局。图标为 **45° 外扩 / 内收双箭头**（Path 绘制）。
+- **Track Map** 工具栏为**两行**：Follow、2D·3D、Basemap、瓦片图源等控件**靠右对齐**；**Gate 操作**叠在地图视口 **左上角**，位于 **Gates 图例上方**（避免与图例重叠）。
+- **Curves** 工具栏：左侧 **Reset View → Mark Region → Add Gate**；**Add Plot** 在 **Remove Plot** 左侧；标记/裁剪类编辑按钮靠右；**最大化箭头在最右侧**。
 
 ### OxTS XCOM / NCOM / RCOM 离线导入
 - **Offline Open** 过滤器增加 `*.xcom;*.ncom`（与 VBO / KML / KMZ 并列）。
@@ -114,17 +119,18 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 ┌───────────────────────────────────────────────────────────────────────┐
 │ CMTS  Layout│Appearance│Load│Online│Offline│Clear  [●][■] Elapsed     │  顶部栏
 ├──────────────────┬─────────────────────┬──────────────────────────────┤
-│ Dashboard        │ Test Results        │ Track Map（2D / 3D）         │
-│ 可定制表盘       │ Accel/Decel/Custom/ │ GPS/KML/XCOM · Gate · .vbts │
-│ Live / Test 绑定 │ Gate · Lap · Maths  │ run 高亮 · 左上 Gates 图例   │
+│ Dashboard     [⤢]│ Test Results    [⤢] │ Track Map（2D / 3D）     [⤢]│
+│ 可定制表盘       │ Accel/Decel/Custom/ │ 工具两行靠右 · Follow/2D·3D │
+│ Live / Test 绑定 │ Gate · Lap · Maths  │ Gate 操作在地图左上（图例上）│
 ├──────────────────┴─────────────────────┴──────────────────────────────┤
-│ [X Axis] [X Auto Scale] [+ Add Plot] [Reset]   Files 芯片（常显）     │
+│ Curves [Reset][Mark][Add Gate] … [Add Plot][Remove] …编辑…      [⤢] │
 │ Online 工具：[Simulator] [GSpot…] [UDP] [Stop]      Rx / Lost / OOO   │
-│ Plot：多文件叠加 · 光标/Measure · 对比模式叠图                        │
+│ Plot：多文件叠加 · 光标/Measure · 对比模式叠图 · Files 芯片（常显）   │
 └───────────────────────────────────────────────────────────────────────┘
 ```
 
 - **顶部栏**：Layout 分区开关、Load、Online/Offline、Clear、录制、已录时长、系统时钟。  
+- **四面板最大化**：每个面板标题栏右上角 45° 双箭头；最大化填满主工作区，再点恢复四格。  
 - **无**旧版 Dashboard/Data/Analysis/Replay/Settings 导航行。  
 - **Online 工具**：UDP / GSpot / Simulator 在 Online 模式下显示（Settings 正式页尚未做）。
 
@@ -138,6 +144,7 @@ Chassis Master Test Suite/
 │   ├─ VehicleSample.cs / DataBus.cs / SampleHistoryBuffer.cs
 │   ├─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
 │   ├─ DashboardGaugeModels.cs / SessionMemoryStore.cs / AppPreferencesStore.cs
+│   ├─ WorkspaceMaximizeState.cs（四面板最大化）
 │   └─ PlotDownsampler.cs / SampleEnricher.cs
 ├─ Localization/   Loc.cs（中/英）
 ├─ Themes/         Theme.Dark/Light.xaml · ThemeManager · AppearanceService
@@ -159,7 +166,7 @@ Chassis Master Test Suite/
 │   ├─ LapTimeEngine（圈速 / 扇区）
 │   └─ SelectionMeasure / SampleSource / AnnotatedTestRun
 ├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel / TrackMap3DController
-│               MathsChannelsDialog / GaugeBindingPickerDialog / SessionEditDialog
+│               WorkspaceMaximizeIcons / MathsChannelsDialog / GaugeBindingPickerDialog / SessionEditDialog
 ├─ Assets/      Splash/ · TrackMap3D/（Cesium 静态资源）
 ├─ docs/        xcom-*.md · architecture/ · hardware/ · product/
 ├─ tools/       OxTSSmoke（XCOM/NCOM 冒烟）
@@ -280,12 +287,14 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 | **右键** / 聚焦后滚轮 | 缩放（取消 Auto） |
 | **拖选 X 区间** | Measure：左下 min/max/avg；`Ctrl+Shift+C` 复制；`Esc` 清除 |
 | **X Auto Scale** | 勾选时随数据自动缩放；人手操作后取消勾选 |
-| Reset View | 恢复自动缩放视野 |
-| 多 Plot | + Channel 右侧通道芯片；拖分割条改高度；黄色光标跨图联动；**共用 X 缩放/平移** |
+| Reset View | 恢复自动缩放视野（工具栏左侧：Reset View → Mark Region → Add Gate） |
+| 多 Plot | **Add Plot** 在 **Remove Plot** 左侧；+ Channel 右侧通道芯片；拖分割条改高度；黄色光标跨图联动；**共用 X 缩放/平移**；标记/裁剪编辑按钮靠右；面板最大化箭头在最右侧 |
 
 ### 7. Track Map 与 Gate（2D / 3D）
 
 - 实时/离线轨迹同步曲线光标与 Dashboard；**2D / 3D 可切换**（3D 经 Cesium WebView2）。  
+- 工具栏**两行、靠右对齐**：Follow（跟随/居中当前车）、2D·3D、Basemap、瓦片图源等；标题栏最右侧为面板最大化。  
+- **Gate 操作**叠在地图视口 **左上角**，位于 **Gates 图例上方**（避免叠在一起）。  
 - 3D：默认 **Ground**（DEM 贴地）；无多倍高程夸张；车辆光标为航向长方体；门为贴轨扁条（无圆点 / 无 S·E 标记）。  
 - **GateStore** 在 2D、3D、曲线竖线间同步；门色走 `ColorHex`。  
 - Offline 可叠加 **KML/KMZ**（Phase 1 + 非破坏裁剪）与 **XCOM/NCOM** 轨迹。  
@@ -323,9 +332,10 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 
 ### 11. 多 Plot
 
-- `+ Add Plot` 增加图；每图可改名、`Auto Y`、`+ Channel`（通道芯片在右侧）、`Remove Plot`。  
+- `+ Add Plot` 增加图（位于 `Remove Plot` 左侧）；每图可改名、`Auto Y`、`+ Channel`（通道芯片在右侧）、`Remove Plot`。  
 - 各图高度可拖拽调整并记忆；滚轮默认滚动，点击聚焦后再缩放。  
-- `X Axis` 可选横轴信号（默认时间）；多图黄色光标联动。
+- `X Axis` 可选横轴信号（默认时间）；多图黄色光标联动。  
+- Curves 面板标题栏最右侧为最大化/恢复。
 
 ---
 
@@ -362,6 +372,9 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] 多文件曲线始终叠加 + Test Results 勾选对比叠图  
 - [x] Track Map（轨迹、光标同步、run 高亮）  
 - [x] Layout 分区开关（Dashboard / Test Results / Map / Chart，无 Video）  
+- [x] 四面板最大化/恢复（45° 双箭头；填满主工作区）  
+- [x] Track Map 两行工具栏靠右；Gate 操作地图左上（Gates 图例上方）  
+- [x] Curves 工具栏：Reset→Mark→Add Gate；Add Plot 左于 Remove；编辑靠右；最大化最右  
 - [x] Online / Offline / Load / Clear  
 - [x] 可定制 Dashboard（增删/拖动/缩放、Live + Test Results 绑定）  
 - [x] Test Results：Accel / Decel / Custom / Gate + CSV  
@@ -406,6 +419,7 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] OxTS XCOM/NCOM/RCOM 离线导入  
 - [x] Lap/Sector；对比↔地图同步；多 Plot 共用 X 缩放  
 - [x] Splash；`docs/` + AGENTS / `.ai-workflows` / VERSIONING  
+- [x] 四面板最大化/恢复；Track Map / Curves 工具栏布局（Gate 左上、Curves 按钮分区）  
 
 **延后**
 - [ ] Settings 正式页  
