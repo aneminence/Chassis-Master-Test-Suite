@@ -121,7 +121,7 @@
                 </StackPanel>
                 <Button x:Name="MaximizeButton"
                         Grid.Column="6"
-                        Content="↗↙"
+                        Content="{x:Null}"
                         Style="{StaticResource HeaderButtonStyle}"
                         MinWidth="34"
                         FontSize="14"

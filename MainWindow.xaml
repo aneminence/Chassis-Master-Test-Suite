@@ -772,7 +772,7 @@
                                 VerticalAlignment="Center">
 
                         <Button x:Name="CurvesMaximizeButton"
-                                Content="↗↙"
+                                Content="{x:Null}"
                                 Style="{StaticResource HeaderButtonStyle}"
                                 MinWidth="34"
                                 FontSize="14"

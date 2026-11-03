@@ -1,15 +1,5 @@
 namespace Chassis_Master_Test_Suite.Core;
 
-/// <summary>Header button glyphs for workspace maximize / restore (45° double arrows).</summary>
-public static class WorkspaceMaximizeChrome
-{
-    /// <summary>Outward diagonal arrows — expand panel to fill workspace.</summary>
-    public const string ExpandGlyph = "↗↙";
-
-    /// <summary>Inward diagonal arrows — restore previous multi-panel layout.</summary>
-    public const string RestoreGlyph = "↙↗";
-}
-
 /// <summary>One of the four main workspace regions that can fill the layout alone.</summary>
 public enum WorkspacePanelKind
 {

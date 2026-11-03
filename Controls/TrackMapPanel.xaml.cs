@@ -251,7 +251,7 @@ public partial class TrackMapPanel : UserControl
     {
         if (MaximizeButton is null)
             return;
-        MaximizeButton.Content = _workspaceMaximized ? WorkspaceMaximizeChrome.RestoreGlyph : WorkspaceMaximizeChrome.ExpandGlyph;
+        MaximizeButton.Content = _workspaceMaximized ? WorkspaceMaximizeIcons.CreateRestoreIcon() : WorkspaceMaximizeIcons.CreateExpandIcon();
         MaximizeButton.ToolTip = Loc.T(_workspaceMaximized ? "Layout.RestoreTip" : "Layout.MaximizeTip");
     }
 

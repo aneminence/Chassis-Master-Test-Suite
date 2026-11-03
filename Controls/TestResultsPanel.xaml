@@ -113,7 +113,7 @@
                             Click="SessionButton_Click"
                             ToolTip="Edit session metadata written to VBO [SessionData]"/>
                     <Button x:Name="MaximizeButton"
-                            Content="↗↙"
+                            Content="{x:Null}"
                             Style="{StaticResource HeaderButtonStyle}"
                             MinWidth="34"
                             FontSize="14"
