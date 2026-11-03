@@ -771,16 +771,6 @@
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
 
-                        <Button x:Name="CurvesMaximizeButton"
-                                Content="{x:Null}"
-                                Style="{StaticResource HeaderButtonStyle}"
-                                MinWidth="34"
-                                FontSize="14"
-                                Margin="0,0,10,0"
-                                VerticalAlignment="Center"
-                                Click="CurvesMaximizeButton_Click"
-                                ToolTip="Expand this panel to fill the workspace"/>
-
                         <TextBlock Text="Rx"
                                    Foreground="{DynamicResource TextMuted}"
                                    FontSize="10"
@@ -820,12 +810,22 @@
                                    Foreground="{DynamicResource TextSecondary}"
                                    FontSize="10"
                                    FontFamily="Consolas"
-                                   VerticalAlignment="Center"/>
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"/>
 
                         <!-- 保留但不在标题栏显示的计数控件 -->
                         <TextBlock x:Name="ValidPacketsText"
                                    Text="0"
                                    Visibility="Collapsed"/>
+
+                        <Button x:Name="CurvesMaximizeButton"
+                                Content="{x:Null}"
+                                Style="{StaticResource HeaderButtonStyle}"
+                                MinWidth="34"
+                                FontSize="14"
+                                VerticalAlignment="Center"
+                                Click="CurvesMaximizeButton_Click"
+                                ToolTip="Expand this panel to fill the workspace"/>
 
                     </StackPanel>
 
