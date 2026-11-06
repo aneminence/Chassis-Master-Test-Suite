@@ -55,6 +55,45 @@ public class TrackProjectionOutlierPerfTests
         Assert.DoesNotContain(filtered, s => Math.Abs(s.Latitude - 40.0) < 1e-9);
     }
 
+    [Fact]
+    public void FilterGpsOutliers_LongContinuousRoute_KeepsStartBeyond5km()
+    {
+        // ~12 km straight drive: median sits mid-route so the first ~2 km are
+        // more than 5 km from the median. That is real motion, not a teleport.
+        // Old filter kept >50% of points and never widened — red Track Map line
+        // lost the opening minutes (CMTS phone KML / Tianjin commute case).
+        const int count = 1201;
+        var samples = new List<VehicleSample>(count + 1);
+        const double startLat = 39.110;
+        const double startLon = 117.236;
+        // ~0.0001 deg lat ≈ 11 m; 1200 steps ≈ 13 km north→south-east-ish.
+        for (var i = 0; i < count; i++)
+        {
+            samples.Add(new VehicleSample
+            {
+                Sequence = i,
+                Latitude = startLat - i * 0.000035,
+                Longitude = startLon + i * 0.000090,
+                Altitude = 0
+            });
+        }
+
+        // One true teleport far outside the route envelope.
+        samples.Add(new VehicleSample
+        {
+            Sequence = count,
+            Latitude = 40.0,
+            Longitude = 116.0,
+            Altitude = 0
+        });
+
+        var filtered = TrackProjection.FilterGpsOutliers(samples);
+        Assert.True(filtered.Count >= count - 20, $"kept {filtered.Count}/{count}");
+        Assert.Contains(filtered, s => s.Sequence == 0);
+        Assert.Contains(filtered, s => s.Sequence == count - 1);
+        Assert.DoesNotContain(filtered, s => Math.Abs(s.Latitude - 40.0) < 1e-9);
+    }
+
     private static VehicleSample Gps(double lat, double lon) => new()
     {
         Latitude = lat,

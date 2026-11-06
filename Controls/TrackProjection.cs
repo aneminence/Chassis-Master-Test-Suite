@@ -187,34 +187,81 @@ public sealed class TrackProjection
             return dx * dx + dy * dy;
         }
 
-        var maxSq = maxDistanceMeters * maxDistanceMeters;
-        var filtered = new List<VehicleSample>(valid.Count);
-        foreach (var s in valid)
+        // Radius is max(default 5 km, p99 distance-from-median). A fixed 5 km
+        // alone clips the start/end of long continuous drives whose span is
+        // already >10 km (median sits mid-route). The old "widen only if <50%
+        // survive" gate missed that case: ~20% prefix drop still left enough
+        // points. p99 still excludes true teleport spikes beyond the route.
+        var p99 = ApproximateDistancePercentile(
+            valid,
+            medLat,
+            medLon,
+            mPerLon,
+            percentile: 0.99);
+        var limit = Math.Max(maxDistanceMeters, p99);
+        var limitSq = limit * limit;
+
+        var keep = new bool[valid.Count];
+        var keptCount = 0;
+        for (var i = 0; i < valid.Count; i++)
         {
-            if (DistSq(s, medLat, medLon, mPerLon) <= maxSq)
-                filtered.Add(s);
+            if (DistSq(valid[i], medLat, medLon, mPerLon) <= limitSq)
+            {
+                keep[i] = true;
+                keptCount++;
+            }
         }
 
-        // Long drives / bimodal routes: a fixed 5 km radius around the
-        // coordinate median can wipe the track or keep only a tiny mid-segment.
-        // Widen to the 99th-percentile distance so true teleport spikes are
-        // still dropped while continuous routes remain.
-        if (filtered.Count < Math.Max(2, valid.Count / 2))
+        // Contiguous prefix/suffix beyond the radius is still real motion on a
+        // long drive (phone KML / commute). Expand from the kept core sample-by-
+        // sample while successive steps stay <=500 m; a teleport jump stops
+        // expansion so the spike itself stays dropped.
+        const double jumpMeters = 500.0;
+        var jumpSq = jumpMeters * jumpMeters;
+        static double StepSq(VehicleSample a, VehicleSample b, double mPerLon)
         {
-            var p99 = ApproximateDistancePercentile(
-                valid,
-                medLat,
-                medLon,
-                mPerLon,
-                percentile: 0.99);
-            var limit = Math.Max(maxDistanceMeters, p99);
-            var limitSq = limit * limit;
-            filtered = new List<VehicleSample>(valid.Count);
-            foreach (var s in valid)
+            var dx = (a.Longitude - b.Longitude) * mPerLon;
+            var dy = (a.Latitude - b.Latitude) * MetersPerDegreeLatitude;
+            return dx * dx + dy * dy;
+        }
+
+        var firstKept = -1;
+        for (var i = 0; i < keep.Length; i++)
+        {
+            if (keep[i]) { firstKept = i; break; }
+        }
+
+        if (firstKept > 0)
+        {
+            for (var i = firstKept - 1; i >= 0; i--)
             {
-                if (DistSq(s, medLat, medLon, mPerLon) <= limitSq)
-                    filtered.Add(s);
+                if (StepSq(valid[i], valid[i + 1], mPerLon) > jumpSq)
+                    break;
+                if (!keep[i]) { keep[i] = true; keptCount++; }
             }
+        }
+
+        var lastKept = -1;
+        for (var i = keep.Length - 1; i >= 0; i--)
+        {
+            if (keep[i]) { lastKept = i; break; }
+        }
+
+        if (lastKept >= 0 && lastKept < keep.Length - 1)
+        {
+            for (var i = lastKept + 1; i < keep.Length; i++)
+            {
+                if (StepSq(valid[i - 1], valid[i], mPerLon) > jumpSq)
+                    break;
+                if (!keep[i]) { keep[i] = true; keptCount++; }
+            }
+        }
+
+        var filtered = new List<VehicleSample>(keptCount);
+        for (var i = 0; i < keep.Length; i++)
+        {
+            if (keep[i])
+                filtered.Add(valid[i]);
         }
 
         // Absolute fallback: never return an empty GPS set when valid points exist.
