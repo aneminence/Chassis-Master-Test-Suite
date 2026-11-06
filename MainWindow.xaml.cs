@@ -4448,11 +4448,11 @@ public partial class MainWindow : Window
         }
         else
         {
-            // Leaving Time: DateTimeTicksBottom replaces the bottom tick generator.
-            // Restore numeric ticks so Distance / Elapsed / channels do not keep HH:mm labels
-            // (UTC midnight → Beijing 08:00 repeating is the usual leftover symptom).
-            plot.WpfPlot.Plot.Axes.Bottom.TickGenerator =
-                new ScottPlot.TickGenerators.NumericAutomatic();
+            // Leaving Time: DateTimeTicksBottom() replaced Bottom with DateTimeXAxis.
+            // Only swapping TickGenerator to NumericAutomatic throws
+            // "Date axis must have a ITickGenerator generator" on render and exits the app
+            // (Time → Test Elapsed / Distance). Fully restore a numeric bottom axis.
+            plot.WpfPlot.Plot.Axes.NumericTicksBottom();
         }
 
         // DateTimeTicksBottom 会把刻度字重置成黑色，必须再刷浅色
