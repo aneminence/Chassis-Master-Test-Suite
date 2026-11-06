@@ -10,6 +10,15 @@
 
 各功能后的日期为合入 `main` 的落地日（`YYYY-MM-DD`，Asia/Shanghai 本地 git 日期）。文首不再单独充当更新记录。
 
+### 启动默认最大化（2026-11-06）
+- 主窗口启动时默认 **Maximized**（铺满主屏工作区，保留标题栏；不是独占全屏）。任意分辨率一致。（`072f74f`）
+- 点标题栏还原可回到约 1400×900 设计尺寸。
+
+### 大 NCOM 性能与曲线横轴（2026-11-03）
+- 离线大 NCOM（百万级点）打开后：轨迹不再每 UI tick 无变化全量重建；2D 抽稀；离群点抽样；3D 查找改为 O(1)。（`3f9910d`）
+- 曲线横轴 **Time**：独立 `.ncom` GPS 周内秒正确映射，细线/挤在一起问题已修。（`b2b9460`）
+- 曲线横轴 **Distance**：切离 Time 后刻度恢复为数值（米），不再残留 `HH:mm` 时间格式。（`b2b9460`）
+
 ### 四面板最大化 / 工具栏布局（2026-11-03）
 - **Dashboard / Test Results / Track Map / Curves** 各面板标题栏**右上角**可最大化：最大化后填满主工作区；再点恢复四格布局。图标为 **45° 外扩 / 内收双箭头**（Path 绘制）。（`0c3dc74`）
 - **Track Map** 工具栏为**两行**：Follow、2D·3D、Basemap、瓦片图源等控件**靠右对齐**；**Gate 操作**叠在地图视口 **左上角**，位于 **Gates 图例上方**（避免与图例重叠）。（`8a9cbf5`）
@@ -145,6 +154,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 ```
 
 - **顶部栏**：Layout 分区开关、Load、Online/Offline、Clear、录制、已录时长、系统时钟。  
+- **启动**：主窗口默认 Maximized（铺满主屏工作区）。
 - **四面板最大化**：每个面板标题栏右上角 45° 双箭头；最大化填满主工作区，再点恢复四格。  
 - **无**旧版 Dashboard/Data/Analysis/Replay/Settings 导航行。  
 - **Online 工具**：UDP / GSpot / Simulator 在 Online 模式下显示（Settings 正式页尚未做）。
@@ -392,6 +402,8 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] 多文件曲线始终叠加 + Test Results 勾选对比叠图（2026-10-10）
 - [x] Track Map（轨迹、光标同步、run 高亮）（2026-10-08）
 - [x] Layout 分区开关（Dashboard / Test Results / Map / Chart，无 Video）（2026-10-10）
+- [x] 启动默认 Maximized（铺满主屏工作区）（2026-11-06）
+- [x] 大 NCOM 轨迹性能；Time/Distance 横轴修复（2026-11-03）
 - [x] 四面板最大化/恢复（45° 双箭头；填满主工作区）（2026-11-03）
 - [x] Track Map 两行工具栏靠右；Gate 操作地图左上（Gates 图例上方）；Follow 跟随/居中（2026-11-03）
 - [x] Curves 工具栏：Reset→Mark→Add Gate；Add Plot 左于 Remove；编辑靠右；最大化最右（2026-11-03）
@@ -441,6 +453,8 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 - [x] OxTS XCOM/NCOM/RCOM 离线导入（2026-10-26）
 - [x] Lap/Sector；对比↔地图同步；多 Plot 共用 X 缩放（2026-10-14）
 - [x] Splash；`docs/` + AGENTS / `.ai-workflows` / VERSIONING（2026-10-24 … 2026-10-26）
+- [x] 启动默认 Maximized（2026-11-06）
+- [x] 大 NCOM 性能 + Time/Distance 横轴（2026-11-03）
 - [x] 四面板最大化/恢复；Track Map / Curves 工具栏布局（Gate 左上、Curves 按钮分区）；Follow（2026-11-03）
 - [x] Simulator Helix 3D：Spa 风格高程赛道、软转向 + 单轨模型、追逐相机（UDP 通路不变）（2026-11-02）
 - [x] GSpot 多车房间监控（2026-11-02）
