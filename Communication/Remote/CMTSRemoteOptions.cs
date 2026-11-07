@@ -22,7 +22,7 @@ public sealed class CMTSRemoteOptions
     public string ClientVer { get; init; } = "0.3.1";
 
     /// <summary>stream.subscribe maxHz (core channel).</summary>
-    public int MaxHz { get; init; } = 20;
+    public int MaxHz { get; init; } = 100;
 
     public int InitialReconnectDelayMs { get; init; } = 1_000;
 

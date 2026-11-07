@@ -111,7 +111,7 @@ token：本机生成、用户可重置的配对串。hello 失败不得进入 Co
   "type": "stream.subscribe",
   "payload": {
     "channels": ["core"],
-    "maxHz": 20
+    "maxHz": 100
   }
 }
 ```

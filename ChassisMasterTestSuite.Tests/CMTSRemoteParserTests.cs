@@ -187,7 +187,7 @@ public class CMTSRemoteParserTests
             new Dictionary<string, object?>
             {
                 ["channels"] = new[] { "core" },
-                ["maxHz"] = 20
+                ["maxHz"] = 100
             });
 
         Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
@@ -201,5 +201,6 @@ public class CMTSRemoteParserTests
     {
         var opt = new CMTSRemoteOptions { Host = "192.168.1.10" };
         Assert.Equal("ws://192.168.1.10:8787/cmts/v1", opt.BuildWebSocketUrl());
+        Assert.Equal(100, opt.MaxHz);
     }
 }

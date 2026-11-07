@@ -5641,10 +5641,16 @@ public partial class MainWindow : Window
             Environment.GetEnvironmentVariable("CMTS_REMOTE_PORT")
             ?? "8787";
 
+        var maxHz = 100;
+        var maxHzEnv = Environment.GetEnvironmentVariable("CMTS_REMOTE_MAX_HZ");
+        if (int.TryParse(maxHzEnv, out var parsedMaxHz) && parsedMaxHz > 0)
+            maxHz = parsedMaxHz;
+
         if (!TryPromptRemoteOptions(
                 hostDefault,
                 portDefault,
                 tokenDefault,
+                maxHz,
                 out var options) ||
             options is null)
         {
@@ -5815,6 +5821,7 @@ public partial class MainWindow : Window
         string hostDefault,
         string portDefault,
         string tokenDefault,
+        int maxHz,
         out CMTSRemoteOptions? options)
     {
         options = null;
@@ -5878,7 +5885,7 @@ public partial class MainWindow : Window
 
         var hint = new TextBlock
         {
-            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\nEnv: CMTS_REMOTE_HOST / PORT / TOKEN",
+            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\nEnv: CMTS_REMOTE_HOST / PORT / TOKEN / MAX_HZ",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
             Margin = new Thickness(0, 0, 0, 12)
@@ -5941,7 +5948,8 @@ public partial class MainWindow : Window
                 Host = host,
                 Port = port,
                 Token = (tokenBox.Text ?? "").Trim(),
-                Path = "/cmts/v1"
+                Path = "/cmts/v1",
+                MaxHz = maxHz
             };
             dialog.DialogResult = true;
         };
