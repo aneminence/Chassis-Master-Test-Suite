@@ -1,11 +1,12 @@
 using Chassis_Master_Test_Suite.Communication;
 using Chassis_Master_Test_Suite.Communication.GSpot;
+using Chassis_Master_Test_Suite.Communication.Remote;
 using Chassis_Master_Test_Suite.Core;
 
 namespace Chassis_Master_Test_Suite.Session;
 
 /// <summary>
-/// 当前 <see cref="IDataSource"/> 所有权与切换（UDP / GSpot）。
+/// 当前 <see cref="IDataSource"/> 所有权与切换（UDP / GSpot / CMTS Remote）。
 /// 不负责 ChannelRegistry、离线历史标志或 UI；那些仍由 MainWindow 处理。
 /// </summary>
 public sealed class DataSourceSession : IDisposable
@@ -26,6 +27,9 @@ public sealed class DataSourceSession : IDisposable
     public UdpReceiver CreateUdpReceiver() => new(_dataBus);
 
     public GSpotDataSource CreateGSpot(GSpotOptions options) =>
+        new(_dataBus, options);
+
+    public CMTSRemoteDataSource CreateRemote(CMTSRemoteOptions options) =>
         new(_dataBus, options);
 
     /// <summary>
@@ -112,9 +116,15 @@ public sealed class DataSourceSession : IDisposable
                 return false;
 
             // Reconnecting 且已有 LastError：首轮已失败，不必空等满超时
-            if (source is GSpotDataSource gspot &&
-                source.State == DataSourceState.Reconnecting &&
-                !string.IsNullOrWhiteSpace(gspot.LastError))
+            string? lastError = source switch
+            {
+                GSpotDataSource gspot => gspot.LastError,
+                CMTSRemoteDataSource remote => remote.LastError,
+                _ => null
+            };
+
+            if (source.State == DataSourceState.Reconnecting &&
+                !string.IsNullOrWhiteSpace(lastError))
             {
                 // 再给一次瞬间机会，避免刚写下 LastError 时误判
                 await Task.Delay(400);

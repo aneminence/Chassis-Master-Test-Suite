@@ -1,4 +1,4 @@
-﻿<Window x:Class="Chassis_Master_Test_Suite.MainWindow"
+<Window x:Class="Chassis_Master_Test_Suite.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:controls="clr-namespace:Chassis_Master_Test_Suite.Controls"
@@ -253,6 +253,29 @@
                                 Margin="0,0,4,0"
                                 Click="GSpotButton_Click"
                                 ToolTip="GSpot WebSocket (room + password)"/>
+
+                        <Button x:Name="RemoteDeviceButton"
+                                Content="Remote…"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="RemoteDeviceButton_Click"
+                                ToolTip="CMTS Android remote (ws://IP:8787/cmts/v1)"/>
+
+                        <Button x:Name="RemoteRecordStartButton"
+                                Content="Rec●"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="RemoteRecordStartButton_Click"
+                                IsEnabled="False"
+                                ToolTip="Remote record.start (Android device)"/>
+
+                        <Button x:Name="RemoteRecordStopButton"
+                                Content="Rec■"
+                                Style="{StaticResource ToolButtonStyle}"
+                                Margin="0,0,4,0"
+                                Click="RemoteRecordStopButton_Click"
+                                IsEnabled="False"
+                                ToolTip="Remote record.stop (Android device)"/>
 
                         <Button x:Name="SimulatorButton"
                                 Content="Simulator"

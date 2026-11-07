@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- net10.0 (not -windows) so testhost runs on Linux CI / this box.
@@ -74,6 +74,8 @@
     <Compile Include="..\Communication\UdpPacketSerializer.cs" Link="Linked\Communication\UdpPacketSerializer.cs" />
     <Compile Include="..\Communication\GSpot\GSpotParser.cs" Link="Linked\Communication\GSpot\GSpotParser.cs" />
     <Compile Include="..\Communication\GSpot\GSpotVehicleFilter.cs" Link="Linked\Communication\GSpot\GSpotVehicleFilter.cs" />
+    <Compile Include="..\Communication\Remote\CMTSRemoteParser.cs" Link="Linked\Communication\Remote\CMTSRemoteParser.cs" />
+    <Compile Include="..\Communication\Remote\CMTSRemoteOptions.cs" Link="Linked\Communication\Remote\CMTSRemoteOptions.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
     <Compile Include="..\Recorder\OxTS\XcomContainerReader.cs" Link="Linked\Recorder\OxTS\XcomContainerReader.cs" />
