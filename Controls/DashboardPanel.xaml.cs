@@ -762,7 +762,9 @@ public partial class DashboardPanel : UserControl
     }
 
     private static string FormatNumber(double v) =>
-        v.ToString("0.##", CultureInfo.InvariantCulture);
+        double.IsFinite(v)
+            ? v.ToString("0.##", CultureInfo.InvariantCulture)
+            : "--";
 
     private static Brush? TryBrush(string hex)
     {

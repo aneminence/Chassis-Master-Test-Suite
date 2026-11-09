@@ -6174,11 +6174,15 @@ public partial class MainWindow : Window
     private void EnterLiveSourceMode()
     {
         _historyOfflineMode = false;
+        // Live Remote/UDP/GSpot: drop any plot cursor so Dashboard tracks _latestSample
+        // continuously (VBTS freeze only applies after the user places a new cursor).
+        ClearPlotCursors();
         _liveRoster.Clear();
         _liveVehicleEnrich.Clear();
         _liveSessionOriginMs = null;
         _liveDistanceM = 0;
         _livePreviousSample = null;
+        _latestSample = null;
         ChannelRegistry.Instance.SetLiveCore();
 
         // Remote connect waits for Connected first; samples may already have called
@@ -6226,6 +6230,9 @@ public partial class MainWindow : Window
         if (_historyOfflineMode || _isOfflineMode)
             return;
 
+        // Must clear plot cursors: otherwise TryGetCursorSample freezes Dashboard on a
+        // pre-zero (or first post-zero) point while curves keep appending live samples.
+        ClearPlotCursors();
         _sampleHistory.Clear();
         _latestSample = null;
         _liveSessionOriginMs = null;
@@ -6235,6 +6242,8 @@ public partial class MainWindow : Window
         _liveVehicleEnrich.Clear();
         _forcePlotRebuild = true;
         RefreshAllPlots(force: true);
+        // Force gauges to "--" immediately; do not leave stale pre-zero numbers.
+        DashboardPanelControl.ApplyLiveSample(null);
         UpdateNumericDisplay();
     }
 
@@ -6495,7 +6504,14 @@ public partial class MainWindow : Window
             cursorSample ?? _latestSample;
 
         if (sample is null)
+        {
+            // Live gap / post-reset: clear gauges instead of leaving last frozen numbers.
+            DashboardPanelControl.ApplyLiveSample(null);
+            DashboardPanelControl.SetMultiVehicleSummary(
+                Array.Empty<(string, string, double)>());
+            TrackMapPanelControl.SetCursorSample(null);
             return;
+        }
 
         // ------------------------------------------------------------
         // 有曲线光标时 Dashboard 冻结为选中点（对齐 VBTS）；

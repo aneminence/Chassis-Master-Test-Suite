@@ -119,8 +119,18 @@ DataSource 把最近一次 status 通道合并进后续 `stream.sample` 的 `Cha
 | type | **`stream.reset`**（S→C 控制帧） |
 | reason | `mount_zero`（点归零）/ `mount_zero_clear`（取消归零） |
 | payload | `mountZeroEnabled`、`zeroedAtElapsedNanos`、`nextSeq` |
-| 样本 | **线上仍是 RAW**（未减零偏）；Win **必须**清 live 曲线缓冲，不能只等 ~0 样本 |
-| Win | `HandleStreamReset` → `LiveCurveResetRequested` → `ClearLiveCurveBuffersForRemoteZero` |
+| 样本 | Android `d30e8d8+`：`mountZero.enabled` 时 **vehicle.* + core ax/ay/az/yaw 已按手机 Dashboard 同款变换**；未归零仍 raw。Win **不**本地乘矩阵。 |
+| Win | `HandleStreamReset` → 清 live 曲线缓冲 **并 ClearPlotCursors**，避免光标冻结 Dashboard；随后跟线上变换后的样本 |
 | seq | 进程级不重置；`nextSeq` 仅提示，Win 不 rewind `_lastSeq` |
 
 别名 `device.zero` 仍会清缓冲（兼容），以 `stream.reset` 为准。
+
+### Dashboard 实时刷新（2026-11-09）
+
+根因：曲线光标未清时 `UpdateNumericDisplay` 走 `TryGetCursorSample`，Dashboard 冻在光标点，而曲线仍吃 `_sampleHistory` 新点——表现为「轴不跟归零 / Dashboard 不跟着手机刷」。
+
+Win 修复：
+
+1. `EnterLiveSourceMode` / `ClearLiveCurveBuffersForRemoteZero` 调用 `ClearPlotCursors`
+2. 无样本时 `ApplyLiveSample(null)`，仪表显示 `--` 而不是残留旧值
+3. 有限值才格式化数字；NaN/Inf → `--`
