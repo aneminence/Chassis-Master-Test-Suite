@@ -99,6 +99,84 @@ public static class CMTSRemoteParser
     public const string ChannelSatellitesVisible = "phone.satellites.visible";
     public const string ChannelSatellitesUsed = "phone.satellites.used";
 
+    /// <summary>
+    /// Android tip d30e8d8 locked: explicit mount zero control.
+    /// Samples on the wire stay RAW — Win must clear live plot buffers on this event.
+    /// </summary>
+    public const string MessageTypeStreamReset = "stream.reset";
+
+    /// <summary>Legacy alias (pre-lock); still clears live buffers if seen.</summary>
+    public const string MessageTypeDeviceZero = "device.zero";
+
+    public const string StreamResetReasonMountZero = "mount_zero";
+    public const string StreamResetReasonMountZeroClear = "mount_zero_clear";
+
+    /// <summary>Parsed <c>stream.reset</c> payload (Android d30e8d8).</summary>
+    public sealed class StreamResetInfo
+    {
+        public string? Reason { get; init; }
+        public bool? MountZeroEnabled { get; init; }
+        public long? ZeroedAtElapsedNanos { get; init; }
+        public ulong? NextSeq { get; init; }
+    }
+
+    public static StreamResetInfo ParseStreamReset(JsonElement payload)
+    {
+        string? reason = null;
+        bool? enabled = null;
+        long? zeroedAt = null;
+        ulong? nextSeq = null;
+
+        if (payload.ValueKind == JsonValueKind.Object)
+        {
+            if (payload.TryGetProperty("reason", out var r) && r.ValueKind == JsonValueKind.String)
+                reason = r.GetString();
+            if (payload.TryGetProperty("mountZeroEnabled", out var mz))
+            {
+                if (mz.ValueKind is JsonValueKind.True)
+                    enabled = true;
+                else if (mz.ValueKind is JsonValueKind.False)
+                    enabled = false;
+            }
+            if (payload.TryGetProperty("zeroedAtElapsedNanos", out var zn) &&
+                zn.ValueKind == JsonValueKind.Number &&
+                zn.TryGetInt64(out var znVal))
+            {
+                zeroedAt = znVal;
+            }
+            if (payload.TryGetProperty("nextSeq", out var ns) &&
+                ns.ValueKind == JsonValueKind.Number &&
+                ns.TryGetUInt64(out var nsVal))
+            {
+                nextSeq = nsVal;
+            }
+        }
+
+        return new StreamResetInfo
+        {
+            Reason = reason,
+            MountZeroEnabled = enabled,
+            ZeroedAtElapsedNanos = zeroedAt,
+            NextSeq = nextSeq
+        };
+    }
+
+    /// <summary>
+    /// Curves Available policy (user 2026-11-09): vehicle.* + live core only; hide phone.*.
+    /// Status alias <c>sats</c> is phone-side and also hidden.
+    /// </summary>
+    public static bool IsCurvesAvailableKey(string? channelId)
+    {
+        if (string.IsNullOrWhiteSpace(channelId))
+            return false;
+        if (channelId.StartsWith("phone.", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(channelId, "sats", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
+    }
+
+
     public static bool TryParseEnvelope(string json, out Envelope? envelope)
     {
         envelope = null;

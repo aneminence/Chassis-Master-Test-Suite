@@ -129,6 +129,7 @@ public sealed class ChannelRegistry
         var ids = LiveCoreChannelIds
             .Concat(extraKeys ?? Array.Empty<string>())
             .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Where(IsRemoteCurvesAvailableKey)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -143,6 +144,7 @@ public sealed class ChannelRegistry
     {
         var pending = keys
             .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Where(IsRemoteCurvesAvailableKey)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Where(id => !IsAvailable(id))
             .ToList();
@@ -356,6 +358,20 @@ public sealed class ChannelRegistry
         Add("Exported_Y_Accel_Smoothed", "Y Accel Smoothed", "g");
         Add("Exported_X_Accel_Smoothed", "X Accel Smoothed", "g");
         Add("Exported_Long_Acc_Smoothed", "Long Acc Smoothed", "g");
+    }
+
+
+    /// <summary>
+    /// Remote Curves Available: keep vehicle.* / core; drop phone.* and sats alias.
+    /// Mirrors CMTSRemoteParser.IsCurvesAvailableKey without a Communication→Core cycle.
+    /// </summary>
+    private static bool IsRemoteCurvesAvailableKey(string channelId)
+    {
+        if (channelId.StartsWith("phone.", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (string.Equals(channelId, "sats", StringComparison.OrdinalIgnoreCase))
+            return false;
+        return true;
     }
 
     private static string Humanize(string id)

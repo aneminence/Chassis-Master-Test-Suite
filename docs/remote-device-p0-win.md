@@ -219,6 +219,7 @@ NTRIP、Wi‑Fi SSID、开机策略等**不进**首版。
 | `record.start` / `record.stop` | C→S | 录制启停 |
 | `record.status` | S→C | 状态回推 |
 | `config.get` / `config.set` | C↔S | 最小配置 |
+| `stream.reset` / `device.zero` | S→C | 显式归零；Win 清 live 曲线缓冲（见 gap §6） |
 
 ---
 

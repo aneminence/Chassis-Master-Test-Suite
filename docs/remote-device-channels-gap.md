@@ -2,7 +2,7 @@
 
 > 分支：`feature/cmts-remote-datasource`  
 > 日期：2026-11-09（Asia/Shanghai）  
-> 状态：**Win 全通道读取已就绪**（Parser 透传 + catalog 单位 + Available MergeRemoteKeys）；**等 Android 把 Live 全键打进 `stream.sample`**。用户已确认 Hz 足够，合入仍等全键对打后再开。
+> 状态：**Available 仅车通道**（过滤 `phone.*` / `sats`；`vehicle.*` + core 保留）。**归零**：Win 已接 `stream.reset` / `device.zero` 并清空 live 曲线缓冲；等 Android 发显式事件。合入等归零对打确认。
 
 ## 1. `TryMapSample` 映射
 
@@ -101,3 +101,26 @@ DataSource 把最近一次 status 通道合并进后续 `stream.sample` 的 `Cha
 2. Win F5 `feature/cmts-remote-datasource`：粘贴连接串 → 连上 → Available 含 `phone.*`/`vehicle.*` 展平键 → 任选一条非 core 曲线有动。
 3. 自动化：`dotnet test` 过滤 `CMTSRemote` / `ChannelRegistryModeSwitch` 全绿。
 4. PR 范围仅 Remote + ChannelRegistry + docs；不开无关重构。
+
+
+## 6. Available vehicle-only + zero sync（2026-11-09）
+
+### Available
+
+用户确认：曲线下拉**只体现车**。Win 在登记 / `MergeRemoteKeys` / `SnapshotSeenChannelIds` 过滤：
+
+- 隐藏：`phone.*`、status 别名 `sats`
+- 保留：live core + `vehicle.*`（Android tip 已停发 `phone.*`；即使仍发也不进 Available）
+
+### 归零同步（Android tip `d30e8d8` 锁定）
+
+| 项 | 约定 |
+|---|---|
+| type | **`stream.reset`**（S→C 控制帧） |
+| reason | `mount_zero`（点归零）/ `mount_zero_clear`（取消归零） |
+| payload | `mountZeroEnabled`、`zeroedAtElapsedNanos`、`nextSeq` |
+| 样本 | **线上仍是 RAW**（未减零偏）；Win **必须**清 live 曲线缓冲，不能只等 ~0 样本 |
+| Win | `HandleStreamReset` → `LiveCurveResetRequested` → `ClearLiveCurveBuffersForRemoteZero` |
+| seq | 进程级不重置；`nextSeq` 仅提示，Win 不 rewind `_lastSeq` |
+
+别名 `device.zero` 仍会清缓冲（兼容），以 `stream.reset` 为准。

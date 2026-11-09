@@ -55,6 +55,8 @@ public partial class MainWindow : Window
     /// 当前活动数据源（UDP / GSpot）所有权；Settings 完善前用顶部按钮切换。
     /// </summary>
     private readonly DataSourceSession _dataSourceSession;
+    private CMTSRemoteDataSource? _remoteLiveResetSource;
+
 
     private UdpSender? _udpSender;
 
@@ -6180,13 +6182,60 @@ public partial class MainWindow : Window
         ChannelRegistry.Instance.SetLiveCore();
 
         // Remote connect waits for Connected first; samples may already have called
-        // MergeRemoteKeys. SetLiveCore above would wipe them — restore from the live
-        // remote snapshot so Curves Available shows phone.*/sats immediately.
-        if (_dataSourceSession.Current is CMTSRemoteDataSource remote)
+        // MergeRemoteKeys. SetLiveCore above would wipe them — restore vehicle-facing
+        // extras (phone.* filtered out of Snapshot / Merge).
+        var remote = _dataSourceSession.Current as CMTSRemoteDataSource;
+        HookRemoteLiveCurveReset(remote);
+        if (remote is not null)
             ChannelRegistry.Instance.MergeRemoteKeys(remote.SnapshotSeenChannelIds());
 
         RefreshChannelSelectorsFromRegistry();
         RefreshRemoteRecordButtons();
+    }
+
+    private void HookRemoteLiveCurveReset(CMTSRemoteDataSource? remote)
+    {
+        if (ReferenceEquals(_remoteLiveResetSource, remote))
+            return;
+
+        if (_remoteLiveResetSource is not null)
+        {
+            _remoteLiveResetSource.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+            _remoteLiveResetSource = null;
+        }
+
+        if (remote is null)
+            return;
+
+        _remoteLiveResetSource = remote;
+        remote.LiveCurveResetRequested += OnRemoteLiveCurveResetRequested;
+    }
+
+    private void OnRemoteLiveCurveResetRequested(object? sender, EventArgs e)
+    {
+        // WS receive thread → UI clear of live curve buffers.
+        Dispatcher.BeginInvoke(ClearLiveCurveBuffersForRemoteZero);
+    }
+
+    /// <summary>
+    /// Android explicit zero (<c>stream.reset</c> / <c>device.zero</c>): wipe live history
+    /// so Curves restart from the tare point. Waiting for ~0 samples alone leaves old points.
+    /// </summary>
+    private void ClearLiveCurveBuffersForRemoteZero()
+    {
+        if (_historyOfflineMode || _isOfflineMode)
+            return;
+
+        _sampleHistory.Clear();
+        _latestSample = null;
+        _liveSessionOriginMs = null;
+        _liveDistanceM = 0;
+        _livePreviousSample = null;
+        _liveRoster.Clear();
+        _liveVehicleEnrich.Clear();
+        _forcePlotRebuild = true;
+        RefreshAllPlots(force: true);
+        UpdateNumericDisplay();
     }
 
     /// <summary>
@@ -7040,6 +7089,7 @@ public partial class MainWindow : Window
 
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
+        HookRemoteLiveCurveReset(null);
         _dataSourceSession.Dispose();
 
 

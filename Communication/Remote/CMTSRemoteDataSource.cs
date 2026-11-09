@@ -65,6 +65,12 @@ public sealed class CMTSRemoteDataSource : IDataSource
 
     public event EventHandler<string>? RecordStateChanged;
 
+    /// <summary>
+    /// Android explicit zero/tare (<c>stream.reset</c> / <c>device.zero</c>).
+    /// UI must clear live curve buffers — later ~0 samples alone are not enough.
+    /// </summary>
+    public event EventHandler? LiveCurveResetRequested;
+
     public string? LastError => _lastError;
 
     public string? DeviceId => _deviceId;
@@ -82,7 +88,11 @@ public sealed class CMTSRemoteDataSource : IDataSource
     public IReadOnlyList<string> SnapshotSeenChannelIds()
     {
         lock (_seenChannelsGate)
-            return _seenChannelIds.ToArray();
+        {
+            return _seenChannelIds
+                .Where(CMTSRemoteParser.IsCurvesAvailableKey)
+                .ToArray();
+        }
     }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
@@ -411,7 +421,24 @@ public sealed class CMTSRemoteDataSource : IDataSource
             case "device.status":
                 HandleDeviceStatus(env);
                 break;
+
+            case CMTSRemoteParser.MessageTypeStreamReset:
+            case CMTSRemoteParser.MessageTypeDeviceZero:
+                HandleStreamReset(env);
+                break;
         }
+    }
+
+    /// <summary>
+    /// Android <c>stream.reset</c> (d30e8d8): reason mount_zero / mount_zero_clear.
+    /// Wire samples stay RAW — always clear live plot buffers; do not wait for ~0 values.
+    /// </summary>
+    private void HandleStreamReset(CMTSRemoteParser.Envelope env)
+    {
+        var info = CMTSRemoteParser.ParseStreamReset(env.Payload);
+        // nextSeq is informational (Android continues process-level seq); do not rewind _lastSeq.
+        _ = info;
+        LiveCurveResetRequested?.Invoke(this, EventArgs.Empty);
     }
 
     private void HandleSample(CMTSRemoteParser.Envelope env)
@@ -472,15 +499,14 @@ public sealed class CMTSRemoteDataSource : IDataSource
         if (keys is null)
             return;
 
-        // Remember every key we have seen, then merge anything missing from Available.
-        // EnterLiveSourceMode calls SetLiveCore AFTER Connected (samples may already
-        // have registered extras); without re-merge the Curves picker stays LiveCore.
+        // Remember vehicle-facing keys only (phone.* / sats stay off Curves Available
+        // even if Android still sends them). EnterLiveSourceMode re-merges Snapshot.
         var candidates = new List<string>();
         lock (_seenChannelsGate)
         {
             foreach (var key in keys)
             {
-                if (string.IsNullOrWhiteSpace(key))
+                if (!CMTSRemoteParser.IsCurvesAvailableKey(key))
                     continue;
                 _seenChannelIds.Add(key);
                 candidates.Add(key);

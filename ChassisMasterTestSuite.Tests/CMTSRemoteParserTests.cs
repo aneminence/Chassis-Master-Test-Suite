@@ -423,4 +423,39 @@ public class CMTSRemoteParserTests
         Assert.False(result.Sample.Channels.ContainsKey("vehicle.accel.x"));
         Assert.False(result.Sample.Channels.ContainsKey("phone.satellites.used"));
     }
+
+    [Fact]
+    public void ParseStreamReset_ReadsMountZeroPayload()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+              "reason": "mount_zero",
+              "mountZeroEnabled": true,
+              "zeroedAtElapsedNanos": 123456789,
+              "nextSeq": 42
+            }
+            """);
+        var info = CMTSRemoteParser.ParseStreamReset(doc.RootElement);
+        Assert.Equal(CMTSRemoteParser.StreamResetReasonMountZero, info.Reason);
+        Assert.True(info.MountZeroEnabled);
+        Assert.Equal(123456789L, info.ZeroedAtElapsedNanos);
+        Assert.Equal(42ul, info.NextSeq);
+    }
+
+    [Fact]
+    public void ParseStreamReset_ReadsClearPayload()
+    {
+        using var doc = JsonDocument.Parse("""
+            {
+              "reason": "mount_zero_clear",
+              "mountZeroEnabled": false,
+              "nextSeq": 100
+            }
+            """);
+        var info = CMTSRemoteParser.ParseStreamReset(doc.RootElement);
+        Assert.Equal(CMTSRemoteParser.StreamResetReasonMountZeroClear, info.Reason);
+        Assert.False(info.MountZeroEnabled);
+        Assert.Null(info.ZeroedAtElapsedNanos);
+        Assert.Equal(100ul, info.NextSeq);
+    }
 }

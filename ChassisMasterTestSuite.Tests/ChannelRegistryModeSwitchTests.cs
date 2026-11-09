@@ -28,34 +28,39 @@ public class ChannelRegistryModeSwitchTests
     }
 
     [Fact]
-    public void MergeRemoteKeys_AddsWithoutRemovingLiveCore()
+    public void MergeRemoteKeys_AddsVehicle_HidesPhoneAndSats()
     {
         var registry = ChannelRegistry.Instance;
         registry.SetLiveCore();
         Assert.True(registry.IsAvailable(ChannelIds.Velocity));
         Assert.False(registry.IsAvailable("phone.pressure"));
+        Assert.False(registry.IsAvailable("vehicle.accel.x"));
 
         registry.MergeRemoteKeys(new[]
         {
             "phone.pressure",
+            "vehicle.accel.x",
+            "vehicle.gyro.z",
             CMTSRemoteParser.ChannelSatellitesUsed,
             "sats"
         });
 
         Assert.True(registry.IsAvailable(ChannelIds.Velocity));
-        Assert.True(registry.IsAvailable("phone.pressure"));
-        Assert.True(registry.IsAvailable(CMTSRemoteParser.ChannelSatellitesUsed));
-        Assert.True(registry.IsAvailable("sats"));
+        Assert.True(registry.IsAvailable("vehicle.accel.x"));
+        Assert.True(registry.IsAvailable("vehicle.gyro.z"));
+        Assert.False(registry.IsAvailable("phone.pressure"));
+        Assert.False(registry.IsAvailable(CMTSRemoteParser.ChannelSatellitesUsed));
+        Assert.False(registry.IsAvailable("sats"));
     }
 
     [Fact]
-    public void SetFromRemoteKeys_KeepsLiveCore_AndAddsExtras()
+    public void SetFromRemoteKeys_KeepsLiveCore_AddsVehicle_HidesPhone()
     {
         var registry = ChannelRegistry.Instance;
         registry.SetFromRemoteKeys(new[] { "phone.pressure", "vehicle.accel.x" });
         Assert.True(registry.IsAvailable(ChannelIds.Longacc));
-        Assert.True(registry.IsAvailable("phone.pressure"));
         Assert.True(registry.IsAvailable("vehicle.accel.x"));
+        Assert.False(registry.IsAvailable("phone.pressure"));
     }
 
     [Fact]
@@ -67,64 +72,79 @@ public class ChannelRegistryModeSwitchTests
         registry.SetLiveCore();
         registry.MergeRemoteKeys(new[]
         {
+            "vehicle.accel.x",
+            "vehicle.attitude.yaw",
             "phone.pressure",
-            CMTSRemoteParser.ChannelSatellitesUsed,
             "sats"
         });
-        Assert.True(registry.IsAvailable("phone.pressure"));
-        Assert.True(registry.IsAvailable("sats"));
-
-        registry.SetLiveCore();
+        Assert.True(registry.IsAvailable("vehicle.accel.x"));
+        Assert.True(registry.IsAvailable("vehicle.attitude.yaw"));
         Assert.False(registry.IsAvailable("phone.pressure"));
         Assert.False(registry.IsAvailable("sats"));
+
+        registry.SetLiveCore();
+        Assert.False(registry.IsAvailable("vehicle.accel.x"));
         Assert.True(registry.IsAvailable(ChannelIds.Velocity));
 
         registry.MergeRemoteKeys(new[]
         {
+            "vehicle.accel.x",
+            "vehicle.attitude.yaw",
             "phone.pressure",
-            CMTSRemoteParser.ChannelSatellitesUsed,
             "sats"
         });
-        Assert.True(registry.IsAvailable("phone.pressure"));
-        Assert.True(registry.IsAvailable(CMTSRemoteParser.ChannelSatellitesUsed));
-        Assert.True(registry.IsAvailable("sats"));
+        Assert.True(registry.IsAvailable("vehicle.accel.x"));
+        Assert.True(registry.IsAvailable("vehicle.attitude.yaw"));
+        Assert.False(registry.IsAvailable("phone.pressure"));
+        Assert.False(registry.IsAvailable("sats"));
     }
 
     [Fact]
-    public void MergeRemoteKeys_FullAndroidTable_UsesCatalogUnits()
+    public void MergeRemoteKeys_VehicleKeys_UseCatalogUnits_PhoneStayHidden()
     {
         var registry = ChannelRegistry.Instance;
         registry.SetLiveCore();
 
-        var keys = new[]
+        var vehicleKeys = new[]
+        {
+            "vehicle.accel.x", "vehicle.accel.y", "vehicle.accel.z",
+            "vehicle.gyro.x", "vehicle.gyro.y", "vehicle.gyro.z",
+            "vehicle.attitude.roll", "vehicle.attitude.pitch", "vehicle.attitude.yaw",
+        };
+        var phoneKeys = new[]
         {
             "phone.pressure",
             "phone.accel.x", "phone.accel.y", "phone.accel.z",
-            "vehicle.accel.x", "vehicle.accel.y", "vehicle.accel.z",
-            "phone.gyro.x", "vehicle.gyro.z",
-            "vehicle.attitude.roll", "vehicle.attitude.pitch", "vehicle.attitude.yaw",
-            "phone.attitude.pitch", "phone.attitude.roll", "phone.attitude.azimuth",
-            "phone.rotation_vector.x", "phone.rotation_vector.w", "phone.rotation_vector.headingAcc",
-            "phone.gps.lat", "phone.gps.lon", "phone.gps.alt", "phone.gps.speed",
-            "phone.gps.bearing", "phone.gps.horizAcc", "phone.gps.vertAcc", "phone.gps.speedAcc",
+            "phone.gyro.x",
+            "phone.attitude.pitch",
+            "phone.rotation_vector.x", "phone.rotation_vector.headingAcc",
+            "phone.gps.lat", "phone.gps.speed", "phone.gps.horizAcc",
             "phone.satellites.visible", "phone.satellites.used", "sats"
         };
 
-        registry.MergeRemoteKeys(keys);
+        registry.MergeRemoteKeys(vehicleKeys.Concat(phoneKeys));
 
         Assert.True(registry.IsAvailable(ChannelIds.Velocity));
-        foreach (var key in keys)
+        foreach (var key in vehicleKeys)
             Assert.True(registry.IsAvailable(key), key);
+        foreach (var key in phoneKeys)
+            Assert.False(registry.IsAvailable(key), key);
 
-        Assert.True(registry.TryGet("phone.gps.speed", out var gpsSpeed));
-        Assert.Equal("m/s", gpsSpeed.Unit);
-        Assert.True(registry.TryGet("phone.gps.horizAcc", out var horiz));
-        Assert.Equal("m", horiz.Unit);
-        Assert.True(registry.TryGet("phone.rotation_vector.headingAcc", out var rvAcc));
-        Assert.Equal("rad", rvAcc.Unit);
         Assert.True(registry.TryGet("vehicle.accel.x", out var vac));
         Assert.Equal("m/s2", vac.Unit);
-        Assert.True(registry.TryGet("phone.pressure", out var prs));
-        Assert.Equal("mbar", prs.Unit);
+        Assert.True(registry.TryGet("vehicle.attitude.yaw", out var yaw));
+        Assert.Equal("deg", yaw.Unit);
+    }
+
+    [Fact]
+    public void IsCurvesAvailableKey_HidesPhoneAndSats()
+    {
+        Assert.True(CMTSRemoteParser.IsCurvesAvailableKey("vehicle.accel.x"));
+        Assert.True(CMTSRemoteParser.IsCurvesAvailableKey("velocity"));
+        Assert.False(CMTSRemoteParser.IsCurvesAvailableKey("phone.pressure"));
+        Assert.False(CMTSRemoteParser.IsCurvesAvailableKey("phone.satellites.used"));
+        Assert.False(CMTSRemoteParser.IsCurvesAvailableKey("sats"));
+        Assert.False(CMTSRemoteParser.IsCurvesAvailableKey(null));
+        Assert.False(CMTSRemoteParser.IsCurvesAvailableKey(""));
     }
 }
