@@ -5631,15 +5631,26 @@ public partial class MainWindow : Window
         if (_isOfflineMode)
             await EnterOnlineModeAsync();
 
+        // Prefill: env vars win when set; else last successful connection from app-preferences.json.
+        var saved = AppPreferencesStore.Load().Remote;
         var hostDefault =
             Environment.GetEnvironmentVariable("CMTS_REMOTE_HOST")
+            ?? saved?.Host
             ?? "";
         var tokenDefault =
             Environment.GetEnvironmentVariable("CMTS_REMOTE_TOKEN")
+            ?? saved?.Token
             ?? "";
         var portDefault =
             Environment.GetEnvironmentVariable("CMTS_REMOTE_PORT")
+            ?? (saved is { Port: > 0 and <= 65535 }
+                ? saved.Port.ToString()
+                : null)
             ?? "8787";
+        var pathDefault =
+            Environment.GetEnvironmentVariable("CMTS_REMOTE_PATH")
+            ?? (string.IsNullOrWhiteSpace(saved?.Path) ? null : saved!.Path)
+            ?? "/cmts/v1";
 
         var maxHz = 100;
         var maxHzEnv = Environment.GetEnvironmentVariable("CMTS_REMOTE_MAX_HZ");
@@ -5649,6 +5660,7 @@ public partial class MainWindow : Window
         if (!TryPromptRemoteOptions(
                 hostDefault,
                 portDefault,
+                pathDefault,
                 tokenDefault,
                 maxHz,
                 out var options) ||
@@ -5701,6 +5713,8 @@ public partial class MainWindow : Window
                 RemoteDeviceButton.Content = "Remote●";
             if (GSpotButton is not null)
                 GSpotButton.Content = "GSpot…";
+
+            SaveLastSuccessfulRemoteConnection(options);
 
             MessageBox.Show(
                 this,
@@ -5817,9 +5831,30 @@ public partial class MainWindow : Window
         }
     }
 
+    private static void SaveLastSuccessfulRemoteConnection(CMTSRemoteOptions options)
+    {
+        try
+        {
+            var prefs = AppPreferencesStore.Load();
+            prefs.Remote = new RemoteConnectionPreferences
+            {
+                Host = options.Host.Trim(),
+                Port = options.Port,
+                Path = string.IsNullOrWhiteSpace(options.Path) ? "/cmts/v1" : options.Path,
+                Token = options.Token ?? ""
+            };
+            AppPreferencesStore.Save(prefs);
+        }
+        catch
+        {
+            // Best-effort; connect already succeeded.
+        }
+    }
+
     private bool TryPromptRemoteOptions(
         string hostDefault,
         string portDefault,
+        string pathDefault,
         string tokenDefault,
         int maxHz,
         out CMTSRemoteOptions? options)
@@ -5832,20 +5867,24 @@ public partial class MainWindow : Window
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
-            Width = 400,
-            MinHeight = 280,
+            Width = 440,
+            MinHeight = 340,
             SizeToContent = SizeToContent.Height,
             Background = (Brush)FindResource("AppBackground"),
             ShowInTaskbar = false
         };
 
         var root = new Grid { Margin = new Thickness(16) };
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        for (var i = 0; i < 7; i++)
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
+        var pasteBox = new TextBox
+        {
+            Text = "",
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style,
+            ToolTip = "Paste cmts://IP:8787/cmts/v1?token=... (or IP / token only)"
+        };
         var hostBox = new TextBox
         {
             Text = hostDefault,
@@ -5855,6 +5894,12 @@ public partial class MainWindow : Window
         var portBox = new TextBox
         {
             Text = portDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+        var pathBox = new TextBox
+        {
+            Text = string.IsNullOrWhiteSpace(pathDefault) ? "/cmts/v1" : pathDefault,
             Margin = new Thickness(0, 4, 0, 10),
             Style = TryFindResource("DarkTextBoxStyle") as Style
         };
@@ -5879,24 +5924,88 @@ public partial class MainWindow : Window
             root.Children.Add(stack);
         }
 
-        AddLabeled(0, "Android IP / host", hostBox);
-        AddLabeled(1, "Port (default 8787)", portBox);
-        AddLabeled(2, "Pairing token (optional)", tokenBox);
+        void ApplyPaste(string? raw, bool warnIfInvalid)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+            if (!CMTSRemoteConnectionUri.TryParse(raw, out var parsed))
+            {
+                if (warnIfInvalid &&
+                    parsed.Kind == CMTSRemoteConnectionUri.ConnectionPasteKind.Invalid)
+                {
+                    MessageBox.Show(
+                        dialog,
+                        "Unrecognized connection string.\n" +
+                        "Use cmts://IP:8787/cmts/v1?token=..., or paste IP / token only.",
+                        "CMTS Remote",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            var host = hostBox.Text ?? "";
+            var port = portBox.Text ?? "";
+            var pathVal = pathBox.Text ?? "";
+            var token = tokenBox.Text ?? "";
+            CMTSRemoteConnectionUri.ApplyTo(parsed, ref host, ref port, ref pathVal, ref token);
+            hostBox.Text = host;
+            portBox.Text = port;
+            pathBox.Text = pathVal;
+            tokenBox.Text = token;
+        }
+
+        pasteBox.LostKeyboardFocus += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: false);
+        pasteBox.KeyDown += (_, ke) =>
+        {
+            if (ke.Key == Key.Enter)
+            {
+                ApplyPaste(pasteBox.Text, warnIfInvalid: true);
+                ke.Handled = true;
+            }
+        };
+        // Detect accidental paste of full URI into the host field.
+        hostBox.LostKeyboardFocus += (_, _) =>
+        {
+            var t = (hostBox.Text ?? "").Trim();
+            if (t.StartsWith("cmts://", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyPaste(t, warnIfInvalid: false);
+            }
+        };
+
+        AddLabeled(0, "Paste connection string (cmts://...)", pasteBox);
+        AddLabeled(1, "Android IP / host", hostBox);
+        AddLabeled(2, "Port (default 8787)", portBox);
+        AddLabeled(3, "Path (default /cmts/v1)", pathBox);
+        AddLabeled(4, "Pairing token (optional)", tokenBox);
 
         var hint = new TextBlock
         {
-            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\nEnv: CMTS_REMOTE_HOST / PORT / TOKEN / MAX_HZ",
+            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\n" +
+                   "Android copies cmts://IP:8787/cmts/v1?token=... — paste above to autofill.\n" +
+                   "Last successful connection is remembered. Env: CMTS_REMOTE_HOST / PORT / PATH / TOKEN / MAX_HZ",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
-            Margin = new Thickness(0, 0, 0, 12)
+            Margin = new Thickness(0, 0, 0, 12),
+            TextWrapping = TextWrapping.Wrap
         };
-        Grid.SetRow(hint, 3);
+        Grid.SetRow(hint, 5);
         root.Children.Add(hint);
 
         var buttons = new StackPanel
         {
             Orientation = Orientation.Horizontal,
             HorizontalAlignment = HorizontalAlignment.Right
+        };
+        var applyPasteBtn = new Button
+        {
+            Content = "Apply paste",
+            Width = 100,
+            Height = 32,
+            Margin = new Thickness(0, 0, 8, 0),
+            Style = TryFindResource("ToolButtonStyle") as Style
         };
         var ok = new Button
         {
@@ -5916,8 +6025,12 @@ public partial class MainWindow : Window
             Style = TryFindResource("ToolButtonStyle") as Style
         };
         CMTSRemoteOptions? chosen = null;
+        applyPasteBtn.Click += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: true);
         ok.Click += (_, _) =>
         {
+            // One more apply in case user pasted and hit Connect without blur.
+            ApplyPaste(pasteBox.Text, warnIfInvalid: false);
+
             var host = (hostBox.Text ?? "").Trim();
             if (string.IsNullOrWhiteSpace(host))
             {
@@ -5930,40 +6043,56 @@ public partial class MainWindow : Window
                 return;
             }
 
+            // Host field may still hold a full URI if Apply did not run.
+            if (host.StartsWith("cmts://", StringComparison.OrdinalIgnoreCase) ||
+                host.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyPaste(host, warnIfInvalid: true);
+                host = (hostBox.Text ?? "").Trim();
+            }
+
             if (!int.TryParse((portBox.Text ?? "").Trim(), out var port) ||
                 port <= 0 ||
                 port > 65535)
             {
                 MessageBox.Show(
                     dialog,
-                    "Port must be 1–65535.",
+                    "Port must be 1-65535.",
                     "CMTS Remote",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
                 return;
             }
 
+            var pathVal = (pathBox.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(pathVal))
+                pathVal = "/cmts/v1";
+            if (!pathVal.StartsWith('/'))
+                pathVal = "/" + pathVal;
+
             chosen = new CMTSRemoteOptions
             {
                 Host = host,
                 Port = port,
                 Token = (tokenBox.Text ?? "").Trim(),
-                Path = "/cmts/v1",
+                Path = pathVal,
                 MaxHz = maxHz
             };
             dialog.DialogResult = true;
         };
+        buttons.Children.Add(applyPasteBtn);
         buttons.Children.Add(ok);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 4);
+        Grid.SetRow(buttons, 6);
         root.Children.Add(buttons);
 
         dialog.Content = root;
-        hostBox.Focus();
+        pasteBox.Focus();
         var okResult = dialog.ShowDialog() == true;
         options = chosen;
         return okResult && options is not null;
     }
+
     private async void UdpSourceButton_Click(
         object sender,
         RoutedEventArgs e)

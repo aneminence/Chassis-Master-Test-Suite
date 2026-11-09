@@ -22,6 +22,9 @@ public sealed class AppPreferences
     public CustomThemeColors? CustomColors { get; set; }
 
     public MapPreferences Map { get; set; } = new();
+
+    /// <summary>Last successful CMTS Remote (Android) connection fields.</summary>
+    public RemoteConnectionPreferences? Remote { get; set; }
 }
 
 public sealed class CustomThemeColors
@@ -34,6 +37,21 @@ public sealed class CustomThemeColors
     public string TextPrimary { get; set; } = "#E6EAF0";
     public string TextSecondary { get; set; } = "#8A94A6";
     public string TextMuted { get; set; } = "#5A6474";
+}
+
+public sealed class RemoteConnectionPreferences
+{
+    /// <summary>Last successful Android host / IP.</summary>
+    public string? Host { get; set; }
+
+    /// <summary>Last successful WebSocket port (default 8787).</summary>
+    public int Port { get; set; } = 8787;
+
+    /// <summary>Last successful WebSocket path (default /cmts/v1).</summary>
+    public string Path { get; set; } = "/cmts/v1";
+
+    /// <summary>Last successful pairing token (may be empty).</summary>
+    public string? Token { get; set; }
 }
 
 public sealed class MapPreferences
@@ -86,6 +104,13 @@ public static class AppPreferencesStore
                 return new AppPreferences();
 
             prefs.Map ??= new MapPreferences();
+            if (prefs.Remote is not null)
+            {
+                if (prefs.Remote.Port is < 1 or > 65535)
+                    prefs.Remote.Port = 8787;
+                if (string.IsNullOrWhiteSpace(prefs.Remote.Path))
+                    prefs.Remote.Path = "/cmts/v1";
+            }
             if (string.IsNullOrWhiteSpace(prefs.Language))
                 prefs.Language = "zh-CN";
             if (string.IsNullOrWhiteSpace(prefs.ThemeMode))

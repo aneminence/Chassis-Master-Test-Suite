@@ -252,6 +252,15 @@ IDataSource  --TryPublish-->  DataBus  -->  MainWindow live 消费
 | `GSpotParser` / `GSpotPropertyIndex` | `Communication/GSpot/GSpotParser.cs` | **不要复用**解析器。单独写 `CMTSRemoteParser` → `VehicleSample` |
 | MainWindow GSpot 按钮路径 | `MainWindow.xaml.cs` | 首版加「远程设备」入口：手动 IP → `CreateRemote` → `WaitForConnected` → `EnterLiveSourceMode`；**不要**塞进 GSpot 对话框 |
 
+
+
+### Win connect UX (pairing paste, not a protocol change)
+
+- Android copies a one-line URI: `cmts://<ipv4>:8787/cmts/v1?token=<pairingToken>`.
+- Win Remote dialog accepts pasting that string (or IP-only / token-only) and autofills host/port/path/token.
+- Last **successful** connection is stored in `%LocalAppData%\CMTS\app-preferences.json` (`remote`) and prefilled on next open. Env `CMTS_REMOTE_*` still overrides when set.
+- Wire protocol remains v0.1 `ws://IP:8787/cmts/v1`; `cmts://` is clipboard convenience only.
+
 ### 1.3 明确不要动（do not touch）
 
 - **GSpot HTTP API / WS 帧格式 / `GSpotParser` 字段约定**

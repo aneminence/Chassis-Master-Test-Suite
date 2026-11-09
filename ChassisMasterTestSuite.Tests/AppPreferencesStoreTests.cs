@@ -86,6 +86,39 @@ public class AppPreferencesStoreTests
     }
 
     [Fact]
+    public void RoundTrip_RemoteConnection()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "cmts-prefs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            AppPreferencesStore.StoragePathOverride = Path.Combine(dir, "app-preferences.json");
+            var prefs = new AppPreferences
+            {
+                Remote = new RemoteConnectionPreferences
+                {
+                    Host = "10.11.6.214",
+                    Port = 8787,
+                    Path = "/cmts/v1",
+                    Token = "72e3a38515d0"
+                }
+            };
+            AppPreferencesStore.Save(prefs);
+            var loaded = AppPreferencesStore.Load();
+            Assert.NotNull(loaded.Remote);
+            Assert.Equal("10.11.6.214", loaded.Remote!.Host);
+            Assert.Equal(8787, loaded.Remote.Port);
+            Assert.Equal("/cmts/v1", loaded.Remote.Path);
+            Assert.Equal("72e3a38515d0", loaded.Remote.Token);
+        }
+        finally
+        {
+            AppPreferencesStore.StoragePathOverride = null;
+            try { Directory.Delete(dir, true); } catch { /* ignore */ }
+        }
+    }
+
+    [Fact]
     public void MapTileSources_ResolveFallsBackToDefault()
     {
         var src = MapTileSources.Resolve("osm", null);
