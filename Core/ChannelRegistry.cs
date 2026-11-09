@@ -365,7 +365,8 @@ public sealed class ChannelRegistry
     /// Remote Curves Available: keep vehicle.* / core; drop phone.* and sats alias.
     /// Mirrors CMTSRemoteParser.IsCurvesAvailableKey without a Communication→Core cycle.
     /// </summary>
-    private static bool IsRemoteCurvesAvailableKey(string channelId)
+    /// <summary>True if id may appear in Remote Curves Available (not phone.* / sats).</summary>
+    public static bool IsRemoteCurvesAvailableKey(string channelId)
     {
         if (channelId.StartsWith("phone.", StringComparison.OrdinalIgnoreCase))
             return false;

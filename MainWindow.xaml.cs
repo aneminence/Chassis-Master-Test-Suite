@@ -2075,16 +2075,30 @@ public partial class MainWindow : Window
             return;
 
         var fallback = ChannelRegistry.Instance.DefaultPlotChannelId;
+        var remoteLive = _dataSourceSession.Current is CMTSRemoteDataSource;
 
         foreach (var plot in _plots)
         {
             foreach (var channel in plot.Channels)
             {
-                if (!ChannelRegistry.Instance.IsAvailable(channel.ChannelId) ||
-                    string.Equals(channel.ChannelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(channel.ChannelId, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
                 {
                     channel.ChannelId = fallback;
+                    continue;
                 }
+
+                if (ChannelRegistry.Instance.IsAvailable(channel.ChannelId))
+                    continue;
+
+                // Remote reconnect: SetLiveCore then progressive MergeRemoteKeys.
+                // Keep remembered vehicle.* (etc.) picks while keys are temporarily not Available;
+                // CreateChannelControl already injects orphan entries for display.
+                // Still drop phone.* / sats (filtered from Remote Available).
+                if (remoteLive &&
+                    ChannelRegistry.IsRemoteCurvesAvailableKey(channel.ChannelId))
+                    continue;
+
+                channel.ChannelId = fallback;
             }
         }
     }
