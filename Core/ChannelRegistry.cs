@@ -285,6 +285,19 @@ public sealed class ChannelRegistry
         Add("phone.attitude.roll", "Phone Roll", "deg");
         Add("phone.attitude.azimuth", "Phone Azimuth", "deg");
         Add("phone.attitude.headingAcc", "Phone Heading Acc", "deg");
+        Add("phone.rotation_vector.x", "Phone RotVec X", "");
+        Add("phone.rotation_vector.y", "Phone RotVec Y", "");
+        Add("phone.rotation_vector.z", "Phone RotVec Z", "");
+        Add("phone.rotation_vector.w", "Phone RotVec W", "");
+        Add("phone.rotation_vector.headingAcc", "Phone RotVec Heading Acc", "rad");
+        Add("phone.gps.lat", "Phone GPS Lat", "deg");
+        Add("phone.gps.lon", "Phone GPS Lon", "deg");
+        Add("phone.gps.alt", "Phone GPS Alt", "m");
+        Add("phone.gps.speed", "Phone GPS Speed", "m/s");
+        Add("phone.gps.bearing", "Phone GPS Bearing", "deg");
+        Add("phone.gps.horizAcc", "Phone GPS Horiz Acc", "m");
+        Add("phone.gps.vertAcc", "Phone GPS Vert Acc", "m");
+        Add("phone.gps.speedAcc", "Phone GPS Speed Acc", "m/s");
         Add("time", "VBO Time", "HHMMSS");
         Add(ChannelIds.Latitude, "Latitude", "deg");
         Add(ChannelIds.Longitude, "Longitude", "deg");
@@ -363,6 +376,30 @@ public sealed class ChannelRegistry
             id.Equals("sats", StringComparison.OrdinalIgnoreCase))
             return "count";
 
+        // phone.gps.* before generic speed/alt/bearing rules (Live GPS is m/s + m).
+        if (id.StartsWith("phone.gps.", StringComparison.OrdinalIgnoreCase))
+        {
+            if (id.EndsWith(".lat", StringComparison.OrdinalIgnoreCase) ||
+                id.EndsWith(".lon", StringComparison.OrdinalIgnoreCase) ||
+                id.EndsWith(".bearing", StringComparison.OrdinalIgnoreCase))
+                return "deg";
+            if (id.EndsWith(".speed", StringComparison.OrdinalIgnoreCase) ||
+                id.EndsWith(".speedAcc", StringComparison.OrdinalIgnoreCase))
+                return "m/s";
+            if (id.EndsWith(".alt", StringComparison.OrdinalIgnoreCase) ||
+                id.EndsWith(".horizAcc", StringComparison.OrdinalIgnoreCase) ||
+                id.EndsWith(".vertAcc", StringComparison.OrdinalIgnoreCase))
+                return "m";
+            return "";
+        }
+
+        if (id.StartsWith("phone.rotation_vector.", StringComparison.OrdinalIgnoreCase))
+        {
+            if (id.EndsWith(".headingAcc", StringComparison.OrdinalIgnoreCase))
+                return "rad";
+            return "";
+        }
+
         if (id.Contains("gyro", StringComparison.OrdinalIgnoreCase))
             return "rad/s";
 
@@ -392,7 +429,8 @@ public sealed class ChannelRegistry
             return "deg/s";
 
         if (id.Contains("head", StringComparison.OrdinalIgnoreCase) ||
-            id.Contains("Angle", StringComparison.OrdinalIgnoreCase))
+            id.Contains("Angle", StringComparison.OrdinalIgnoreCase) ||
+            id.Contains("bearing", StringComparison.OrdinalIgnoreCase))
             return "deg";
 
         if (id.Contains("height", StringComparison.OrdinalIgnoreCase) ||

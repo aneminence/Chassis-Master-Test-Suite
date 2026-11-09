@@ -57,4 +57,42 @@ public class ChannelRegistryModeSwitchTests
         Assert.True(registry.IsAvailable("phone.pressure"));
         Assert.True(registry.IsAvailable("vehicle.accel.x"));
     }
+
+    [Fact]
+    public void MergeRemoteKeys_FullAndroidTable_UsesCatalogUnits()
+    {
+        var registry = ChannelRegistry.Instance;
+        registry.SetLiveCore();
+
+        var keys = new[]
+        {
+            "phone.pressure",
+            "phone.accel.x", "phone.accel.y", "phone.accel.z",
+            "vehicle.accel.x", "vehicle.accel.y", "vehicle.accel.z",
+            "phone.gyro.x", "vehicle.gyro.z",
+            "vehicle.attitude.roll", "vehicle.attitude.pitch", "vehicle.attitude.yaw",
+            "phone.attitude.pitch", "phone.attitude.roll", "phone.attitude.azimuth",
+            "phone.rotation_vector.x", "phone.rotation_vector.w", "phone.rotation_vector.headingAcc",
+            "phone.gps.lat", "phone.gps.lon", "phone.gps.alt", "phone.gps.speed",
+            "phone.gps.bearing", "phone.gps.horizAcc", "phone.gps.vertAcc", "phone.gps.speedAcc",
+            "phone.satellites.visible", "phone.satellites.used", "sats"
+        };
+
+        registry.MergeRemoteKeys(keys);
+
+        Assert.True(registry.IsAvailable(ChannelIds.Velocity));
+        foreach (var key in keys)
+            Assert.True(registry.IsAvailable(key), key);
+
+        Assert.True(registry.TryGet("phone.gps.speed", out var gpsSpeed));
+        Assert.Equal("m/s", gpsSpeed.Unit);
+        Assert.True(registry.TryGet("phone.gps.horizAcc", out var horiz));
+        Assert.Equal("m", horiz.Unit);
+        Assert.True(registry.TryGet("phone.rotation_vector.headingAcc", out var rvAcc));
+        Assert.Equal("rad", rvAcc.Unit);
+        Assert.True(registry.TryGet("vehicle.accel.x", out var vac));
+        Assert.Equal("m/s2", vac.Unit);
+        Assert.True(registry.TryGet("phone.pressure", out var prs));
+        Assert.Equal("mbar", prs.Unit);
+    }
 }

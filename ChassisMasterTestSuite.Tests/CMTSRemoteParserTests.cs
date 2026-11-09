@@ -284,6 +284,122 @@ public class CMTSRemoteParserTests
         Assert.Equal(5, channels[ChannelIds.Velocity]);
     }
 
+
+    [Fact]
+    public void TryMapSample_FullAndroidKeyTable_FlattensAllVectors()
+    {
+        // Mirrors Android Live/CSV sources CaptureService emits (array component order).
+        const string json = """
+            {
+              "type": "stream.sample",
+              "deviceId": "d1",
+              "payload": {
+                "seq": 9,
+                "measureTimeMs": 5000,
+                "speedKph": 36.0,
+                "ax": 0.1,
+                "ay": 0.2,
+                "az": 9.8,
+                "yawRateDps": 3.0,
+                "lat": 31.2,
+                "lon": 121.5,
+                "altM": 12.0,
+                "headingDeg": 90.0,
+                "phone.pressure": 1008.5,
+                "phone.accel": [0.11, 0.22, 9.77],
+                "vehicle.accel": [1.1, 2.2, 3.3],
+                "phone.gyro": [0.01, 0.02, 0.03],
+                "vehicle.gyro": [0.04, 0.05, 0.06],
+                "vehicle.attitude": [1.0, 2.0, 3.0],
+                "phone.attitude": [4.0, 5.0, 6.0, 1.5],
+                "phone.rotation_vector": [0.1, 0.2, 0.3, 0.9, 0.05],
+                "phone.gps": [31.2, 121.5, 12.0, 10.0, 90.0, 3.5, 4.5, 0.8],
+                "phone.satellites": [22.0, 14.0],
+                "valid": {
+                  "gnss": true,
+                  "speed": true,
+                  "imu": true,
+                  "heading": true
+                }
+              }
+            }
+            """;
+
+        Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
+        var result = CMTSRemoteParser.TryMapSample(env!);
+        Assert.NotNull(result.Sample);
+        var ch = result.Sample!.Channels;
+
+        Assert.Equal(1008.5, ch["phone.pressure"]);
+        Assert.Equal(0.11, ch["phone.accel.x"]);
+        Assert.Equal(0.22, ch["phone.accel.y"]);
+        Assert.Equal(9.77, ch["phone.accel.z"]);
+        Assert.Equal(1.1, ch["vehicle.accel.x"]);
+        Assert.Equal(2.2, ch["vehicle.accel.y"]);
+        Assert.Equal(3.3, ch["vehicle.accel.z"]);
+        Assert.Equal(0.01, ch["phone.gyro.x"]);
+        Assert.Equal(0.02, ch["phone.gyro.y"]);
+        Assert.Equal(0.03, ch["phone.gyro.z"]);
+        Assert.Equal(0.04, ch["vehicle.gyro.x"]);
+        Assert.Equal(0.05, ch["vehicle.gyro.y"]);
+        Assert.Equal(0.06, ch["vehicle.gyro.z"]);
+        Assert.Equal(1.0, ch["vehicle.attitude.roll"]);
+        Assert.Equal(2.0, ch["vehicle.attitude.pitch"]);
+        Assert.Equal(3.0, ch["vehicle.attitude.yaw"]);
+        Assert.Equal(4.0, ch["phone.attitude.pitch"]);
+        Assert.Equal(5.0, ch["phone.attitude.roll"]);
+        Assert.Equal(6.0, ch["phone.attitude.azimuth"]);
+        Assert.Equal(1.5, ch["phone.attitude.headingAcc"]);
+        Assert.Equal(0.1, ch["phone.rotation_vector.x"]);
+        Assert.Equal(0.2, ch["phone.rotation_vector.y"]);
+        Assert.Equal(0.3, ch["phone.rotation_vector.z"]);
+        Assert.Equal(0.9, ch["phone.rotation_vector.w"]);
+        Assert.Equal(0.05, ch["phone.rotation_vector.headingAcc"]);
+        Assert.Equal(31.2, ch["phone.gps.lat"]);
+        Assert.Equal(121.5, ch["phone.gps.lon"]);
+        Assert.Equal(12.0, ch["phone.gps.alt"]);
+        Assert.Equal(10.0, ch["phone.gps.speed"]);
+        Assert.Equal(90.0, ch["phone.gps.bearing"]);
+        Assert.Equal(3.5, ch["phone.gps.horizAcc"]);
+        Assert.Equal(4.5, ch["phone.gps.vertAcc"]);
+        Assert.Equal(0.8, ch["phone.gps.speedAcc"]);
+        Assert.Equal(22.0, ch["phone.satellites.visible"]);
+        Assert.Equal(14.0, ch["phone.satellites.used"]);
+
+        // Core typed ChannelIds still present; raw ax not duplicated.
+        Assert.True(ch.ContainsKey(ChannelIds.Velocity));
+        Assert.True(ch.ContainsKey(ChannelIds.Longacc));
+        Assert.False(ch.ContainsKey("ax"));
+    }
+
+    [Fact]
+    public void TryMapSample_PhoneGpsArray_SkipsNullComponents()
+    {
+        const string json = """
+            {
+              "type": "stream.sample",
+              "deviceId": "d1",
+              "payload": {
+                "seq": 2,
+                "measureTimeMs": 100,
+                "phone.gps": [31.2, 121.5, null, 5.0, null, 2.0],
+                "valid": { "gnss": true, "speed": true }
+              }
+            }
+            """;
+
+        Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
+        var result = CMTSRemoteParser.TryMapSample(env!);
+        Assert.NotNull(result.Sample);
+        var ch = result.Sample!.Channels;
+        Assert.Equal(31.2, ch["phone.gps.lat"]);
+        Assert.Equal(121.5, ch["phone.gps.lon"]);
+        Assert.False(ch.ContainsKey("phone.gps.alt"));
+        Assert.Equal(5.0, ch["phone.gps.speed"]);
+        Assert.False(ch.ContainsKey("phone.gps.bearing"));
+        Assert.Equal(2.0, ch["phone.gps.horizAcc"]);
+    }
+
     [Fact]
     public void TryMapSample_DoesNotInventMissingAndroidKeys()
     {
