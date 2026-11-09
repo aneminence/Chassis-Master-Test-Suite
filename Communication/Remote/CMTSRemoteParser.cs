@@ -50,6 +50,55 @@ public static class CMTSRemoteParser
         public bool Ok { get; init; } = true;
     }
 
+    /// <summary>
+    /// device.status payload (v0.1). Satellites live here today; IMU extras stay on stream.sample.
+    /// </summary>
+    public sealed class DeviceStatus
+    {
+        public string? RecordState { get; init; }
+        public bool? GnssFix { get; init; }
+        public double? SatellitesVisible { get; init; }
+        public double? SatellitesUsed { get; init; }
+        public bool? ServiceAlive { get; init; }
+        public bool? Running { get; init; }
+        public double? StorageFreeMb { get; init; }
+
+        /// <summary>Android-aligned channel ids present in this status.</summary>
+        public IReadOnlyDictionary<string, double> Channels { get; init; } =
+            new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Meta / typed-core JSON keys that must not be pass-through under their raw names
+    /// (typed fields already land under <see cref="ChannelIds"/>).
+    /// </summary>
+    private static readonly HashSet<string> ReservedPayloadKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "seq", "measureTimeMs", "receiveTimeMs", "vehicleLabel", "valid", "deviceId",
+        "speedKph", "ax", "ay", "az", "yawRateDps", "lat", "lon", "altM", "headingDeg"
+    };
+
+    /// <summary>
+    /// Android Live/CSV source → component suffixes when payload carries an array/object.
+    /// Only used to name Channels; never invents values that are not on the wire.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> AndroidVectorComponents =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["phone.accel"] = ["x", "y", "z"],
+            ["vehicle.accel"] = ["x", "y", "z"],
+            ["phone.gyro"] = ["x", "y", "z"],
+            ["vehicle.gyro"] = ["x", "y", "z"],
+            ["vehicle.attitude"] = ["roll", "pitch", "yaw"],
+            ["phone.attitude"] = ["pitch", "roll", "azimuth", "headingAcc"],
+            ["phone.rotation_vector"] = ["x", "y", "z", "w", "headingAcc"],
+            ["phone.gps"] = ["lat", "lon", "alt", "speed", "bearing", "horizAcc", "vertAcc", "speedAcc"],
+            ["phone.satellites"] = ["visible", "used"],
+        };
+
+    public const string ChannelSatellitesVisible = "phone.satellites.visible";
+    public const string ChannelSatellitesUsed = "phone.satellites.used";
+
     public static bool TryParseEnvelope(string json, out Envelope? envelope)
     {
         envelope = null;
@@ -312,6 +361,9 @@ public static class CMTSRemoteParser
         AddChannel(channels, ChannelIds.Height, alt);
         AddChannel(channels, ChannelIds.Heading, heading);
 
+        // Pass-through numeric extras (Android phone.*/vehicle.* when present on wire).
+        CollectExtraChannels(payload, channels);
+
         var sample = new VehicleSample
         {
             Timestamp = measureTimeMs.Value,
@@ -374,6 +426,194 @@ public static class CMTSRemoteParser
         }
 
         return System.Text.Encoding.UTF8.GetString(stream.ToArray());
+    }
+
+    public static DeviceStatus ParseDeviceStatus(JsonElement payload)
+    {
+        string? recordState = null;
+        bool? gnssFix = null;
+        double? satVis = null;
+        double? satUsed = null;
+        bool? serviceAlive = null;
+        bool? running = null;
+        double? storageFreeMb = null;
+        var channels = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+
+        if (payload.ValueKind == JsonValueKind.Object)
+        {
+            if (payload.TryGetProperty("recordState", out var rs) &&
+                rs.ValueKind == JsonValueKind.String)
+            {
+                recordState = rs.GetString();
+            }
+
+            gnssFix = ReadOptionalBool(payload, "gnssFix");
+            serviceAlive = ReadOptionalBool(payload, "serviceAlive");
+            running = ReadOptionalBool(payload, "running");
+            satVis = ReadOptionalDoubleUngated(payload, "satellitesVisible");
+            satUsed = ReadOptionalDoubleUngated(payload, "satellitesUsed");
+            storageFreeMb = ReadOptionalDoubleUngated(payload, "storageFreeMb");
+
+            // Align status sats with Android Sample key phone.satellites.{visible,used}.
+            AddChannel(channels, ChannelSatellitesVisible, satVis);
+            AddChannel(channels, ChannelSatellitesUsed, satUsed);
+            // Catalog short name used by VBO seed ("sats") ← used count when present.
+            AddChannel(channels, "sats", satUsed);
+        }
+
+        return new DeviceStatus
+        {
+            RecordState = recordState,
+            GnssFix = gnssFix,
+            SatellitesVisible = satVis,
+            SatellitesUsed = satUsed,
+            ServiceAlive = serviceAlive,
+            Running = running,
+            StorageFreeMb = storageFreeMb,
+            Channels = channels
+        };
+    }
+
+    /// <summary>
+    /// Merge status-derived channels into a sample Channels dict (slow fields ride on live samples).
+    /// </summary>
+    public static void MergeStatusChannels(
+        Dictionary<string, double> channels,
+        DeviceStatus? status)
+    {
+        if (status is null || channels is null)
+            return;
+
+        foreach (var kv in status.Channels)
+            channels[kv.Key] = kv.Value;
+    }
+
+    /// <summary>
+    /// Walk payload for numeric extras not covered by typed core mapping.
+    /// Supports flat numbers, arrays (Android vector sources), and shallow objects.
+    /// </summary>
+    private static void CollectExtraChannels(
+        JsonElement payload,
+        Dictionary<string, double> channels)
+    {
+        foreach (var prop in payload.EnumerateObject())
+        {
+            if (ReservedPayloadKeys.Contains(prop.Name))
+                continue;
+
+            FlattenJsonValue(prop.Name, prop.Value, channels);
+        }
+    }
+
+    private static void FlattenJsonValue(
+        string key,
+        JsonElement el,
+        Dictionary<string, double> channels)
+    {
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out var d) && double.IsFinite(d))
+        {
+            channels[key] = d;
+            return;
+        }
+
+        if (el.ValueKind == JsonValueKind.String &&
+            double.TryParse(
+                el.GetString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out d) &&
+            double.IsFinite(d))
+        {
+            channels[key] = d;
+            return;
+        }
+
+        if (el.ValueKind == JsonValueKind.Array)
+        {
+            string[]? names = null;
+            AndroidVectorComponents.TryGetValue(key, out names);
+            var index = 0;
+            foreach (var item in el.EnumerateArray())
+            {
+                string childKey;
+                if (names is not null && index < names.Length)
+                    childKey = key + "." + names[index];
+                else
+                    childKey = key + "." + index.ToString(CultureInfo.InvariantCulture);
+
+                if (item.ValueKind == JsonValueKind.Number &&
+                    item.TryGetDouble(out var v) &&
+                    double.IsFinite(v))
+                {
+                    channels[childKey] = v;
+                }
+                else if (item.ValueKind == JsonValueKind.String &&
+                         double.TryParse(
+                             item.GetString(),
+                             NumberStyles.Float,
+                             CultureInfo.InvariantCulture,
+                             out v) &&
+                         double.IsFinite(v))
+                {
+                    channels[childKey] = v;
+                }
+
+                index++;
+            }
+
+            return;
+        }
+
+        if (el.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var child in el.EnumerateObject())
+            {
+                var childKey = key + "." + child.Name;
+                // Prefer Android component names when parent is a known vector and
+                // child is a numeric index-like name — still accept arbitrary child names.
+                FlattenJsonValue(childKey, child.Value, channels);
+            }
+        }
+    }
+
+    private static bool? ReadOptionalBool(JsonElement payload, string name)
+    {
+        if (!payload.TryGetProperty(name, out var el) ||
+            el.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (el.ValueKind == JsonValueKind.True)
+            return true;
+        if (el.ValueKind == JsonValueKind.False)
+            return false;
+        return null;
+    }
+
+    private static double? ReadOptionalDoubleUngated(JsonElement payload, string field)
+    {
+        if (!payload.TryGetProperty(field, out var el) ||
+            el.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+        {
+            return null;
+        }
+
+        if (el.ValueKind == JsonValueKind.Number && el.TryGetDouble(out var d) && double.IsFinite(d))
+            return d;
+
+        if (el.ValueKind == JsonValueKind.String &&
+            double.TryParse(
+                el.GetString(),
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out d) &&
+            double.IsFinite(d))
+        {
+            return d;
+        }
+
+        return null;
     }
 
     private static Dictionary<string, bool> ReadValidMap(JsonElement payload)

@@ -1,4 +1,5 @@
-﻿using Chassis_Master_Test_Suite.Core;
+using Chassis_Master_Test_Suite.Communication.Remote;
+using Chassis_Master_Test_Suite.Core;
 
 namespace ChassisMasterTestSuite.Tests;
 
@@ -24,5 +25,36 @@ public class ChannelRegistryModeSwitchTests
         // Offline restore brings it back into Available.
         reg.SetFromVboColumns(new[] { "velocity", "X_Accel", "Y_Accel", "latacc" });
         Assert.True(reg.IsAvailable("X_Accel"));
+    }
+
+    [Fact]
+    public void MergeRemoteKeys_AddsWithoutRemovingLiveCore()
+    {
+        var registry = ChannelRegistry.Instance;
+        registry.SetLiveCore();
+        Assert.True(registry.IsAvailable(ChannelIds.Velocity));
+        Assert.False(registry.IsAvailable("phone.pressure"));
+
+        registry.MergeRemoteKeys(new[]
+        {
+            "phone.pressure",
+            CMTSRemoteParser.ChannelSatellitesUsed,
+            "sats"
+        });
+
+        Assert.True(registry.IsAvailable(ChannelIds.Velocity));
+        Assert.True(registry.IsAvailable("phone.pressure"));
+        Assert.True(registry.IsAvailable(CMTSRemoteParser.ChannelSatellitesUsed));
+        Assert.True(registry.IsAvailable("sats"));
+    }
+
+    [Fact]
+    public void SetFromRemoteKeys_KeepsLiveCore_AndAddsExtras()
+    {
+        var registry = ChannelRegistry.Instance;
+        registry.SetFromRemoteKeys(new[] { "phone.pressure", "vehicle.accel.x" });
+        Assert.True(registry.IsAvailable(ChannelIds.Longacc));
+        Assert.True(registry.IsAvailable("phone.pressure"));
+        Assert.True(registry.IsAvailable("vehicle.accel.x"));
     }
 }

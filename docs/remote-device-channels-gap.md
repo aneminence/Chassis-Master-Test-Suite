@@ -1,88 +1,78 @@
 # Remote 通道缺口：Win 侧映射 vs 动态通道
 
-> 分支：`feature/cmts-remote-datasource` @ `269b95a`  
-> 日期：2026-11-07（Asia/Shanghai）  
-> 状态：分析；**等 Android 字段表后再改代码**（本文件可合入文档，不 bump Version）
+> 分支：`feature/cmts-remote-datasource`  
+> 日期：2026-11-09（Asia/Shanghai）  
+> 状态：**已实现小步**（Parser pass-through + status sats + Available MergeRemoteKeys）；合入仍等 F5 验 Hz
 
-## 1. `TryMapSample` 当前映射（固定）
+## 1. `TryMapSample` 映射（250deba → 本提交）
+
+### 固定 typed / ChannelIds（未变）
 
 | JSON `payload` | VehicleSample typed | Channels Id |
 |---|---|---|
 | `measureTimeMs`（必填） | `Timestamp` | — |
 | `seq` | `Sequence` | — |
 | `speedKph` | `SpeedKph` | `velocity` |
-| `ax` | `LongitudinalAcceleration` | `Longacc` |
-| `ay` | `LateralAcceleration` | `Latacc` |
-| `az` | `VerticalAcceleration` | `Z_Accel` |
+| `ax` / `ay` / `az` | Long/Lat/Vert Accel | `Longacc` / `Latacc` / `Z_Accel` |
 | `yawRateDps` | `YawRate` | `Yaw_Rate` |
-| `lat` | `Latitude` | `lat` |
-| `lon` | `Longitude` | `long` |
-| `altM` | `Altitude` | `height` |
+| `lat` / `lon` / `altM` | Lat/Lon/Alt | `lat` / `long` / `height` |
 | `headingDeg` | `Heading` | `heading` |
-| `deviceId` / env | `VehicleId` | — |
-| `vehicleLabel` | `VehicleLabel` | — |
-| `receiveTimeMs` | 仅 `SampleParseResult` | — |
 | `valid.*` | 门控（false/null → NaN、不进 Channels） | — |
 
-**未读的 payload 数值键一律丢弃**（无 pass-through）。
+### 新增：extras pass-through（不 bump 协议）
 
-`device.status` 现状：只取 `recordState`；卫星数 / RTK / 气压等**未解析**。
+- 非保留数值键 → 原名写入 `Channels`（例：`phone.pressure`）。
+- 数组：按 Android Live 源分量名展平（仅命名，不造值）  
+  - `phone.accel` / `vehicle.accel` / `phone.gyro` / `vehicle.gyro` → `.x/.y/.z`  
+  - `vehicle.attitude` → `.roll/.pitch/.yaw`  
+  - `phone.attitude` → `.pitch/.roll/.azimuth/.headingAcc`  
+  - `phone.rotation_vector` → `.x/.y/.z/.w/.headingAcc`  
+  - `phone.gps` → `.lat/.lon/.alt/.speed/.bearing/.horizAcc/.vertAcc/.speedAcc`  
+  - `phone.satellites` → `.visible/.used`  
+- 浅层 object：`parent.child` 点号键。
+- **线上一时没有的键不会出现在 Channels**（不 invent）。
 
-## 2. 曲线下拉（Curves / Gauge）实际可见集
+### `device.status`（已解析）
 
-Remote 连接走 `EnterLiveSourceMode()` → `ChannelRegistry.SetLiveCore()`，可选 Y 通道仅：
+| JSON | Channels Id |
+|---|---|
+| `satellitesVisible` | `phone.satellites.visible` |
+| `satellitesUsed` | `phone.satellites.used` **与** `sats` |
+| `recordState` | 仍更新录制态 UI（非曲线通道） |
+
+DataSource 把最近一次 status 通道合并进后续 `stream.sample` 的 `Channels`，并 `ChannelRegistry.MergeRemoteKeys`。
+
+## 2. Available（曲线下拉）
+
+**BEFORE（SetLiveCore / 250deba Remote 连接后）**
 
 - `velocity`, `Longacc`, `Latacc`, `Z_Accel`, `Yaw_Rate`, `heading`, `lat`, `long`, `height`
-- 合成：`__elapsed_test__`, `__distance_m__`（+ X 轴 `__axis_time__`）
+- 合成：`__elapsed_test__`, `__distance_m__`（+ X `__axis_time__`）
 
-目录 `SeedCatalogFromOnsShot7` 里虽有 `sats`、`PitchRate`、`RollRate`、`Temp` 等，**live 模式不会出现在下拉**。
+**AFTER（本提交，连上并收到 status/sample 后）**
 
-离线 VBO：`SetFromVboColumns(columns)` 会按文件列动态登记未知 Id（`Humanize` + `GuessUnit`）并刷新 Available。
+- 同上 live core  
+- **加上**实际出现过的 extras / status 键，例如：  
+  - `phone.satellites.visible`, `phone.satellites.used`, `sats`（status 一到即登记）  
+  - 若 Android 扩包推了 `phone.pressure` / `vehicle.accel` 数组等 → 对应展平键也会进 Available  
+- API：`ChannelRegistry.SetFromRemoteKeys` / `MergeRemoteKeys`（类 VBO 动态登记，不替换 Maths merge）
 
-数学通道：`SyncMathsChannels` 合并进 Available，不替换源通道。
+目录已预置 Android 对齐显示名/单位（仅 catalog；**不**因此单独塞进 Available）。
 
-## 3. 改动面评估（动态通道）
+## 3. 线上已有 vs 仍等 Android 扩包
 
-| 已有能力 | 结论 |
-|---|---|
-| `VehicleSample.Channels` 字典 | **已有**；Remote 已写入核心 Id |
-| `ChannelRegistry.SetFromVboColumns` | **已有动态登记模式**；可仿「Remote 见到的键」 |
-| Maths | 独立路径，可继续 merge |
-| `TryMapSample` | 需扩：已知别名 + 可选 numeric extras |
-| `EnterLiveSourceMode` / `SetLiveCore` | 若不改，动态键写进 Channels 也**进不了下拉** |
-| `device.status` | 低频字段（卫星等）需另挂或写入慢更新通道 |
+| Android Live 键 | 远程 WS 现状（Android RemoteBridge） | Win |
+|---|---|---|
+| core flat (`ax`…`headingDeg`) | **已发** | 已映射 |
+| `phone.satellites` | status：`satellitesVisible/Used` | **已映射** → `phone.satellites.*` + `sats` |
+| `phone.accel` / `vehicle.accel` 等全键 | **尚未进 sample JSON**（仍折成 core） | Parser/Available **已就绪**；有键即通 |
+| `phone.pressure` / attitude / rotation_vector / gps 细项 | 未进 remote sample | 同上，等扩包 |
 
-**不需要**大改 DataBus / 重写 ChannelRegistry；改面集中在 Parser 映射 + Remote 连接后 Available 扩展（类 VBO）。
+## 4. 验收 / 剩余
 
-## 4. 方案建议
+- [x] Parser + Available 覆盖**已发射**键（core + status sats）  
+- [x] extras 契约测试（透传 / 不 invent）  
+- [ ] F5：重连 S23 看 Hz + Available 是否出现 sats  
+- [ ] Android 扩包后对打全键表；仍不 bump Version、不合 main  
 
-**推荐：等 Android 贴真实 sample / status 字段表后，走混合小步（偏 A，带一点 B）**
-
-1. **(A) 固定扩展**：对已约定字段（如 `sats`、气压、pitch/roll…）加 `ChannelIds`（或复用目录已有短名）+ `TryMapSample` 映射 + valid 门控。  
-2. **轻量 (B)**：其余数值键 pass-through → `Channels`；连接后 / 首包后 `SetAvailable(liveCore ∪ seenKeys)`（或抽 `SetFromRemoteKeys`，内部同 `SetFromVboColumns`）。  
-3. 协议：卫星数等协议写在 `device.status` 的，与 Android 对齐「进 sample」还是「status→伪通道/仪表」；**不要 silently 假定已在 sample 里**。
-
-**暂不做**：全动态 JSON 任意嵌套、改协议冻结 core、bump Version、合 main。
-
-## 5. Win 侧已知「会丢 / 选不到」的键
-
-相对用户口述（三轴加计/角速度/姿态角、卫星数、气压、高度）与协议 v0.1：
-
-| 能力 | Win 现状 |
-|---|---|
-| 三轴加计 ax/ay/az | 已映射；live 可选 |
-| 偏航角速度 yawRateDps | 已映射；live 可选 |
-| 高度 altM | 已映射；live 可选 |
-| 航向 headingDeg | 已映射；live 可选 |
-| 卫星数 | 协议放 status；**未解析、下拉无**（目录有 `sats` 名） |
-| 气压 | **sample 未映射；下拉无** |
-| 姿态角 pitch/roll（及 pitchRate/rollRate） | **sample 未映射；下拉无**（目录有 Rate 名，live 不展示） |
-| 任意 Android 新增数值键 | **整键丢弃** |
-
-精确「丢掉了哪些 JSON 名」以 Android 字段表为准；上表是 Win 侧已知缺口。
-
-## 6. 下一步
-
-1. @CMTS · Android开发 贴当前 `stream.sample` + `device.status` 字段表（含单位 / valid）。  
-2. Win 对照本文件开小 PR：映射 + Available 扩展；契约测试加「extras 进 Channels / 下拉可见」。  
-3. 对打后再谈合入。
+协议 SSOT 仍为 `docs/remote-device-p0-win.md` v0.1。

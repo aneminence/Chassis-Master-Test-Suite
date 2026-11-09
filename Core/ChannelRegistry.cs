@@ -26,6 +26,25 @@ public sealed class ChannelRegistry
     public static ChannelInfo SlopePct { get; } =
         new(ChannelIds.SlopePct, "Slope %", "%");
 
+    /// <summary>
+    /// Live UDP / GSpot / Simulator / Remote core channel ids (no synthetic Time).
+    /// Declared before <see cref="Instance"/> so SetLiveCore in the ctor does not NRE.
+    /// </summary>
+    public static IReadOnlyList<string> LiveCoreChannelIds { get; } = new[]
+    {
+        ChannelIds.Velocity,
+        ChannelIds.Longacc,
+        ChannelIds.Latacc,
+        ChannelIds.ZAccel,
+        ChannelIds.YawRate,
+        ChannelIds.Heading,
+        ChannelIds.Latitude,
+        ChannelIds.Longitude,
+        ChannelIds.Height,
+        ChannelIds.ElapsedTest,
+        ChannelIds.DistanceTraveled
+    };
+
     public static ChannelRegistry Instance { get; } = new();
 
     private readonly Dictionary<string, ChannelInfo> _catalog =
@@ -98,22 +117,62 @@ public sealed class ChannelRegistry
     /// <summary>实时 UDP / GSpot / Simulator 仅有核心通道。</summary>
     public void SetLiveCore()
     {
-        var ids = new[]
-        {
-            ChannelIds.Velocity,
-            ChannelIds.Longacc,
-            ChannelIds.Latacc,
-            ChannelIds.ZAccel,
-            ChannelIds.YawRate,
-            ChannelIds.Heading,
-            ChannelIds.Latitude,
-            ChannelIds.Longitude,
-            ChannelIds.Height,
-            ChannelIds.ElapsedTest,
-            ChannelIds.DistanceTraveled
-        };
+        SetAvailable(LiveCoreChannelIds);
+    }
+
+    /// <summary>
+    /// CMTS Remote: live core ∪ keys seen on stream.sample / device.status.
+    /// Replaces Available (like VBO), always keeps live core.
+    /// </summary>
+    public void SetFromRemoteKeys(IEnumerable<string>? extraKeys = null)
+    {
+        var ids = LiveCoreChannelIds
+            .Concat(extraKeys ?? Array.Empty<string>())
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
 
         SetAvailable(ids);
+    }
+
+    /// <summary>
+    /// Progressive discovery: add remote keys to Available without removing existing.
+    /// Used as samples/status arrive after <see cref="SetLiveCore"/>.
+    /// </summary>
+    public void MergeRemoteKeys(IEnumerable<string> keys)
+    {
+        var pending = keys
+            .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(id => !IsAvailable(id))
+            .ToList();
+
+        if (pending.Count == 0)
+            return;
+
+        EnsureCatalogSynthetic();
+        var list = _available.ToList();
+
+        foreach (var id in pending)
+        {
+            if (string.Equals(id, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(id, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(id, ChannelIds.DistanceTraveled, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!_catalog.TryGetValue(id, out var info))
+            {
+                info = new ChannelInfo(id, Humanize(id), GuessUnit(id));
+                _catalog[id] = info;
+            }
+
+            list.Add(info);
+        }
+
+        _available = list;
+        AvailableChanged?.Invoke(this, EventArgs.Empty);
     }
 
     /// <summary>
@@ -204,6 +263,28 @@ public sealed class ChannelRegistry
             _catalog[id] = new ChannelInfo(id, display, unit);
 
         Add("sats", "Satellites", "count");
+        Add("phone.satellites.visible", "Satellites Visible", "count");
+        Add("phone.satellites.used", "Satellites Used", "count");
+        Add("phone.pressure", "Pressure", "mbar");
+        Add("phone.accel.x", "Phone Accel X", "m/s2");
+        Add("phone.accel.y", "Phone Accel Y", "m/s2");
+        Add("phone.accel.z", "Phone Accel Z", "m/s2");
+        Add("vehicle.accel.x", "Vehicle Accel X", "m/s2");
+        Add("vehicle.accel.y", "Vehicle Accel Y", "m/s2");
+        Add("vehicle.accel.z", "Vehicle Accel Z", "m/s2");
+        Add("phone.gyro.x", "Phone Gyro X", "rad/s");
+        Add("phone.gyro.y", "Phone Gyro Y", "rad/s");
+        Add("phone.gyro.z", "Phone Gyro Z", "rad/s");
+        Add("vehicle.gyro.x", "Vehicle Gyro X", "rad/s");
+        Add("vehicle.gyro.y", "Vehicle Gyro Y", "rad/s");
+        Add("vehicle.gyro.z", "Vehicle Gyro Z", "rad/s");
+        Add("vehicle.attitude.roll", "Vehicle Roll", "deg");
+        Add("vehicle.attitude.pitch", "Vehicle Pitch", "deg");
+        Add("vehicle.attitude.yaw", "Vehicle Yaw", "deg");
+        Add("phone.attitude.pitch", "Phone Pitch", "deg");
+        Add("phone.attitude.roll", "Phone Roll", "deg");
+        Add("phone.attitude.azimuth", "Phone Azimuth", "deg");
+        Add("phone.attitude.headingAcc", "Phone Heading Acc", "deg");
         Add("time", "VBO Time", "HHMMSS");
         Add(ChannelIds.Latitude, "Latitude", "deg");
         Add(ChannelIds.Longitude, "Longitude", "deg");
@@ -275,6 +356,28 @@ public sealed class ChannelRegistry
 
     private static string GuessUnit(string id)
     {
+        if (id.Contains("pressure", StringComparison.OrdinalIgnoreCase))
+            return "mbar";
+
+        if (id.Contains("satellite", StringComparison.OrdinalIgnoreCase) ||
+            id.Equals("sats", StringComparison.OrdinalIgnoreCase))
+            return "count";
+
+        if (id.Contains("gyro", StringComparison.OrdinalIgnoreCase))
+            return "rad/s";
+
+        if (id.Contains("attitude", StringComparison.OrdinalIgnoreCase) ||
+            id.Contains("azimuth", StringComparison.OrdinalIgnoreCase) ||
+            id.Contains("headingAcc", StringComparison.OrdinalIgnoreCase) ||
+            id.EndsWith(".roll", StringComparison.OrdinalIgnoreCase) ||
+            id.EndsWith(".pitch", StringComparison.OrdinalIgnoreCase) ||
+            id.EndsWith(".yaw", StringComparison.OrdinalIgnoreCase))
+            return "deg";
+
+        if (id.Contains("phone.accel", StringComparison.OrdinalIgnoreCase) ||
+            id.Contains("vehicle.accel", StringComparison.OrdinalIgnoreCase))
+            return "m/s2";
+
         if (id.Contains("accel", StringComparison.OrdinalIgnoreCase) ||
             id.Contains("Accel", StringComparison.OrdinalIgnoreCase) ||
             id.EndsWith("acc", StringComparison.OrdinalIgnoreCase))
@@ -293,6 +396,7 @@ public sealed class ChannelRegistry
             return "deg";
 
         if (id.Contains("height", StringComparison.OrdinalIgnoreCase) ||
+            id.Contains("alt", StringComparison.OrdinalIgnoreCase) ||
             id.Contains("Distance", StringComparison.OrdinalIgnoreCase) ||
             id.StartsWith("Pos_", StringComparison.OrdinalIgnoreCase))
             return "m";

@@ -37,6 +37,10 @@ public sealed class CMTSRemoteDataSource : IDataSource
     private string _recordState = "IDLE";
     private string? _lastError;
 
+    private readonly object _statusGate = new();
+    private CMTSRemoteParser.DeviceStatus? _lastDeviceStatus;
+    private readonly HashSet<string> _seenChannelIds = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CMTSRemoteParser.Envelope>> _pending =
         new(StringComparer.Ordinal);
 
@@ -394,16 +398,7 @@ public sealed class CMTSRemoteDataSource : IDataSource
                 break;
 
             case "device.status":
-                if (env.Payload.ValueKind == JsonValueKind.Object &&
-                    env.Payload.TryGetProperty("recordState", out var rs) &&
-                    rs.ValueKind == JsonValueKind.String &&
-                    !string.IsNullOrWhiteSpace(rs.GetString()))
-                {
-                    UpdateRecordState(rs.GetString()!);
-                }
-
-                if (!string.IsNullOrWhiteSpace(env.DeviceId))
-                    _deviceId = env.DeviceId;
+                HandleDeviceStatus(env);
                 break;
         }
     }
@@ -422,7 +417,61 @@ public sealed class CMTSRemoteDataSource : IDataSource
         if (!string.IsNullOrWhiteSpace(mapped.Sample.VehicleLabel))
             _deviceLabel = mapped.Sample.VehicleLabel;
 
+        // Ride slow status fields (sats…) on the live sample Channels dict.
+        // TryMapSample always supplies a mutable Dictionary under IReadOnlyDictionary.
+        CMTSRemoteParser.DeviceStatus? status;
+        lock (_statusGate)
+            status = _lastDeviceStatus;
+
+        if (status is not null &&
+            mapped.Sample.Channels is Dictionary<string, double> dict)
+        {
+            CMTSRemoteParser.MergeStatusChannels(dict, status);
+        }
+
+        RegisterSeenChannels(mapped.Sample.Channels.Keys);
+
         _dataBus.TryPublish(mapped.Sample);
+    }
+
+    private void HandleDeviceStatus(CMTSRemoteParser.Envelope env)
+    {
+        if (env.Payload.ValueKind != JsonValueKind.Object)
+        {
+            if (!string.IsNullOrWhiteSpace(env.DeviceId))
+                _deviceId = env.DeviceId;
+            return;
+        }
+
+        var status = CMTSRemoteParser.ParseDeviceStatus(env.Payload);
+        if (!string.IsNullOrWhiteSpace(status.RecordState))
+            UpdateRecordState(status.RecordState!);
+
+        lock (_statusGate)
+            _lastDeviceStatus = status;
+
+        RegisterSeenChannels(status.Channels.Keys);
+
+        if (!string.IsNullOrWhiteSpace(env.DeviceId))
+            _deviceId = env.DeviceId;
+    }
+
+    private void RegisterSeenChannels(IEnumerable<string>? keys)
+    {
+        if (keys is null)
+            return;
+
+        List<string>? fresh = null;
+        foreach (var key in keys)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                continue;
+            if (_seenChannelIds.Add(key))
+                (fresh ??= new List<string>()).Add(key);
+        }
+
+        if (fresh is { Count: > 0 })
+            ChannelRegistry.Instance.MergeRemoteKeys(fresh);
     }
 
     private void HandleRecordStatus(CMTSRemoteParser.Envelope env)

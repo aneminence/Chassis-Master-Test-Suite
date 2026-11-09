@@ -203,4 +203,108 @@ public class CMTSRemoteParserTests
         Assert.Equal("ws://192.168.1.10:8787/cmts/v1", opt.BuildWebSocketUrl());
         Assert.Equal(100, opt.MaxHz);
     }
+
+    [Fact]
+    public void TryMapSample_PassThroughAndroidExtras_IntoChannels()
+    {
+        const string json = """
+            {
+              "type": "stream.sample",
+              "deviceId": "d1",
+              "payload": {
+                "seq": 3,
+                "measureTimeMs": 2000,
+                "speedKph": 10.0,
+                "ax": 0.1,
+                "ay": 0.2,
+                "az": 9.8,
+                "phone.pressure": 1013.25,
+                "vehicle.accel": [1.0, 2.0, 3.0],
+                "phone.attitude": {
+                  "pitch": 4.5,
+                  "roll": -1.2,
+                  "azimuth": 90.0,
+                  "headingAcc": 2.0
+                },
+                "valid": { "speed": true, "imu": true }
+              }
+            }
+            """;
+
+        Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
+        var result = CMTSRemoteParser.TryMapSample(env!);
+        Assert.NotNull(result.Sample);
+        Assert.Equal(1013.25, result.Sample!.Channels["phone.pressure"]);
+        Assert.Equal(1.0, result.Sample.Channels["vehicle.accel.x"]);
+        Assert.Equal(2.0, result.Sample.Channels["vehicle.accel.y"]);
+        Assert.Equal(3.0, result.Sample.Channels["vehicle.accel.z"]);
+        Assert.Equal(4.5, result.Sample.Channels["phone.attitude.pitch"]);
+        Assert.Equal(-1.2, result.Sample.Channels["phone.attitude.roll"]);
+        Assert.Equal(90.0, result.Sample.Channels["phone.attitude.azimuth"]);
+        Assert.Equal(2.0, result.Sample.Channels["phone.attitude.headingAcc"]);
+        // Core still under ChannelIds, not raw ax
+        Assert.True(result.Sample.Channels.ContainsKey(ChannelIds.Longacc));
+        Assert.False(result.Sample.Channels.ContainsKey("ax"));
+    }
+
+    [Fact]
+    public void ParseDeviceStatus_MapsSatellitesToAndroidChannelIds()
+    {
+        const string json = """
+            {
+              "type": "device.status",
+              "deviceId": "d1",
+              "payload": {
+                "recordState": "IDLE",
+                "gnssFix": true,
+                "satellitesVisible": 22,
+                "satellitesUsed": 14,
+                "serviceAlive": true,
+                "running": true
+              }
+            }
+            """;
+
+        Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
+        var st = CMTSRemoteParser.ParseDeviceStatus(env!.Payload);
+        Assert.Equal("IDLE", st.RecordState);
+        Assert.True(st.GnssFix);
+        Assert.Equal(22, st.SatellitesVisible);
+        Assert.Equal(14, st.SatellitesUsed);
+        Assert.Equal(22, st.Channels[CMTSRemoteParser.ChannelSatellitesVisible]);
+        Assert.Equal(14, st.Channels[CMTSRemoteParser.ChannelSatellitesUsed]);
+        Assert.Equal(14, st.Channels["sats"]);
+
+        var channels = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase)
+        {
+            [ChannelIds.Velocity] = 5
+        };
+        CMTSRemoteParser.MergeStatusChannels(channels, st);
+        Assert.Equal(14, channels["sats"]);
+        Assert.Equal(5, channels[ChannelIds.Velocity]);
+    }
+
+    [Fact]
+    public void TryMapSample_DoesNotInventMissingAndroidKeys()
+    {
+        const string json = """
+            {
+              "type": "stream.sample",
+              "deviceId": "d1",
+              "payload": {
+                "seq": 1,
+                "measureTimeMs": 100,
+                "speedKph": 1.0,
+                "valid": { "speed": true }
+              }
+            }
+            """;
+
+        Assert.True(CMTSRemoteParser.TryParseEnvelope(json, out var env));
+        var result = CMTSRemoteParser.TryMapSample(env!);
+        Assert.NotNull(result.Sample);
+        Assert.False(result.Sample!.Channels.ContainsKey("phone.pressure"));
+        Assert.False(result.Sample.Channels.ContainsKey("vehicle.accel.x"));
+        Assert.False(result.Sample.Channels.ContainsKey("phone.satellites.used"));
+    }
 }
