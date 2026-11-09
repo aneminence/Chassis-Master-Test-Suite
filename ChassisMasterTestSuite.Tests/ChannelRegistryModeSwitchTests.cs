@@ -147,4 +147,17 @@ public class ChannelRegistryModeSwitchTests
         Assert.False(CMTSRemoteParser.IsCurvesAvailableKey(null));
         Assert.False(CMTSRemoteParser.IsCurvesAvailableKey(""));
     }
+
+    [Fact]
+    public void IsRemoteCurvesAvailableKey_MatchesParser_ForPreserveDuringReconnect()
+    {
+        // EnterLiveSourceMode SetLiveCore temporarily drops vehicle.*; Sanitize must keep
+        // picks that pass this filter so reconnect does not reset every plot to velocity.
+        Assert.True(ChannelRegistry.IsRemoteCurvesAvailableKey("vehicle.accel.x"));
+        Assert.True(ChannelRegistry.IsRemoteCurvesAvailableKey("velocity"));
+        Assert.True(ChannelRegistry.IsRemoteCurvesAvailableKey("longacc"));
+        Assert.False(ChannelRegistry.IsRemoteCurvesAvailableKey("phone.pressure"));
+        Assert.False(ChannelRegistry.IsRemoteCurvesAvailableKey("phone.accel.x"));
+        Assert.False(ChannelRegistry.IsRemoteCurvesAvailableKey("sats"));
+    }
 }
