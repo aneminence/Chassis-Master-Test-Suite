@@ -43,6 +43,8 @@
 
 DataSource 把最近一次 status 通道合并进后续 `stream.sample` 的 `Channels`，并 `ChannelRegistry.MergeRemoteKeys`。
 
+**Win 已修（Available 不涨）**：Remote 连上后 `EnterLiveSourceMode`→`SetLiveCore` 会清掉样本阶段已 Merge 的 `phone.*`；且 `_seenChannelIds` 不再二次 Merge。现改为：`RegisterSeenChannels` 对 Available 缺失键再 Merge，且 `EnterLiveSourceMode` 后从 Remote `SnapshotSeenChannelIds` 恢复。
+
 ## 2. Available（曲线下拉）
 
 **Live core（连接 Remote 时 `SetLiveCore`）**

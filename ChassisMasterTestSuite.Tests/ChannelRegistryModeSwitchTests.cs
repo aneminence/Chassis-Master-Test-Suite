@@ -59,6 +59,38 @@ public class ChannelRegistryModeSwitchTests
     }
 
     [Fact]
+    public void SetLiveCore_AfterMergeRemoteKeys_WipesExtras_UntilRemerged()
+    {
+        // Mirrors Remote connect race: samples MergeRemoteKeys, then UI EnterLiveSourceMode
+        // calls SetLiveCore and must re-merge or Curves picker stays LiveCore-only.
+        var registry = ChannelRegistry.Instance;
+        registry.SetLiveCore();
+        registry.MergeRemoteKeys(new[]
+        {
+            "phone.pressure",
+            CMTSRemoteParser.ChannelSatellitesUsed,
+            "sats"
+        });
+        Assert.True(registry.IsAvailable("phone.pressure"));
+        Assert.True(registry.IsAvailable("sats"));
+
+        registry.SetLiveCore();
+        Assert.False(registry.IsAvailable("phone.pressure"));
+        Assert.False(registry.IsAvailable("sats"));
+        Assert.True(registry.IsAvailable(ChannelIds.Velocity));
+
+        registry.MergeRemoteKeys(new[]
+        {
+            "phone.pressure",
+            CMTSRemoteParser.ChannelSatellitesUsed,
+            "sats"
+        });
+        Assert.True(registry.IsAvailable("phone.pressure"));
+        Assert.True(registry.IsAvailable(CMTSRemoteParser.ChannelSatellitesUsed));
+        Assert.True(registry.IsAvailable("sats"));
+    }
+
+    [Fact]
     public void MergeRemoteKeys_FullAndroidTable_UsesCatalogUnits()
     {
         var registry = ChannelRegistry.Instance;

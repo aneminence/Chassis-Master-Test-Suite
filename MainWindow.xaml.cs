@@ -6178,6 +6178,13 @@ public partial class MainWindow : Window
         _liveDistanceM = 0;
         _livePreviousSample = null;
         ChannelRegistry.Instance.SetLiveCore();
+
+        // Remote connect waits for Connected first; samples may already have called
+        // MergeRemoteKeys. SetLiveCore above would wipe them — restore from the live
+        // remote snapshot so Curves Available shows phone.*/sats immediately.
+        if (_dataSourceSession.Current is CMTSRemoteDataSource remote)
+            ChannelRegistry.Instance.MergeRemoteKeys(remote.SnapshotSeenChannelIds());
+
         RefreshChannelSelectorsFromRegistry();
         RefreshRemoteRecordButtons();
     }

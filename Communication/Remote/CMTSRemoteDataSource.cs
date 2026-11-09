@@ -39,6 +39,7 @@ public sealed class CMTSRemoteDataSource : IDataSource
 
     private readonly object _statusGate = new();
     private CMTSRemoteParser.DeviceStatus? _lastDeviceStatus;
+    private readonly object _seenChannelsGate = new();
     private readonly HashSet<string> _seenChannelIds = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly ConcurrentDictionary<string, TaskCompletionSource<CMTSRemoteParser.Envelope>> _pending =
@@ -73,6 +74,16 @@ public sealed class CMTSRemoteDataSource : IDataSource
     public string RecordState => _recordState;
 
     public string Endpoint => _options.BuildWebSocketUrl();
+
+    /// <summary>
+    /// Channel ids observed on stream.sample / device.status so far.
+    /// Used to re-apply Available after UI SetLiveCore (connect race).
+    /// </summary>
+    public IReadOnlyList<string> SnapshotSeenChannelIds()
+    {
+        lock (_seenChannelsGate)
+            return _seenChannelIds.ToArray();
+    }
 
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
@@ -461,17 +472,30 @@ public sealed class CMTSRemoteDataSource : IDataSource
         if (keys is null)
             return;
 
-        List<string>? fresh = null;
-        foreach (var key in keys)
+        // Remember every key we have seen, then merge anything missing from Available.
+        // EnterLiveSourceMode calls SetLiveCore AFTER Connected (samples may already
+        // have registered extras); without re-merge the Curves picker stays LiveCore.
+        var candidates = new List<string>();
+        lock (_seenChannelsGate)
         {
-            if (string.IsNullOrWhiteSpace(key))
-                continue;
-            if (_seenChannelIds.Add(key))
-                (fresh ??= new List<string>()).Add(key);
+            foreach (var key in keys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                    continue;
+                _seenChannelIds.Add(key);
+                candidates.Add(key);
+            }
         }
 
-        if (fresh is { Count: > 0 })
-            ChannelRegistry.Instance.MergeRemoteKeys(fresh);
+        List<string>? toMerge = null;
+        foreach (var key in candidates)
+        {
+            if (!ChannelRegistry.Instance.IsAvailable(key))
+                (toMerge ??= new List<string>()).Add(key);
+        }
+
+        if (toMerge is { Count: > 0 })
+            ChannelRegistry.Instance.MergeRemoteKeys(toMerge);
     }
 
     private void HandleRecordStatus(CMTSRemoteParser.Envelope env)
