@@ -10,6 +10,7 @@ using System.Windows.Threading;
 using Chassis_Master_Test_Suite.Analysis;
 using Chassis_Master_Test_Suite.Communication;
 using Chassis_Master_Test_Suite.Communication.GSpot;
+using Chassis_Master_Test_Suite.Communication.Remote;
 using Chassis_Master_Test_Suite.Controls;
 using Chassis_Master_Test_Suite.Core;
 using Chassis_Master_Test_Suite.Localization;
@@ -54,6 +55,8 @@ public partial class MainWindow : Window
     /// 当前活动数据源（UDP / GSpot）所有权；Settings 完善前用顶部按钮切换。
     /// </summary>
     private readonly DataSourceSession _dataSourceSession;
+    private CMTSRemoteDataSource? _remoteLiveResetSource;
+
 
     private UdpSender? _udpSender;
 
@@ -1349,6 +1352,9 @@ public partial class MainWindow : Window
 
     private async Task StopOnlineConnectionAsync()
     {
+        if (RemoteDeviceButton is not null)
+            RemoteDeviceButton.Content = "Remote…";
+        RefreshRemoteRecordButtons();
         var old = _dataSourceSession.Current;
         _dataSourceSession.SetCurrent(null);
 
@@ -5619,6 +5625,476 @@ public partial class MainWindow : Window
         }
     }
 
+
+    private async void RemoteDeviceButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_isOfflineMode)
+            await EnterOnlineModeAsync();
+
+        // Prefill: env vars win when set; else last successful connection from app-preferences.json.
+        var saved = AppPreferencesStore.Load().Remote;
+        var hostDefault =
+            Environment.GetEnvironmentVariable("CMTS_REMOTE_HOST")
+            ?? saved?.Host
+            ?? "";
+        var tokenDefault =
+            Environment.GetEnvironmentVariable("CMTS_REMOTE_TOKEN")
+            ?? saved?.Token
+            ?? "";
+        var portDefault =
+            Environment.GetEnvironmentVariable("CMTS_REMOTE_PORT")
+            ?? (saved is { Port: > 0 and <= 65535 }
+                ? saved.Port.ToString()
+                : null)
+            ?? "8787";
+        var pathDefault =
+            Environment.GetEnvironmentVariable("CMTS_REMOTE_PATH")
+            ?? (string.IsNullOrWhiteSpace(saved?.Path) ? null : saved!.Path)
+            ?? "/cmts/v1";
+
+        var maxHz = 100;
+        var maxHzEnv = Environment.GetEnvironmentVariable("CMTS_REMOTE_MAX_HZ");
+        if (int.TryParse(maxHzEnv, out var parsedMaxHz) && parsedMaxHz > 0)
+            maxHz = parsedMaxHz;
+
+        if (!TryPromptRemoteOptions(
+                hostDefault,
+                portDefault,
+                pathDefault,
+                tokenDefault,
+                maxHz,
+                out var options) ||
+            options is null)
+        {
+            return;
+        }
+
+        var previous = _dataSourceSession.Current;
+        var next = _dataSourceSession.CreateRemote(options);
+        if (RemoteDeviceButton is not null)
+            RemoteDeviceButton.IsEnabled = false;
+        if (GSpotButton is not null)
+            GSpotButton.IsEnabled = false;
+        if (UdpSourceButton is not null)
+            UdpSourceButton.IsEnabled = false;
+
+        try
+        {
+            await next.StartAsync();
+            var connected = await DataSourceSession.WaitForConnectedAsync(
+                next,
+                TimeSpan.FromSeconds(20));
+
+            if (!connected)
+            {
+                var err = next.LastError
+                          ?? "Timeout: not Connected (check Android WS server).";
+                try { await next.StopAsync(); }
+                catch
+                {
+                    try { next.Dispose(); } catch { /* ignore */ }
+                }
+
+                MessageBox.Show(
+                    this,
+                    "CMTS Remote connect failed; previous source kept.\n\n" +
+                    $"Endpoint: {options.BuildWebSocketUrl()}\n" +
+                    $"Reason: {err}\n\n" +
+                    "Android must serve ws://IP:8787/cmts/v1 (protocol v0.1).",
+                    "CMTS Remote",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+                return;
+            }
+
+            await _dataSourceSession.CommitConnectedAsync(previous, next);
+            EnterLiveSourceMode();
+            if (RemoteDeviceButton is not null)
+                RemoteDeviceButton.Content = "Remote●";
+            if (GSpotButton is not null)
+                GSpotButton.Content = "GSpot…";
+
+            SaveLastSuccessfulRemoteConnection(options);
+
+            MessageBox.Show(
+                this,
+                "CMTS Remote connected.\n" +
+                $"Endpoint: {options.BuildWebSocketUrl()}\n" +
+                $"Device: {next.DeviceLabel ?? next.DeviceId ?? "(pending)"}\n" +
+                $"RecordState: {next.RecordState}\n\n" +
+                "Use Rec● / Rec■ for remote record.start / record.stop.",
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            try { await next.StopAsync(); }
+            catch
+            {
+                try { next.Dispose(); } catch { /* ignore */ }
+            }
+
+            MessageBox.Show(
+                this,
+                "CMTS Remote connect failed; previous source kept.\n\n" +
+                ex.Message,
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        finally
+        {
+            if (RemoteDeviceButton is not null)
+                RemoteDeviceButton.IsEnabled = true;
+            if (GSpotButton is not null)
+                GSpotButton.IsEnabled = true;
+            if (UdpSourceButton is not null)
+                UdpSourceButton.IsEnabled = true;
+            RefreshRemoteRecordButtons();
+        }
+    }
+
+    private async void RemoteRecordStartButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_dataSourceSession.Current is not CMTSRemoteDataSource remote ||
+            remote.State != DataSourceState.Connected)
+        {
+            MessageBox.Show(
+                this,
+                "Connect Remote device first.",
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var status = await remote.StartRecordingAsync();
+            MessageBox.Show(
+                this,
+                $"record.start → {status.State}\n" +
+                $"ok={status.Ok} fileId={status.FileId ?? "-"}",
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "record.start failed:\n" + ex.Message,
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private async void RemoteRecordStopButton_Click(
+        object sender,
+        RoutedEventArgs e)
+    {
+        if (_dataSourceSession.Current is not CMTSRemoteDataSource remote ||
+            remote.State != DataSourceState.Connected)
+        {
+            MessageBox.Show(
+                this,
+                "Connect Remote device first.",
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        try
+        {
+            var status = await remote.StopRecordingAsync();
+            MessageBox.Show(
+                this,
+                $"record.stop → {status.State}\n" +
+                $"ok={status.Ok} reason={status.Reason ?? "-"}",
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                this,
+                "record.stop failed:\n" + ex.Message,
+                "CMTS Remote",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private static void SaveLastSuccessfulRemoteConnection(CMTSRemoteOptions options)
+    {
+        try
+        {
+            var prefs = AppPreferencesStore.Load();
+            prefs.Remote = new RemoteConnectionPreferences
+            {
+                Host = options.Host.Trim(),
+                Port = options.Port,
+                Path = string.IsNullOrWhiteSpace(options.Path) ? "/cmts/v1" : options.Path,
+                Token = options.Token ?? ""
+            };
+            AppPreferencesStore.Save(prefs);
+        }
+        catch
+        {
+            // Best-effort; connect already succeeded.
+        }
+    }
+
+    private bool TryPromptRemoteOptions(
+        string hostDefault,
+        string portDefault,
+        string pathDefault,
+        string tokenDefault,
+        int maxHz,
+        out CMTSRemoteOptions? options)
+    {
+        options = null;
+
+        var dialog = new Window
+        {
+            Title = "Connect CMTS Remote",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            Width = 440,
+            MinHeight = 340,
+            SizeToContent = SizeToContent.Height,
+            Background = (Brush)FindResource("AppBackground"),
+            ShowInTaskbar = false
+        };
+
+        var root = new Grid { Margin = new Thickness(16) };
+        for (var i = 0; i < 7; i++)
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+        var pasteBox = new TextBox
+        {
+            Text = "",
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style,
+            ToolTip = "Paste cmts://IP:8787/cmts/v1?token=... (or IP / token only)"
+        };
+        var hostBox = new TextBox
+        {
+            Text = hostDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+        var portBox = new TextBox
+        {
+            Text = portDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+        var pathBox = new TextBox
+        {
+            Text = string.IsNullOrWhiteSpace(pathDefault) ? "/cmts/v1" : pathDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+        var tokenBox = new TextBox
+        {
+            Text = tokenDefault,
+            Margin = new Thickness(0, 4, 0, 10),
+            Style = TryFindResource("DarkTextBoxStyle") as Style
+        };
+
+        void AddLabeled(int row, string label, UIElement field)
+        {
+            var stack = new StackPanel();
+            stack.Children.Add(new TextBlock
+            {
+                Text = label,
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 12
+            });
+            stack.Children.Add(field);
+            Grid.SetRow(stack, row);
+            root.Children.Add(stack);
+        }
+
+        void ApplyPaste(string? raw, bool warnIfInvalid)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+            if (!CMTSRemoteConnectionUri.TryParse(raw, out var parsed))
+            {
+                if (warnIfInvalid &&
+                    parsed.Kind == CMTSRemoteConnectionUri.ConnectionPasteKind.Invalid)
+                {
+                    MessageBox.Show(
+                        dialog,
+                        "Unrecognized connection string.\n" +
+                        "Use cmts://IP:8787/cmts/v1?token=..., or paste IP / token only.",
+                        "CMTS Remote",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Warning);
+                }
+                return;
+            }
+
+            var host = hostBox.Text ?? "";
+            var port = portBox.Text ?? "";
+            var pathVal = pathBox.Text ?? "";
+            var token = tokenBox.Text ?? "";
+            CMTSRemoteConnectionUri.ApplyTo(parsed, ref host, ref port, ref pathVal, ref token);
+            hostBox.Text = host;
+            portBox.Text = port;
+            pathBox.Text = pathVal;
+            tokenBox.Text = token;
+        }
+
+        pasteBox.LostKeyboardFocus += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: false);
+        pasteBox.KeyDown += (_, ke) =>
+        {
+            if (ke.Key == Key.Enter)
+            {
+                ApplyPaste(pasteBox.Text, warnIfInvalid: true);
+                ke.Handled = true;
+            }
+        };
+        // Detect accidental paste of full URI into the host field.
+        hostBox.LostKeyboardFocus += (_, _) =>
+        {
+            var t = (hostBox.Text ?? "").Trim();
+            if (t.StartsWith("cmts://", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyPaste(t, warnIfInvalid: false);
+            }
+        };
+
+        AddLabeled(0, "Paste connection string (cmts://...)", pasteBox);
+        AddLabeled(1, "Android IP / host", hostBox);
+        AddLabeled(2, "Port (default 8787)", portBox);
+        AddLabeled(3, "Path (default /cmts/v1)", pathBox);
+        AddLabeled(4, "Pairing token (optional)", tokenBox);
+
+        var hint = new TextBlock
+        {
+            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\n" +
+                   "Android copies cmts://IP:8787/cmts/v1?token=... — paste above to autofill.\n" +
+                   "Last successful connection is remembered. Env: CMTS_REMOTE_HOST / PORT / PATH / TOKEN / MAX_HZ",
+            Foreground = (Brush)FindResource("TextMuted"),
+            FontSize = 11,
+            Margin = new Thickness(0, 0, 0, 12),
+            TextWrapping = TextWrapping.Wrap
+        };
+        Grid.SetRow(hint, 5);
+        root.Children.Add(hint);
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right
+        };
+        var applyPasteBtn = new Button
+        {
+            Content = "Apply paste",
+            Width = 100,
+            Height = 32,
+            Margin = new Thickness(0, 0, 8, 0),
+            Style = TryFindResource("ToolButtonStyle") as Style
+        };
+        var ok = new Button
+        {
+            Content = "Connect",
+            Width = 88,
+            Height = 32,
+            Margin = new Thickness(0, 0, 8, 0),
+            IsDefault = true,
+            Style = TryFindResource("PrimaryButtonStyle") as Style
+        };
+        var cancel = new Button
+        {
+            Content = "Cancel",
+            Width = 88,
+            Height = 32,
+            IsCancel = true,
+            Style = TryFindResource("ToolButtonStyle") as Style
+        };
+        CMTSRemoteOptions? chosen = null;
+        applyPasteBtn.Click += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: true);
+        ok.Click += (_, _) =>
+        {
+            // One more apply in case user pasted and hit Connect without blur.
+            ApplyPaste(pasteBox.Text, warnIfInvalid: false);
+
+            var host = (hostBox.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(host))
+            {
+                MessageBox.Show(
+                    dialog,
+                    "IP / host is required.",
+                    "CMTS Remote",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            // Host field may still hold a full URI if Apply did not run.
+            if (host.StartsWith("cmts://", StringComparison.OrdinalIgnoreCase) ||
+                host.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyPaste(host, warnIfInvalid: true);
+                host = (hostBox.Text ?? "").Trim();
+            }
+
+            if (!int.TryParse((portBox.Text ?? "").Trim(), out var port) ||
+                port <= 0 ||
+                port > 65535)
+            {
+                MessageBox.Show(
+                    dialog,
+                    "Port must be 1-65535.",
+                    "CMTS Remote",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            var pathVal = (pathBox.Text ?? "").Trim();
+            if (string.IsNullOrWhiteSpace(pathVal))
+                pathVal = "/cmts/v1";
+            if (!pathVal.StartsWith('/'))
+                pathVal = "/" + pathVal;
+
+            chosen = new CMTSRemoteOptions
+            {
+                Host = host,
+                Port = port,
+                Token = (tokenBox.Text ?? "").Trim(),
+                Path = pathVal,
+                MaxHz = maxHz
+            };
+            dialog.DialogResult = true;
+        };
+        buttons.Children.Add(applyPasteBtn);
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        Grid.SetRow(buttons, 6);
+        root.Children.Add(buttons);
+
+        dialog.Content = root;
+        pasteBox.Focus();
+        var okResult = dialog.ShowDialog() == true;
+        options = chosen;
+        return okResult && options is not null;
+    }
+
     private async void UdpSourceButton_Click(
         object sender,
         RoutedEventArgs e)
@@ -5698,19 +6174,93 @@ public partial class MainWindow : Window
     private void EnterLiveSourceMode()
     {
         _historyOfflineMode = false;
+        // Live Remote/UDP/GSpot: drop any plot cursor so Dashboard tracks _latestSample
+        // continuously (VBTS freeze only applies after the user places a new cursor).
+        ClearPlotCursors();
         _liveRoster.Clear();
         _liveVehicleEnrich.Clear();
         _liveSessionOriginMs = null;
         _liveDistanceM = 0;
         _livePreviousSample = null;
+        _latestSample = null;
         ChannelRegistry.Instance.SetLiveCore();
+
+        // Remote connect waits for Connected first; samples may already have called
+        // MergeRemoteKeys. SetLiveCore above would wipe them — restore vehicle-facing
+        // extras (phone.* filtered out of Snapshot / Merge).
+        var remote = _dataSourceSession.Current as CMTSRemoteDataSource;
+        HookRemoteLiveCurveReset(remote);
+        if (remote is not null)
+            ChannelRegistry.Instance.MergeRemoteKeys(remote.SnapshotSeenChannelIds());
+
         RefreshChannelSelectorsFromRegistry();
+        RefreshRemoteRecordButtons();
+    }
+
+    private void HookRemoteLiveCurveReset(CMTSRemoteDataSource? remote)
+    {
+        if (ReferenceEquals(_remoteLiveResetSource, remote))
+            return;
+
+        if (_remoteLiveResetSource is not null)
+        {
+            _remoteLiveResetSource.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+            _remoteLiveResetSource = null;
+        }
+
+        if (remote is null)
+            return;
+
+        _remoteLiveResetSource = remote;
+        remote.LiveCurveResetRequested += OnRemoteLiveCurveResetRequested;
+    }
+
+    private void OnRemoteLiveCurveResetRequested(object? sender, EventArgs e)
+    {
+        // WS receive thread → UI clear of live curve buffers.
+        Dispatcher.BeginInvoke(ClearLiveCurveBuffersForRemoteZero);
+    }
+
+    /// <summary>
+    /// Android explicit zero (<c>stream.reset</c> / <c>device.zero</c>): wipe live history
+    /// so Curves restart from the tare point. Waiting for ~0 samples alone leaves old points.
+    /// </summary>
+    private void ClearLiveCurveBuffersForRemoteZero()
+    {
+        if (_historyOfflineMode || _isOfflineMode)
+            return;
+
+        // Must clear plot cursors: otherwise TryGetCursorSample freezes Dashboard on a
+        // pre-zero (or first post-zero) point while curves keep appending live samples.
+        ClearPlotCursors();
+        _sampleHistory.Clear();
+        _latestSample = null;
+        _liveSessionOriginMs = null;
+        _liveDistanceM = 0;
+        _livePreviousSample = null;
+        _liveRoster.Clear();
+        _liveVehicleEnrich.Clear();
+        _forcePlotRebuild = true;
+        RefreshAllPlots(force: true);
+        // Force gauges to "--" immediately; do not leave stale pre-zero numbers.
+        DashboardPanelControl.ApplyLiveSample(null);
+        UpdateNumericDisplay();
     }
 
     /// <summary>
     /// 临时接线用的房间/密码对话框（Settings 页就绪前）。
     /// 也可用环境变量 CMTS_GSPOT_ROOM / CMTS_GSPOT_PASSWORD / CMTS_GSPOT_CNUM。
     /// </summary>
+
+    private void RefreshRemoteRecordButtons()
+    {
+        var remote = _dataSourceSession.Current as CMTSRemoteDataSource;
+        var on = remote is not null && remote.State == DataSourceState.Connected;
+        if (RemoteRecordStartButton is not null)
+            RemoteRecordStartButton.IsEnabled = on;
+        if (RemoteRecordStopButton is not null)
+            RemoteRecordStopButton.IsEnabled = on;
+    }
     private bool TryPromptGSpotOptions(
         string roomDefault,
         string passwordDefault,
@@ -5954,7 +6504,14 @@ public partial class MainWindow : Window
             cursorSample ?? _latestSample;
 
         if (sample is null)
+        {
+            // Live gap / post-reset: clear gauges instead of leaving last frozen numbers.
+            DashboardPanelControl.ApplyLiveSample(null);
+            DashboardPanelControl.SetMultiVehicleSummary(
+                Array.Empty<(string, string, double)>());
+            TrackMapPanelControl.SetCursorSample(null);
             return;
+        }
 
         // ------------------------------------------------------------
         // 有曲线光标时 Dashboard 冻结为选中点（对齐 VBTS）；
@@ -6548,6 +7105,7 @@ public partial class MainWindow : Window
 
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
+        HookRemoteLiveCurveReset(null);
         _dataSourceSession.Dispose();
 
 
