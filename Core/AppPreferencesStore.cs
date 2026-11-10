@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Chassis_Master_Test_Suite.Map;
@@ -25,6 +25,7 @@ public sealed class AppPreferences
 
     /// <summary>Last successful CMTS Remote (Android) connection fields.</summary>
     public RemoteConnectionPreferences? Remote { get; set; }
+    public List<RemoteConnectionPreferences> RemoteHistory { get; set; } = new();
 }
 
 public sealed class CustomThemeColors
@@ -41,6 +42,8 @@ public sealed class CustomThemeColors
 
 public sealed class RemoteConnectionPreferences
 {
+    public string? DeviceId { get; set; }
+    public string? DeviceLabel { get; set; }
     /// <summary>Last successful Android host / IP.</summary>
     public string? Host { get; set; }
 

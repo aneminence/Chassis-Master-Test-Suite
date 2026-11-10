@@ -24,6 +24,8 @@ public sealed class CMTSRemoteOptions
     /// <summary>stream.subscribe maxHz (core channel).</summary>
     public int MaxHz { get; init; } = 100;
 
+    public string? ExpectedDeviceId { get; init; }
+
     public int InitialReconnectDelayMs { get; init; } = 1_000;
 
     public int MaxReconnectDelayMs { get; init; } = 30_000;

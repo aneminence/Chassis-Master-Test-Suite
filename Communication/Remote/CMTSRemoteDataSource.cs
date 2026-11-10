@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
@@ -33,6 +33,7 @@ public sealed class CMTSRemoteDataSource : IDataSource
     private readonly object _sendGate = new();
     private ClientWebSocket? _ws;
     private string? _deviceId;
+    private CMTSDiscoveredDevice? _resolvedEndpoint;
     private string? _deviceLabel;
     private string _recordState = "IDLE";
     private string? _lastError;
@@ -79,7 +80,9 @@ public sealed class CMTSRemoteDataSource : IDataSource
 
     public string RecordState => _recordState;
 
-    public string Endpoint => _options.BuildWebSocketUrl();
+    public string Endpoint => _resolvedEndpoint is { } endpoint
+        ? new UriBuilder("ws", endpoint.Host, endpoint.Port, endpoint.Path).Uri.ToString()
+        : _options.BuildWebSocketUrl();
 
     /// <summary>
     /// Channel ids observed on stream.sample / device.status so far.
@@ -201,11 +204,18 @@ public sealed class CMTSRemoteDataSource : IDataSource
             {
                 break;
             }
+            catch (UnauthorizedAccessException ex)
+            {
+                _lastError = ex.Message;
+                FailPending(ex);
+                break;
+            }
             catch (Exception ex)
             {
                 if (ct.IsCancellationRequested || _disposed != 0)
                     break;
 
+                if (_state == DataSourceState.Connected) delayMs = _options.InitialReconnectDelayMs;
                 _lastError = ex.Message;
                 FailPending(ex);
                 SetState(DataSourceState.Reconnecting);
@@ -240,11 +250,21 @@ public sealed class CMTSRemoteDataSource : IDataSource
 
     private async Task ConnectSessionAsync(CancellationToken ct)
     {
-        var url = _options.BuildWebSocketUrl();
+        var expectedId = _options.ExpectedDeviceId ?? _deviceId;
+        if (expectedId is not null && _state == DataSourceState.Reconnecting)
+        {
+            var found = await CMTSLanDiscovery.SearchAsync(new[] { _options.Host }, ct).ConfigureAwait(false);
+            _resolvedEndpoint = found.FirstOrDefault(d => d.DeviceId == expectedId);
+        }
+        var url = _resolvedEndpoint is { } endpoint
+            ? new UriBuilder("ws", endpoint.Host, endpoint.Port, endpoint.Path).Uri.ToString()
+            : _options.BuildWebSocketUrl();
         var ws = new ClientWebSocket();
         _ws = ws;
 
-        await ws.ConnectAsync(new Uri(url), ct).ConfigureAwait(false);
+        using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        connectTimeout.CancelAfter(_options.CommandTimeoutMs);
+        await ws.ConnectAsync(new Uri(url), connectTimeout.Token).ConfigureAwait(false);
 
         var helloId = Guid.NewGuid().ToString("N");
         var helloPayload = new Dictionary<string, object?>
@@ -301,11 +321,14 @@ public sealed class CMTSRemoteDataSource : IDataSource
             if (!ack.Ok)
             {
                 var code = ack.ErrorCode ?? "auth_failed";
-                throw new InvalidOperationException(
-                    $"device.hello failed: {code}");
+                throw new UnauthorizedAccessException(
+                    $"device.hello failed: {code}; please pair again.");
             }
 
-            _deviceId = ack.DeviceId ?? helloEnv.DeviceId;
+            var actualId = ack.DeviceId ?? helloEnv.DeviceId;
+            if (expectedId is not null && actualId != expectedId)
+                throw new UnauthorizedAccessException("Remote device identity changed; please select and pair again.");
+            _deviceId = actualId;
             _deviceLabel = ack.DeviceLabel;
             if (!string.IsNullOrWhiteSpace(ack.RecordState))
                 UpdateRecordState(ack.RecordState!);

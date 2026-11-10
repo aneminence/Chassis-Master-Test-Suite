@@ -75,6 +75,8 @@
     <Compile Include="..\Communication\GSpot\GSpotParser.cs" Link="Linked\Communication\GSpot\GSpotParser.cs" />
     <Compile Include="..\Communication\GSpot\GSpotVehicleFilter.cs" Link="Linked\Communication\GSpot\GSpotVehicleFilter.cs" />
     <Compile Include="..\Communication\Remote\CMTSRemoteParser.cs" Link="Linked\Communication\Remote\CMTSRemoteParser.cs" />
+    <Compile Include="..\Communication\Remote\CMTSMdnsDiscovery.cs" Link="Linked\Communication\Remote\CMTSMdnsDiscovery.cs" />
+    <Compile Include="..\Communication\Remote\CMTSLanDiscovery.cs" Link="Linked\Communication\Remote\CMTSLanDiscovery.cs" />
     <Compile Include="..\Communication\Remote\CMTSRemoteOptions.cs" Link="Linked\Communication\Remote\CMTSRemoteOptions.cs" />
     <Compile Include="..\Communication\Remote\CMTSRemoteConnectionUri.cs" Link="Linked\Communication\Remote\CMTSRemoteConnectionUri.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
