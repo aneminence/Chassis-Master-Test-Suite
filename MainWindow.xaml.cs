@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -5730,7 +5730,7 @@ public partial class MainWindow : Window
             if (GSpotButton is not null)
                 GSpotButton.Content = "GSpot…";
 
-            SaveLastSuccessfulRemoteConnection(options);
+            SaveLastSuccessfulRemoteConnection(options, next.DeviceId, next.DeviceLabel);
 
             MessageBox.Show(
                 this,
@@ -5847,18 +5847,24 @@ public partial class MainWindow : Window
         }
     }
 
-    private static void SaveLastSuccessfulRemoteConnection(CMTSRemoteOptions options)
+    private static void SaveLastSuccessfulRemoteConnection(CMTSRemoteOptions options, string? deviceId, string? deviceLabel)
     {
         try
         {
             var prefs = AppPreferencesStore.Load();
             prefs.Remote = new RemoteConnectionPreferences
             {
+                DeviceId = deviceId,
+                DeviceLabel = deviceLabel,
                 Host = options.Host.Trim(),
                 Port = options.Port,
                 Path = string.IsNullOrWhiteSpace(options.Path) ? "/cmts/v1" : options.Path,
                 Token = options.Token ?? ""
             };
+            prefs.RemoteHistory ??= new();
+            prefs.RemoteHistory.RemoveAll(d => d.DeviceId == deviceId);
+            if (!string.IsNullOrEmpty(deviceId)) prefs.RemoteHistory.Insert(0, prefs.Remote);
+            prefs.RemoteHistory = prefs.RemoteHistory.Take(20).ToList();
             AppPreferencesStore.Save(prefs);
         }
         catch
@@ -5879,19 +5885,20 @@ public partial class MainWindow : Window
 
         var dialog = new Window
         {
-            Title = "Connect CMTS Remote",
+            Title = "CMTS 局域网设备连接",
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            ResizeMode = ResizeMode.NoResize,
-            Width = 440,
-            MinHeight = 340,
-            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.CanResize,
+            Width = 600,
+            Height = Math.Min(540, SystemParameters.WorkArea.Height - 40),
+            MinHeight = 360,
+            MaxHeight = SystemParameters.WorkArea.Height,
             Background = (Brush)FindResource("AppBackground"),
             ShowInTaskbar = false
         };
 
         var root = new Grid { Margin = new Thickness(16) };
-        for (var i = 0; i < 7; i++)
+        for (var i = 0; i < 8; i++)
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
         var pasteBox = new TextBox
@@ -5991,17 +5998,15 @@ public partial class MainWindow : Window
             }
         };
 
-        AddLabeled(0, "Paste connection string (cmts://...)", pasteBox);
-        AddLabeled(1, "Android IP / host", hostBox);
-        AddLabeled(2, "Port (default 8787)", portBox);
-        AddLabeled(3, "Path (default /cmts/v1)", pathBox);
-        AddLabeled(4, "Pairing token (optional)", tokenBox);
+        AddLabeled(0, "粘贴连接串", pasteBox);
+        AddLabeled(1, "手机 IP 地址", hostBox);
+        AddLabeled(2, "端口（默认 8787）", portBox);
+        AddLabeled(3, "路径（默认 /cmts/v1）", pathBox);
+        AddLabeled(4, "旧版设备配对码（当前版本无需填写）", tokenBox);
 
         var hint = new TextBlock
         {
-            Text = "Protocol v0.1: ws://IP:8787/cmts/v1 (no TLS).\n" +
-                   "Android copies cmts://IP:8787/cmts/v1?token=... — paste above to autofill.\n" +
-                   "Last successful connection is remembered. Env: CMTS_REMOTE_HOST / PORT / PATH / TOKEN / MAX_HZ",
+            Text = "自动搜索失败时，可填写手机 IP 地址手动连接。旧版设备可粘贴手机连接串。",
             Foreground = (Brush)FindResource("TextMuted"),
             FontSize = 11,
             Margin = new Thickness(0, 0, 0, 12),
@@ -6025,7 +6030,7 @@ public partial class MainWindow : Window
         };
         var ok = new Button
         {
-            Content = "Connect",
+            Content = "连接设备",
             Width = 88,
             Height = 32,
             Margin = new Thickness(0, 0, 8, 0),
@@ -6034,16 +6039,21 @@ public partial class MainWindow : Window
         };
         var cancel = new Button
         {
-            Content = "Cancel",
+            Content = "取消",
             Width = 88,
             Height = 32,
             IsCancel = true,
             Style = TryFindResource("ToolButtonStyle") as Style
         };
+        var connectionStatus = new TextBlock { Foreground = (Brush)FindResource("TextSecondary"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 6, 0, 8) };
+        using var discoveryCts = new CancellationTokenSource();
+        var advanced = new Expander { Header = "高级：手动连接", IsExpanded = false, Foreground = (Brush)FindResource("TextPrimary") };
+        CMTSDiscoveredDevice? selectedDevice = null;
         CMTSRemoteOptions? chosen = null;
         applyPasteBtn.Click += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: true);
         ok.Click += (_, _) =>
         {
+            if (!ok.IsEnabled) return;
             // One more apply in case user pasted and hit Connect without blur.
             ApplyPaste(pasteBox.Text, warnIfInvalid: false);
 
@@ -6052,7 +6062,7 @@ public partial class MainWindow : Window
             {
                 MessageBox.Show(
                     dialog,
-                    "IP / host is required.",
+                    "请输入手机 IP 地址。",
                     "CMTS Remote",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -6073,7 +6083,7 @@ public partial class MainWindow : Window
             {
                 MessageBox.Show(
                     dialog,
-                    "Port must be 1-65535.",
+                    "端口必须介于 1 和 65535。",
                     "CMTS Remote",
                     MessageBoxButton.OK,
                     MessageBoxImage.Warning);
@@ -6086,8 +6096,17 @@ public partial class MainWindow : Window
             if (!pathVal.StartsWith('/'))
                 pathVal = "/" + pathVal;
 
+            if (selectedDevice?.AuthRequired == true && string.IsNullOrWhiteSpace(tokenBox.Text))
+            {
+                connectionStatus.Text = "此旧版设备需要手动配对，请在高级连接中粘贴手机连接串。";
+                advanced.IsExpanded = true;
+                tokenBox.BringIntoView();
+                tokenBox.Focus();
+                return;
+            }
             chosen = new CMTSRemoteOptions
             {
+                ExpectedDeviceId = selectedDevice?.Host == host && selectedDevice.Port == port && selectedDevice.Path == pathVal ? selectedDevice.DeviceId : null,
                 Host = host,
                 Port = port,
                 Token = (tokenBox.Text ?? "").Trim(),
@@ -6096,14 +6115,74 @@ public partial class MainWindow : Window
             };
             dialog.DialogResult = true;
         };
-        buttons.Children.Add(applyPasteBtn);
+        applyPasteBtn.Visibility = Visibility.Collapsed;
         buttons.Children.Add(ok);
         buttons.Children.Add(cancel);
-        Grid.SetRow(buttons, 6);
-        root.Children.Add(buttons);
 
-        dialog.Content = root;
-        pasteBox.Focus();
+
+        var discoveryPanel = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
+        var search = new Button { Content = "自动搜索局域网设备 / 刷新", Height = 32, Style = TryFindResource("ToolButtonStyle") as Style };
+        var devices = new ListBox { Height = 160, Margin = new Thickness(0, 6, 0, 6), Background = (Brush)FindResource("AppBackground"), Foreground = (Brush)FindResource("TextPrimary") };
+        var discoveryStatus = new TextBlock { Text = "双击设备即可连接。", Foreground = (Brush)FindResource("TextSecondary"), TextWrapping = TextWrapping.Wrap };
+        discoveryPanel.Children.Add(search);
+        discoveryPanel.Children.Add(devices);
+        discoveryPanel.Children.Add(discoveryStatus);
+        var manual = new StackPanel();
+        var fields = root.Children.Cast<UIElement>().ToArray();
+        root.Children.Clear();
+        foreach (var field in fields) manual.Children.Add(field);
+        advanced.Content = manual;
+        Grid.SetRow(discoveryPanel, 0);
+        Grid.SetRow(advanced, 1);
+        root.Children.Add(discoveryPanel);
+        root.Children.Add(advanced);
+        var history = AppPreferencesStore.Load().RemoteHistory ?? new();
+        devices.SelectionChanged += (_, _) =>
+        {
+            if (devices.SelectedItem is not CMTSDiscoveredDevice d) return;
+            selectedDevice = d;
+            hostBox.Text = d.Host;
+            portBox.Text = d.Port.ToString();
+            pathBox.Text = d.Path;
+            tokenBox.Text = d.AuthRequired ? history.FirstOrDefault(h => h.DeviceId == d.DeviceId)?.Token ?? "" : "";
+            pasteBox.Text = "";
+            connectionStatus.Text = string.IsNullOrWhiteSpace(tokenBox.Text)
+                ? $"已选择 {d.DisplayName}（{d.Host}）。双击即可连接。"
+                : $"已选择 {d.DisplayName}，配对信息已载入。点击连接设备或双击列表项。";
+        };
+        devices.MouseDoubleClick += (_, e) =>
+        {
+            if (devices.SelectedItem is not CMTSDiscoveredDevice ||
+                ItemsControl.ContainerFromElement(devices, e.OriginalSource as DependencyObject) is not ListBoxItem) return;
+            ok.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            e.Handled = true;
+        };
+        async Task SearchDevices()
+        {
+            search.IsEnabled = false;
+            discoveryStatus.Text = "正在搜索…";
+            try
+            {
+                var found = await CMTSLanDiscovery.SearchAsync(history.Select(h => h.Host ?? "").Append(hostDefault), discoveryCts.Token);
+                devices.ItemsSource = found.OrderByDescending(d => history.Any(h => h.DeviceId == d.DeviceId)).ToArray();
+                discoveryStatus.Text = found.Count == 0 ? "未发现设备；可输入 IP 与 token 手动连接。" : $"发现 {found.Count} 台设备；选择后点击连接。";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { discoveryStatus.Text = "搜索失败：" + ex.Message; }
+            finally { search.IsEnabled = true; }
+        }
+        search.Click += async (_, _) => await SearchDevices();
+        dialog.Loaded += async (_, _) => await SearchDevices();
+        dialog.Closed += (_, _) => discoveryCts.Cancel();
+        var layout = new DockPanel { LastChildFill = true };
+        var footer = new StackPanel { Margin = new Thickness(16, 0, 16, 12) };
+        footer.Children.Add(connectionStatus);
+        footer.Children.Add(buttons);
+        DockPanel.SetDock(footer, Dock.Bottom);
+        layout.Children.Add(footer);
+        layout.Children.Add(new ScrollViewer { Content = root, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        dialog.Content = layout;
+        devices.Focus();
         var okResult = dialog.ShowDialog() == true;
         options = chosen;
         return okResult && options is not null;

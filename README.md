@@ -1,4 +1,4 @@
-# Chassis Master Test Suite (CMTS)
+﻿# Chassis Master Test Suite (CMTS)
 
 面向**汽车底盘与车辆动态性能测试**的实时数据采集、监控与记录软件。
 
@@ -7,6 +7,12 @@
 ---
 
 ## 最近更新
+
+### 局域网 Android 设备直连（0.3.2，2026-11-10）
+- 自动发现同一局域网中的 CMTS Android 设备，设备列表显示商品型号；双击即可连接，无需输入 token。
+- 支持 mDNS/DNS-SD、热点网关候选探测和手动 IP 兜底；断线后按稳定设备 ID 重新发现。
+- 当前 Windows 远程数据源仍一次连接一台 Android；公网和多设备并行采集未实现。
+
 
 各功能后的日期为合入 `main` 的落地日（`YYYY-MM-DD`，Asia/Shanghai 本地 git 日期）。文首不再单独充当更新记录。
 
