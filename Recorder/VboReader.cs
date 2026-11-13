@@ -73,15 +73,13 @@ public sealed class VboReader
     /// <summary>
     /// 读入文件并解析出全部样本。
     ///
-    /// 文件规模较大（100 Hz 约 700 字节/秒），
-    /// 这里一次性读入内存，
-    /// 与 MainWindow 现有的 _sampleHistory 策略保持一致。
+    /// 按行读取文本，保留完整样本列表；避免同时保留所有原始文本行。
     /// </summary>
     public List<VehicleSample> ReadAll()
     {
         var samples = new List<VehicleSample>();
 
-        var lines = File.ReadAllLines(FilePath);
+        var lines = File.ReadLines(FilePath);
 
         var section = string.Empty;
 
@@ -238,6 +236,7 @@ public sealed class VboReader
 
         // 先把所有列读入字典（原始 VBO 数值）。
         var channels = new Dictionary<string, double>(
+            Columns.Count,
             StringComparer.OrdinalIgnoreCase);
 
         for (var i = 0; i < Columns.Count; i++)
@@ -488,10 +487,14 @@ public sealed class VboReader
             (hours * 10000.0) -
             (minutes * 100.0);
 
-        return (long)(
+        // Decimal milliseconds are not always exactly representable as double
+        // (e.g. 221320.020). Quantize to the format's millisecond precision,
+        // rather than truncating 20 ms represented as 19.999... down to 19.
+        return (long)Math.Round(
             (TimeSpan.FromHours(hours) +
              TimeSpan.FromMinutes(minutes) +
-             TimeSpan.FromSeconds(seconds)).TotalMilliseconds);
+             TimeSpan.FromSeconds(seconds)).TotalMilliseconds,
+            MidpointRounding.AwayFromZero);
     }
 
     /// <summary>

@@ -4,6 +4,38 @@ namespace ChassisMasterTestSuite.Tests;
 
 public class PlotDownsamplerTests
 {
+    [Theory]
+    [InlineData(double.NaN)]
+    [InlineData(double.PositiveInfinity)]
+    [InlineData(double.NegativeInfinity)]
+    public void BucketStartingWithMissingValue_PreservesLaterFiniteExtrema(double missing)
+    {
+        const int count = 100_000;
+        var values = new double[count];
+        var bucketStart = 1000 * count / ((PlotDownsampler.MaxPlotPoints - 2) / 2);
+        values[bucketStart] = missing;
+        values[bucketStart + 2] = 9999;
+        values[bucketStart + 3] = -9999;
+
+        var indices = PlotDownsampler.BuildDownsampleIndices(0, count, i => values[i]);
+
+        Assert.Contains(bucketStart + 2, indices);
+        Assert.Contains(bucketStart + 3, indices);
+        Assert.InRange(indices.Length, 2, PlotDownsampler.MaxPlotPoints);
+        Assert.True(indices.Zip(indices.Skip(1), (a, b) => a < b).All(x => x));
+    }
+
+    [Fact]
+    public void EntirelyMissingBuckets_PreserveGapAndEndpointsWithinBudget()
+    {
+        var indices = PlotDownsampler.BuildDownsampleIndices(0, 100_000, _ => double.NaN);
+
+        Assert.Equal(0, indices[0]);
+        Assert.Equal(99_999, indices[^1]);
+        Assert.InRange(indices.Length, 2, PlotDownsampler.MaxPlotPoints);
+        Assert.True(indices.Zip(indices.Skip(1), (a, b) => a < b).All(x => x));
+    }
+
     [Fact]
     public void BuildDownsampleIndices_CountAtOrBelowMax_ReturnsAll()
     {

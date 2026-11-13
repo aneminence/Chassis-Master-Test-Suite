@@ -12,6 +12,21 @@ preferences, or user map cache are required. If the application is running, use
 `-p:BaseOutputPath=D:\CMTS\_map_alignment_probe\tests-build\` to avoid replacing
 its executable. The separate pure-logic test project remains cross-platform.
 
+The WebView scene-state regression runs separately with Node, using the actual
+JavaScript message handler and camera completion callback without Cesium or a UI:
+
+```powershell
+node --test .\ChassisMasterTestSuite.Tests\Rendering\trackmap-state.test.cjs
+```
+
+It checks deferred scene clearing, visibility changes during camera motion,
+selected-source Fit (including hidden sources), stable original sample indices
+and scene revisions for picking, shared gate selection, and hidden geometry/cursor removal.
+The WPF suite also checks the actual embedded TrackMapPanel XAML: the shared
+gate toolbar occupies a separate layout row above WebView2, and Fit is outside
+both mode-specific toolbars. Controller tests exercise hidden-source DTOs and
+selection mapping without initializing WebView2 or touching user map settings.
+
 The same geographic point takes two independent paths: ScottPlot's track pixel
 conversion, and XYZ fractional coordinates inside the positioned tile image.
 The paths must agree within 0.01 WPF DIP. Cases cover 100%, 125%, 150%, 175%, and

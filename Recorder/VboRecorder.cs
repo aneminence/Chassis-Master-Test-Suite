@@ -36,7 +36,7 @@ namespace Chassis_Master_Test_Suite.Recorder;
 /// 注意：VBO 格式中经纬度使用"角分"，不是十进制度。
 /// 写入时 角分 = 度 * 60，读取时 度 = 角分 / 60。
 /// </summary>
-public sealed class VboRecorder : IDisposable
+public sealed class VboRecorder : IDisposable, IAsyncDisposable
 {
     /// <summary>
     /// 标准重力加速度。
@@ -108,6 +108,11 @@ public sealed class VboRecorder : IDisposable
     private readonly SessionMetadata _session;
 
     public VboRecorder(string filePath, SessionMetadata? session = null)
+        : this(filePath, session, reservedStream: null) { }
+
+    // RecordingSession reserves a unique name with FileMode.CreateNew. Keep
+    // that handle open so another process cannot claim it before we write.
+    internal VboRecorder(string filePath, SessionMetadata? session, Stream? reservedStream)
     {
         FilePath = filePath;
         _session = session ?? SessionMetadata.Current.Clone();
@@ -122,15 +127,20 @@ public sealed class VboRecorder : IDisposable
         // VBO 是纯文本、无 BOM。
         // 用 CsvRecorder 的 UTF8Encoding(true) 会在文件头写入 BOM，
         // 某些工具解析第一行时会把它当成内容。
-        _writer = new StreamWriter(
-            filePath,
-            false,
-            new UTF8Encoding(false))
-        {
-            NewLine = NewLine
-        };
+        _writer = reservedStream is null
+            ? new StreamWriter(filePath, false, new UTF8Encoding(false))
+            : new StreamWriter(reservedStream, new UTF8Encoding(false));
+        _writer.NewLine = NewLine;
 
-        WriteFileHeader();
+        try
+        {
+            WriteFileHeader();
+        }
+        catch
+        {
+            _writer.Dispose();
+            throw;
+        }
 
         _flushStopwatch.Start();
 
@@ -142,7 +152,9 @@ public sealed class VboRecorder : IDisposable
                 SingleReader = true
             });
 
-        _writerTask = WriteLoopAsync();
+        // The recorder is usually created on the WPF thread. Own the entire
+        // write/flush/close lifetime on a worker, never that thread's context.
+        _writerTask = Task.Run(WriteLoopAsync);
     }
 
     /// <summary>
@@ -165,6 +177,9 @@ public sealed class VboRecorder : IDisposable
     private long _droppedSamples;
 
     public long DroppedSamples => Interlocked.Read(ref _droppedSamples);
+
+    /// <summary>Completion (including disk errors) of the write/close lifetime.</summary>
+    public Task Completion => _writerTask;
 
     /// <summary>
     /// 写入 [header] / [channel units] / [comments]
@@ -272,17 +287,30 @@ _writer.WriteLine();
     private async Task WriteLoopAsync()
     {
         var reader = _channel.Reader;
-
-        while (await reader.WaitToReadAsync())
+        try
         {
-            while (reader.TryRead(out var sample))
+            while (await reader.WaitToReadAsync().ConfigureAwait(false))
             {
-                WriteSample(sample);
+                while (reader.TryRead(out var sample))
+                {
+                    WriteSample(sample);
+                }
             }
-        }
 
-        // 队列已排空，做一次最终 Flush。
-        _writer.Flush();
+            // Drain before flushing; stopping must not discard accepted rows.
+            _writer.Flush();
+        }
+        catch (Exception ex)
+        {
+            // Reject future writes if storage has failed; Completion/StopAsync
+            // propagate the error instead of silently filling a dead queue.
+            _channel.Writer.TryComplete(ex);
+            throw;
+        }
+        finally
+        {
+            _writer.Dispose();
+        }
     }
 
     /// <summary>
@@ -374,37 +402,18 @@ _writer.WriteLine();
     }
 
     /// <summary>
-    /// 是否已经释放过。
-    /// Dispose() 必须可以重复调用（C# 的 using / 上层重复关闭
-    /// 都会触发），否则第二次会抛 ObjectDisposedException。
+    /// Stop accepting rows, drain all accepted rows and close the file.
+    /// Repeated callers observe the same completion/error.
     /// </summary>
-    private bool _disposed;
-
-    /// <summary>
-    /// 停止后台写入，等待队列中数据全部落盘。
-    /// </summary>
-    public void Dispose()
+    public Task StopAsync()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-
-        // 不再接受新数据，通知后台循环排空后退出。
         _channel.Writer.TryComplete();
-
-        try
-        {
-            _writerTask.Wait(TimeSpan.FromSeconds(15));
-        }
-        catch
-        {
-            // 后台任务异常时仍然做最终 Flush，保住已有数据。
-        }
-
-        _writer.Flush();
-        _writer.Dispose();
+        return _writerTask;
     }
+
+    // Legacy callers are safe even with a UI synchronization context: the
+    // worker never needs that context. UI code should prefer DisposeAsync.
+    public void Dispose() => StopAsync().GetAwaiter().GetResult();
+
+    public ValueTask DisposeAsync() => new(StopAsync());
 }

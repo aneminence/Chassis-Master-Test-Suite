@@ -32,54 +32,56 @@ public static class NcomTime
         if (n == 0)
             return result;
 
-        var minutesHold = new long?[n];
-        long? lastMinutes = null;
+        // Find the first absolute minute anchor before backfilling the leading
+        // packets. Keeping its index is essential when the file begins just
+        // before a minute rollover.
+        long? liveMinutes = null;
+        var firstAnchorIndex = -1;
         for (var i = 0; i < n; i++)
         {
-            var m = measurements[i];
-            if (TryReadGpsMinutes(m, out var mins))
-                lastMinutes = mins;
-            minutesHold[i] = lastMinutes;
-        }
-
-        // Backfill leading packets before the first channel-0 minute update.
-        long? first = null;
-        for (var i = 0; i < n; i++)
-        {
-            if (minutesHold[i] is long v)
+            if (TryReadGpsMinutes(measurements[i], out var minutes))
             {
-                first = v;
+                liveMinutes = minutes;
+                firstAnchorIndex = i;
                 break;
             }
         }
 
-        if (first is long seed)
+        if (firstAnchorIndex >= 0)
         {
-            for (var i = 0; i < n && minutesHold[i] is null; i++)
-                minutesHold[i] = seed;
-
-            // Walk backward adjusting for minute wraps in TimeMsIntoMinute.
-            var firstIdx = 0;
-            while (firstIdx < n && minutesHold[firstIdx] is null)
-                firstIdx++;
-            for (var i = firstIdx - 1; i >= 0; i--)
+            ushort? newerMs = null;
+            for (var i = firstAnchorIndex; i >= 0; i--)
             {
-                var newerMs = measurements[i + 1].TimeMsIntoMinute;
                 var olderMs = measurements[i].TimeMsIntoMinute;
-                var mins = minutesHold[i + 1]!.Value;
-                // Going backward: if older ms > newer ms by a large gap, we crossed a minute boundary forward in time,
-                // so the older packet is in the previous GPS minute.
-                if (olderMs > newerMs && olderMs - newerMs > 30_000)
-                    mins -= 1;
-                minutesHold[i] = mins;
+                if (olderMs > 59_999) continue;
+                if (newerMs is ushort next && olderMs - next > 30_000)
+                    liveMinutes -= 1;
+                newerMs = olderMs;
             }
         }
 
         ushort? prevMs = null;
-        long? liveMinutes = null;
         for (var i = 0; i < n; i++)
         {
             var m = measurements[i];
+            var ms = m.TimeMsIntoMinute;
+            if (TryReadGpsMinutes(m, out var minsNow))
+            {
+                // Channel 0 already specifies this packet's minute, including
+                // when its update is carried by the first packet after rollover.
+                liveMinutes = minsNow;
+            }
+            else if (ms <= 59_999 && prevMs is ushort previous && previous - ms > 30_000
+                     && liveMinutes.HasValue)
+            {
+                // Carry the inferred minute until the next explicit update;
+                // reapplying the last channel-0 value here moved time back 60 s.
+                liveMinutes += 1;
+            }
+
+            // Prefixes own their output timestamps, but their valid Batch A time
+            // still advances the fallback minute state for unprefixed packets.
+            if (ms <= 59_999) prevMs = ms;
 
             if (m.TimePrefixNs is long prefixNs && prefixNs > 0)
             {
@@ -93,21 +95,9 @@ public static class NcomTime
                     result[i] = GpsNsToUnixMs(prefixNs);
                 }
 
-                if (TryReadGpsMinutes(m, out var minsFromPrefixPkt))
-                    liveMinutes = minsFromPrefixPkt;
-                else if (minutesHold[i] is long held)
-                    liveMinutes = held;
-
-                prevMs = m.TimeMsIntoMinute <= 59_999 ? m.TimeMsIntoMinute : prevMs;
                 continue;
             }
 
-            if (TryReadGpsMinutes(m, out var minsNow))
-                liveMinutes = minsNow;
-            else if (minutesHold[i] is long heldMins)
-                liveMinutes = heldMins;
-
-            var ms = m.TimeMsIntoMinute;
             if (ms > 59_999)
             {
                 // Invalid time field — keep previous stamp or fall back to sequence estimate.
@@ -117,20 +107,12 @@ public static class NcomTime
 
             if (liveMinutes is long mins)
             {
-                if (prevMs is ushort p && ms < p && (p - ms) > 30_000)
-                {
-                    mins += 1;
-                    liveMinutes = mins;
-                }
-
                 result[i] = GpsMinutesAndMsToUnixMs(mins, ms);
-                prevMs = ms;
                 continue;
             }
 
             // No GPS minutes and no XCOM prefix: 100 Hz synthetic relative timeline.
             result[i] = i * 10L;
-            prevMs = ms;
         }
 
         return result;

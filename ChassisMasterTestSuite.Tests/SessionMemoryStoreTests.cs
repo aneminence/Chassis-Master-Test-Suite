@@ -289,4 +289,72 @@ public class SessionMemoryStoreTests
                 File.Delete(path);
         }
     }
+
+    [Fact]
+    public void FileVisibility_RoundTrip_PreservesHiddenSelection_AndIgnoresPathCase()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cmts-session-visibility-" + Guid.NewGuid().ToString("N") + ".json");
+        var previousPath = SessionMemoryStore.StoragePathOverride;
+        try
+        {
+            SessionMemoryStore.StoragePathOverride = path;
+            var snapshot = new SessionMemorySnapshot
+            {
+                IsOfflineMode = true,
+                VboFiles = { @"D:\CMTS\first.vbo", @"D:\CMTS\selected.ncom" },
+                ActiveVboPath = @"D:\CMTS\selected.ncom",
+                FileVisibility =
+                {
+                    [@"D:\CMTS\first.vbo"] = true,
+                    [@"D:\CMTS\selected.ncom"] = false
+                }
+            };
+            SessionMemoryStore.Save(snapshot);
+
+            var loaded = SessionMemoryStore.Load();
+
+            Assert.NotNull(loaded);
+            Assert.Equal(snapshot.VboFiles, loaded.VboFiles);
+            Assert.Equal(snapshot.ActiveVboPath, loaded.ActiveVboPath);
+            Assert.True(loaded.GetFileVisibility(@"d:\cmts\FIRST.vbo"));
+            Assert.False(loaded.GetFileVisibility(@"d:\cmts\SELECTED.ncom"));
+            Assert.True(loaded.GetFileVisibility(@"D:\CMTS\new.vbo"));
+        }
+        finally
+        {
+            SessionMemoryStore.StoragePathOverride = previousPath;
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(", \"fileVisibility\": null")]
+    [InlineData(", \"fileVisibility\": {}")]
+    public void LegacySession_WithoutVisibility_ReopensAllFilesAsVisible(string visibilityJson)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "cmts-session-legacy-visibility-" + Guid.NewGuid().ToString("N") + ".json");
+        var previousPath = SessionMemoryStore.StoragePathOverride;
+        try
+        {
+            SessionMemoryStore.StoragePathOverride = path;
+            File.WriteAllText(path,
+                "{\"version\":1,\"isOfflineMode\":true,\"vboFiles\":[\"first.vbo\",\"second.ncom\"]," +
+                "\"activeVboPath\":\"second.ncom\"" + visibilityJson + "}");
+
+            var loaded = SessionMemoryStore.Load();
+
+            Assert.NotNull(loaded);
+            Assert.Empty(loaded.FileVisibility);
+            Assert.All(loaded.VboFiles, file => Assert.True(loaded.GetFileVisibility(file)));
+            Assert.Equal("second.ncom", loaded.ActiveVboPath);
+        }
+        finally
+        {
+            SessionMemoryStore.StoragePathOverride = previousPath;
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+    }
 }

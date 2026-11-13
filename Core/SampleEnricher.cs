@@ -63,12 +63,12 @@ public static class SampleEnricher
         double distanceMeters)
     {
         var channels = new Dictionary<string, double>(
-            sample.Channels,
-            StringComparer.OrdinalIgnoreCase)
-        {
-            [ChannelIds.ElapsedTest] = elapsedSeconds,
-            [ChannelIds.DistanceTraveled] = distanceMeters
-        };
+            sample.Channels.Count + 2,
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in sample.Channels)
+            channels.Add(pair.Key, pair.Value);
+        channels[ChannelIds.ElapsedTest] = elapsedSeconds;
+        channels[ChannelIds.DistanceTraveled] = distanceMeters;
 
         return new VehicleSample
         {

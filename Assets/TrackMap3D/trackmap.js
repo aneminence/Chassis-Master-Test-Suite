@@ -112,6 +112,7 @@
       return `${track.id}:${first[0]}:${first[1]}`;
     }).join("|");
     for (const track of sceneState.tracks || []) {
+      if (track.isVisible === false) continue;
       if (!track.points || track.points.length < 2) continue;
       drawable++;
       if (!track.hasAltitude) missingAltitude++;
@@ -166,6 +167,9 @@
     }
     trackEntityIds = nextEntityIds;
     if (geometryChanged) trackRenderRevision++;
+    // Visibility changes must also remove an existing cursor from a hidden file.
+    if (cursorPoint) setCursor(cursorPoint);
+    if (compareCursorPoints.length) setCursors(compareCursorPoints);
 
     if (!drawable) {
       setNotice(text.waiting);
@@ -176,8 +180,6 @@
     setNotice(missingAltitude ? text.missing(missingAltitude) : "");
     if (datasetKey !== lastDatasetKey) fit();
     lastDatasetKey = datasetKey;
-    if (cursorPoint) setCursor(cursorPoint);
-    if (compareCursorPoints.length) setCursors(compareCursorPoints);
     updateGates();
     viewer.scene.requestRender();
   }
@@ -468,9 +470,11 @@
     if (!viewer) return;
     cursorPoint = point;
     clearCompareCursorEntities();
-    if (!point) {
+    if (!point || (sceneState.tracks || []).some(track => track.id === point.trackId && track.isVisible === false)) {
       if (cursorEntity) viewer.entities.remove(cursorEntity);
       cursorEntity = undefined;
+      viewer.trackedEntity = undefined;
+      viewer.scene.requestRender();
       return;
     }
     const resolved = cursorPosition(point);
@@ -518,6 +522,7 @@
     }
     const keep = new Set();
     compareCursorPoints.forEach((point, index) => {
+      if ((sceneState.tracks || []).some(track => track.id === point.trackId && track.isVisible === false)) return;
       const id = `cmts-compare-cursor-${point.runNumber || index}`;
       keep.add(id);
       const resolved = cursorPosition(point);
@@ -557,8 +562,27 @@
   }
 
   function fit() {
-    if (viewer && viewer.entities.values.length)
-      viewer.zoomTo(viewer.entities, new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-38), 0));
+    if (!viewer) return;
+    const tracks = sceneState.tracks || [];
+    const track = sceneState.selectedTrackId === undefined
+      ? tracks[0] : tracks.find(item => item.id === sceneState.selectedTrackId);
+    if (!track || !track.points || !track.points.length) return;
+    // Fit source coordinates, never all entities (which include other files and gates).
+    // Hidden sources retain coordinates for Fit without creating or revealing entities.
+    const degrees = track.points.flatMap((point, index) => {
+      const terrain = trackUsesGroundHeights(track)
+        ? viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(point[0], point[1])) : undefined;
+      const height = trackUsesGroundHeights(track)
+        ? (Number.isFinite(terrain) ? terrain : (track.hasAltitude ? point[2] : 0))
+        : displayHeight(point, track, index);
+      return [point[0], point[1], height];
+    });
+    const sphere = Cesium.BoundingSphere.fromPoints(Cesium.Cartesian3.fromDegreesArrayHeights(degrees));
+    sphere.radius = Math.max(30, sphere.radius * 1.08);
+    viewer.camera.flyToBoundingSphere(sphere, {
+      duration: 0,
+      offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-38), 0)
+    });
   }
 
   function handleMessage(event) {
@@ -566,8 +590,12 @@
     if (data.type === "tracks") {
       const next = data.payload || sceneState;
       const modeChanged = !!(next && sceneState && next.altitudeMode !== sceneState.altitudeMode);
-      // Altitude-mode switches must apply immediately; do not defer behind camera motion.
-      if (cameraMoving && !modeChanged) {
+      const visibilityChanged = (next.tracks || []).some(track => {
+        const previous = (sceneState.tracks || []).find(item => item.id === track.id);
+        return previous && previous.isVisible !== track.isVisible;
+      });
+      // Hiding a file must also stop picking its old geometry during camera motion.
+      if (cameraMoving && !modeChanged && !visibilityChanged) {
         pendingTrackPayload = next;
       } else {
         sceneState = next;
@@ -587,9 +615,19 @@
     } else if (data.type === "gates") {
       gateState = Array.isArray(data.payload) ? data.payload : [];
       updateGates();
+    } else if (data.type === "selectedTrack") {
+      sceneState.selectedTrackId = data.trackId;
+      if (pendingTrackPayload) pendingTrackPayload.selectedTrackId = data.trackId;
     } else if (data.type === "fit") {
+      if (pendingTrackPayload) {
+        sceneState = pendingTrackPayload;
+        pendingTrackPayload = undefined;
+        updateTracks();
+      }
       fit();
     } else if (data.type === "clear") {
+      // A scene deferred during camera motion must not reappear on moveEnd.
+      pendingTrackPayload = undefined;
       sceneState.tracks = [];
       gateState = [];
       lastDatasetKey = "";
@@ -611,17 +649,9 @@
   try {
     if (!window.Cesium) throw new Error(text.cesiumError);
     setNotice(text.terrainLoading);
-    let terrainProvider;
-    let terrainFallback = false;
-    try {
-      terrainProvider = await Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
-        "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer");
-    } catch (terrainError) {
-      terrainProvider = new Cesium.EllipsoidTerrainProvider();
-      terrainFallback = true;
-    }
     viewer = new Cesium.Viewer("cesiumContainer", {
-      terrainProvider,
+      // Show the map immediately; a slow DEM service must not block readiness.
+      terrainProvider: new Cesium.EllipsoidTerrainProvider(),
       baseLayer: false,
       animation: false, timeline: false, fullscreenButton: false, homeButton: false,
       sceneModePicker: false, baseLayerPicker: false, geocoder: false,
@@ -679,14 +709,47 @@
     });
     window.addEventListener("pointerup", () => { dragStart = undefined; });
     canvas.addEventListener("pointercancel", () => { dragStart = undefined; });
-    clickHandler.setInputAction(movement => {
+    clickHandler.setInputAction(handleSceneClick, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+    setNotice(text.terrainLoading);
+    refreshGateLegend();
+    window.chrome.webview.addEventListener("message", handleMessage);
+    post("ready", "");
+    let terrainTimeout;
+    try {
+      viewer.terrainProvider = await Promise.race([
+        Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
+          "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer"),
+        new Promise((_, reject) => {
+          terrainTimeout = setTimeout(() => reject(new Error("Terrain request timed out")), 15000);
+        })
+      ]);
+      setNotice("");
+      viewer.scene.requestRender();
+    } catch (terrainError) {
+      setNotice(text.terrainError);
+    } finally {
+      clearTimeout(terrainTimeout);
+    }
+  } catch (error) {
+    const message = error && error.message ? error.message : String(error);
+    setNotice(message);
+    post("status", message);
+  }
+
+  function handleSceneClick(movement) {
       const picked = viewer.scene.pick(movement.position);
       const entityId = picked && picked.id && picked.id.id;
+      if (typeof entityId === "string" && entityId.startsWith("gate-")) {
+        const gateId = entityId.startsWith("gate-marker-")
+          ? entityId.slice("gate-marker-".length) : entityId.slice("gate-".length);
+        window.chrome.webview.postMessage({ type: "gateSelected", gateId });
+        return;
+      }
       if (typeof entityId !== "string" || !entityId.startsWith("track-")) return;
 
       const trackId = Number(entityId.split("-")[1]);
       const track = (sceneState.tracks || []).find(item => item.id === trackId);
-      if (!track || !track.points || !track.points.length) return;
+      if (!track || track.isVisible === false || !track.points || !track.points.length) return;
 
       const ray = viewer.camera.getPickRay(movement.position);
       const world = ray && viewer.scene.globe.pick(ray, viewer.scene);
@@ -709,16 +772,8 @@
       window.chrome.webview.postMessage({
         type: "sampleSelected",
         trackId,
+        sceneRevision: sceneState.sceneRevision,
         sampleIndex: Math.round(nearest[3])
       });
-    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-    setNotice(terrainFallback ? text.terrainError : "");
-    refreshGateLegend();
-    window.chrome.webview.addEventListener("message", handleMessage);
-    post("ready", "");
-  } catch (error) {
-    const message = error && error.message ? error.message : String(error);
-    setNotice(message);
-    post("status", message);
   }
 })();

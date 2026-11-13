@@ -30,10 +30,14 @@ public static class SlopeEnricher
 
         var distances = new double[samples.Count];
         var heights = new double[samples.Count];
+        var monotonicPrefixLength = samples.Count;
         for (var i = 0; i < samples.Count; i++)
         {
             distances[i] = GetDistanceMeters(samples[i]);
             heights[i] = samples[i].Altitude;
+            if (monotonicPrefixLength == samples.Count &&
+                (double.IsNaN(distances[i]) || (i > 0 && distances[i] < distances[i - 1])))
+                monotonicPrefixLength = i;
         }
 
         var result = new List<VehicleSample>(samples.Count);
@@ -46,7 +50,8 @@ public static class SlopeEnricher
                 heights,
                 i,
                 windowMeters,
-                out var grade);
+                out var grade,
+                i < monotonicPrefixLength);
 
             if (computed)
                 lastGood = grade;
@@ -69,7 +74,8 @@ public static class SlopeEnricher
         IReadOnlyList<double> heights,
         int index,
         double windowMeters,
-        out double gradePct)
+        out double gradePct,
+        bool distanceIsMonotonic = false)
     {
         gradePct = double.NaN;
         if (index <= 0 || index >= distances.Count)
@@ -77,18 +83,45 @@ public static class SlopeEnricher
 
         var dI = distances[index];
         var hI = heights[index];
+        // Every comparison and delta involving this distance was NaN in the
+        // original scan, which returned a computed NaN (clearing lastGood).
+        if (double.IsNaN(dI))
+            return true;
 
         // Prefer a look-back of ~windowMeters along cumulative distance.
-        var j = index;
-        for (var k = index - 1; k >= 0; k--)
+        var j = 0;
+        if (double.IsNaN(windowMeters))
         {
-            if (dI - distances[k] >= windowMeters)
+            // No candidate can satisfy a comparison against NaN; retain j=0.
+        }
+        else if (distanceIsMonotonic)
+        {
+            // Find the nearest earlier point meeting the same subtraction
+            // predicate as the original backward scan. In particular, do not
+            // rewrite it to d[k] <= dI - window: rounding at a boundary differs.
+            var low = 0;
+            var high = index - 1;
+            while (low <= high)
+            {
+                var mid = low + (high - low) / 2;
+                if (dI - distances[mid] >= windowMeters)
+                {
+                    j = mid;
+                    low = mid + 1;
+                }
+                else
+                    high = mid - 1;
+            }
+        }
+        else
+        {
+            // Preserve behavior for malformed/nonmonotonic imported distances.
+            for (var k = index - 1; k >= 0; k--)
             {
                 j = k;
-                break;
+                if (dI - distances[k] >= windowMeters)
+                    break;
             }
-
-            j = k; // keep earliest as fallback span
         }
 
         var deltaS = dI - distances[j];

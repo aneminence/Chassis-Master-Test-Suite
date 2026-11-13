@@ -43,6 +43,12 @@ public sealed class SessionMemorySnapshot
 
     /// <summary>Per-file curve/track colors keyed by absolute path.</summary>
     public Dictionary<string, string> FileColors { get; set; } = new();
+
+    /// <summary>Per-file drawing visibility keyed by absolute path. Missing entries are visible.</summary>
+    public Dictionary<string, bool> FileVisibility { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    public bool GetFileVisibility(string path) =>
+        FileVisibility is null || !FileVisibility.TryGetValue(path, out var isVisible) || isVisible;
 }
 
 public sealed class SessionGateDto
@@ -169,6 +175,9 @@ public static class SessionMemoryStore
             snap.VboFiles ??= new List<string>();
             snap.FileColors = new Dictionary<string, string>(
                 snap.FileColors ?? new Dictionary<string, string>(),
+                StringComparer.OrdinalIgnoreCase);
+            snap.FileVisibility = new Dictionary<string, bool>(
+                snap.FileVisibility ?? new Dictionary<string, bool>(),
                 StringComparer.OrdinalIgnoreCase);
 
             if (!string.IsNullOrWhiteSpace(snap.LastVbtsPath))

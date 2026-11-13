@@ -19,6 +19,8 @@ public sealed class SampleHistoryBuffer
 
     /// <summary>当前有效样本数（0..Capacity）。</summary>
     private int _count;
+    private long _version;
+    private IReadOnlyList<VehicleSample>? _cachedSnapshot;
 
     public SampleHistoryBuffer(int capacity = 1_000_000)
     {
@@ -34,6 +36,12 @@ public sealed class SampleHistoryBuffer
     }
 
     public int Capacity => _buffer.Length;
+
+    /// <summary>Changes whenever the contents change, including eviction.</summary>
+    public long Version
+    {
+        get { lock (_gate) return _version; }
+    }
 
     public int Count
     {
@@ -76,9 +84,13 @@ public sealed class SampleHistoryBuffer
     {
         lock (_gate)
         {
+            if (_count == 0)
+                return;
             Array.Clear(_buffer, 0, _buffer.Length);
             _head = 0;
             _count = 0;
+            _version++;
+            _cachedSnapshot = null;
         }
     }
 
@@ -89,19 +101,21 @@ public sealed class SampleHistoryBuffer
     {
         lock (_gate)
         {
+            if (_cachedSnapshot is not null)
+                return _cachedSnapshot;
             if (_count == 0)
-                return Array.Empty<VehicleSample>();
+                return _cachedSnapshot = Array.Empty<VehicleSample>();
 
             var result = new VehicleSample[_count];
             var start = _count < _buffer.Length ? 0 : _head;
 
-            for (var i = 0; i < _count; i++)
-            {
-                var index = (start + i) % _buffer.Length;
-                result[i] = _buffer[index]!;
-            }
+            var firstLength = Math.Min(_count, _buffer.Length - start);
+            Array.Copy(_buffer, start, result, 0, firstLength);
+            if (firstLength < _count)
+                Array.Copy(_buffer, 0, result, firstLength, _count - firstLength);
 
-            return result;
+            // A shared snapshot must not expose an array callers can mutate.
+            return _cachedSnapshot = Array.AsReadOnly(result);
         }
     }
 
@@ -109,6 +123,8 @@ public sealed class SampleHistoryBuffer
     {
         _buffer[_head] = sample;
         _head = (_head + 1) % _buffer.Length;
+        _version++;
+        _cachedSnapshot = null;
 
         if (_count < _buffer.Length)
         {

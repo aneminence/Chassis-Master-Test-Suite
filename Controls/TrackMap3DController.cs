@@ -21,11 +21,16 @@ internal sealed class TrackMap3DController
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
-    private readonly WebView2 _webView;
+    private readonly WebView2CompositionControl _webView;
     private bool _initialized;
+    private Task? _initializationTask;
+    private TaskCompletionSource? _pageLoad;
     private bool _pageReady;
     private bool _active;
     private IReadOnlyList<TrackMapPanel.TrackLayer> _tracks = Array.Empty<TrackMapPanel.TrackLayer>();
+    private IReadOnlyList<TrackMapPanel.TrackLayer> _sentSceneTracks = Array.Empty<TrackMapPanel.TrackLayer>();
+    private long _sceneRevision;
+    private int? _selectedTrackSourceIndex;
     private readonly Dictionary<VehicleSample, (int TrackId, int SampleIndex)> _sampleLocations =
         new(ReferenceEqualityComparer.Instance);
     private VehicleSample? _cursor;
@@ -33,12 +38,10 @@ internal sealed class TrackMap3DController
     private string _altitudeMode = "ground";
     private IReadOnlyList<GateDto> _gates = Array.Empty<GateDto>();
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
-    private int[] _lastSentCounts = Array.Empty<int>();
-    private TrackMapPanel.TrackLayer[] _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
-    private (double Latitude, double Longitude)? _lastSentAnchor;
+    private readonly TrackUpdateGate _sceneGate = new();
     private MapTileSource _mapSource = MapTileSources.Resolve(MapTileSources.DefaultId, null);
 
-    public TrackMap3DController(WebView2 webView)
+    public TrackMap3DController(WebView2CompositionControl webView)
     {
         _webView = webView;
     }
@@ -46,22 +49,44 @@ internal sealed class TrackMap3DController
     public event Action<string>? StatusChanged;
     public event Action? Ready;
     public event Action? ManualDrag;
-    public event Action<int, int>? SampleSelected;
+    public event Action<IReadOnlyList<VehicleSample>, int, int>? SampleSelected;
+    public event Action<Guid>? GateSelected;
 
-    public async Task EnsureInitializedAsync()
+    public Task EnsureInitializedAsync()
     {
-        if (_initialized)
-            return;
+        if (_pageReady)
+        {
+            StatusChanged?.Invoke(string.Empty);
+            return Task.CompletedTask;
+        }
+        if (_initializationTask is { IsCompleted: false })
+            return _initializationTask;
+        return _initializationTask = InitializePageAsync();
+    }
 
-        _initialized = true;
+    private async Task InitializePageAsync()
+    {
         try
         {
-            await _webView.EnsureCoreWebView2Async();
-            _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-            _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
-            _webView.CoreWebView2.ProcessFailed += (_, e) =>
-                StatusChanged?.Invoke($"3D renderer stopped ({e.ProcessFailedKind}). Switch to 2D and try again.");
+            await _webView.EnsureCoreWebView2Async().WaitAsync(TimeSpan.FromSeconds(30));
+            if (!_initialized)
+            {
+                _webView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+                _webView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
+                _webView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+                _webView.CoreWebView2.ProcessFailed += (_, e) =>
+                {
+                    _pageReady = false;
+                    _pageLoad?.TrySetException(new InvalidOperationException($"3D renderer stopped ({e.ProcessFailedKind})."));
+                    StatusChanged?.Invoke($"3D renderer stopped ({e.ProcessFailedKind}). Switch to 2D and try again.");
+                };
+                _webView.CoreWebView2.NavigationCompleted += (_, e) =>
+                {
+                    if (!e.IsSuccess)
+                        _pageLoad?.TrySetException(new InvalidOperationException($"3D page navigation failed: {e.WebErrorStatus}"));
+                };
+                _initialized = true;
+            }
 
             var contentFolder = Path.Combine(AppContext.BaseDirectory, "Assets", "TrackMap3D");
             if (!Directory.Exists(contentFolder))
@@ -71,50 +96,36 @@ internal sealed class TrackMap3DController
                 VirtualHost,
                 contentFolder,
                 CoreWebView2HostResourceAccessKind.DenyCors);
-            _webView.Source = new Uri($"https://{VirtualHost}/index.html");
+            _pageLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            // Navigate explicitly on retries; assigning the same Source need not reload.
+            _webView.CoreWebView2.Navigate($"https://{VirtualHost}/index.html");
+            await _pageLoad.Task.WaitAsync(TimeSpan.FromSeconds(45));
         }
         catch (Exception ex)
         {
-            _initialized = false;
-            StatusChanged?.Invoke($"3D map is unavailable. Check the WebView2 Runtime.\n{ex.Message}");
+            StatusChanged?.Invoke($"3D map could not finish loading. Switch to 2D and back to retry.\n{ex.Message}");
         }
     }
 
     public void SetTracks(IReadOnlyList<TrackMapPanel.TrackLayer> tracks)
     {
+        if (tracks.Count != _tracks.Count || tracks.Where((track, index) => index < _tracks.Count
+            && (track.IsVisible != _tracks[index].IsVisible || track.SourceIndex != _tracks[index].SourceIndex)).Any())
+            _sceneGate.Reset();
         _tracks = tracks;
         if (!_active)
             return;
 
-        var anchor = tracks.SelectMany(track => track.Samples)
-            .FirstOrDefault(TrackProjection.IsValidGps);
-        var counts = tracks.Select(track => track.Samples.Count).ToArray();
-        var sameTrackObjects = tracks.Count == _lastSentTracks.Length
-            && tracks.Zip(_lastSentTracks, (current, previous) => current.Equals(previous))
-                .All(same => same);
-        var sameAnchor = anchor is null
-            ? _lastSentAnchor is null
-            : _lastSentAnchor is not null
-              && Math.Abs(_lastSentAnchor.Value.Latitude - anchor.Latitude) <= 1e-9
-              && Math.Abs(_lastSentAnchor.Value.Longitude - anchor.Longitude) <= 1e-9;
-        var sameCounts = counts.SequenceEqual(_lastSentCounts);
-
-        // Offline tracks are repeatedly presented by the UI refresh path. Do not
-        // rebuild a large Cesium polyline when its source and sample counts did
-        // not change. Live tracks still append samples and are batched to 1 Hz.
-        if (sameTrackObjects && sameAnchor && sameCounts)
+        var stamps = tracks.Select(track => new TrackUpdateStamp(
+            track.Identity ?? track.Samples,
+            track.Samples.Count > 0 ? track.Samples[0] : null,
+            track.Samples.Count > 0 ? track.Samples[^1] : null,
+            track.Samples.Count, track.Name, track.ColorHex, track.IsLive)).ToArray();
+        // Endpoint references distinguish a rolling full buffer from unchanged
+        // data even when Count remains constant. Snapshot containers are ignored.
+        if (!_sceneGate.TryAccept(stamps, _sendStopwatch.ElapsedMilliseconds))
             return;
 
-        var appendOnly = sameTrackObjects && sameAnchor
-            && counts.Length == _lastSentCounts.Length
-            && counts.Zip(_lastSentCounts, (current, previous) => current >= previous).All(value => value);
-        if (appendOnly && _sendStopwatch.ElapsedMilliseconds < 1_000)
-            return;
-
-        _lastSentCounts = counts;
-        _lastSentTracks = tracks.ToArray();
-        _lastSentAnchor = anchor is null ? null : (anchor.Latitude, anchor.Longitude);
-        _sendStopwatch.Restart();
         RebuildSampleLocations();
         SendScene();
     }
@@ -124,9 +135,7 @@ internal sealed class TrackMap3DController
         _active = active;
         if (active)
         {
-            _lastSentCounts = Array.Empty<int>();
-            _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
-            _lastSentAnchor = null;
+            _sceneGate.Reset();
             RebuildSampleLocations();
             SendImagery();
             SendScene();
@@ -141,12 +150,12 @@ internal sealed class TrackMap3DController
     public void Clear()
     {
         _tracks = Array.Empty<TrackMapPanel.TrackLayer>();
+        _sentSceneTracks = Array.Empty<TrackMapPanel.TrackLayer>();
+        _sceneRevision++;
         _sampleLocations.Clear();
         _cursor = null;
         _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
-        _lastSentCounts = Array.Empty<int>();
-        _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
-        _lastSentAnchor = null;
+        _sceneGate.Reset();
         _gates = Array.Empty<GateDto>();
         Post(new { type = "clear" });
     }
@@ -187,9 +196,7 @@ internal sealed class TrackMap3DController
         if (_active)
         {
             // Force a full scene resend so JS recreates polylines when clamp/height mode changes.
-            _lastSentCounts = Array.Empty<int>();
-            _lastSentTracks = Array.Empty<TrackMapPanel.TrackLayer>();
-            _lastSentAnchor = null;
+            _sceneGate.Reset();
             RebuildSampleLocations();
             SendScene();
             SendGates();
@@ -222,6 +229,23 @@ internal sealed class TrackMap3DController
     }
     public void Fit() => Post(new { type = "fit" });
 
+    public void SetSelectedTrack(int sourceIndex)
+    {
+        _selectedTrackSourceIndex = sourceIndex;
+        Post(new { type = "selectedTrack", trackId = SelectedTrackId });
+    }
+
+    private int SelectedTrackId
+    {
+        get
+        {
+            for (var i = 0; i < _tracks.Count; i++)
+                if (_tracks[i].SourceIndex == _selectedTrackSourceIndex)
+                    return i;
+            return _selectedTrackSourceIndex is null && _tracks.Count > 0 ? 0 : -1;
+        }
+    }
+
     private void RebuildSampleLocations()
     {
         // Do not pre-index every sample: a multi-million-point NCOM track would
@@ -243,6 +267,7 @@ internal sealed class TrackMap3DController
             {
                 case "ready":
                     _pageReady = true;
+                    _pageLoad?.TrySetResult();
                     SetFollowVehicle(_followVehicle);
                     StatusChanged?.Invoke(string.Empty);
                     if (_active)
@@ -259,7 +284,11 @@ internal sealed class TrackMap3DController
                     break;
                 case "status":
                     if (root.TryGetProperty("message", out var message))
+                    {
+                        if (!_pageReady && !string.IsNullOrWhiteSpace(message.GetString()))
+                            _pageLoad?.TrySetException(new InvalidOperationException(message.GetString()));
                         StatusChanged?.Invoke(message.GetString() ?? string.Empty);
+                    }
                     break;
                 case "manualDrag":
                     _followVehicle = false;
@@ -269,10 +298,25 @@ internal sealed class TrackMap3DController
                     if (root.TryGetProperty("trackId", out var trackIdElement)
                         && root.TryGetProperty("sampleIndex", out var sampleIndexElement)
                         && trackIdElement.TryGetInt32(out var trackId)
-                        && sampleIndexElement.TryGetInt32(out var sampleIndex))
+                        && sampleIndexElement.TryGetInt32(out var sampleIndex)
+                        && root.TryGetProperty("sceneRevision", out var revisionElement)
+                        && revisionElement.TryGetInt64(out var revision)
+                        && revision == _sceneRevision
+                        && trackId >= 0 && trackId < _sentSceneTracks.Count
+                        && _sentSceneTracks[trackId].IsVisible)
                     {
-                        SampleSelected?.Invoke(trackId, sampleIndex);
+                        // The live ring buffer can advance while geometry is
+                        // throttled. Resolve against the scene actually sent.
+                        var track = _sentSceneTracks[trackId];
+                        SampleSelected?.Invoke(track.Samples,
+                            track.SourceIndex >= 0 ? track.SourceIndex : trackId, sampleIndex);
                     }
+                    break;
+                case "gateSelected":
+                    if (root.TryGetProperty("gateId", out var gateIdElement)
+                        && Guid.TryParse(gateIdElement.GetString(), out var gateId)
+                        && _gates.Any(gate => Guid.TryParse(gate.Id, out var existing) && existing == gateId))
+                        GateSelected?.Invoke(gateId);
                     break;
             }
         }
@@ -287,9 +331,10 @@ internal sealed class TrackMap3DController
         if (!_pageReady)
             return;
 
-        var payload = _tracks
+        _sentSceneTracks = _tracks.ToArray();
+        var revision = ++_sceneRevision;
+        var payload = _sentSceneTracks
             .Select((track, index) => BuildTrack(track, index))
-            .Where(track => track.Points.Count >= 2)
             .ToArray();
 
         Post(new
@@ -298,6 +343,8 @@ internal sealed class TrackMap3DController
             payload = new
             {
                 tracks = payload,
+                selectedTrackId = SelectedTrackId,
+                sceneRevision = revision,
                 altitudeMode = _altitudeMode
             }
         });
@@ -342,7 +389,7 @@ internal sealed class TrackMap3DController
             .Where(item => TrackProjection.IsValidGps(item.Sample))
             .ToList();
         if (valid.Count == 0)
-            return new TrackDto(index, track.Name, track.ColorHex, false, new List<double[]>());
+            return new TrackDto(index, track.Name, track.ColorHex, false, new List<double[]>(), IsVisible: track.IsVisible);
 
         var finiteAltitudes = valid
             .Select(item => item.Sample.Altitude)
@@ -372,7 +419,8 @@ internal sealed class TrackMap3DController
             string.IsNullOrWhiteSpace(track.ColorHex) ? "#42A5F5" : track.ColorHex,
             hasAltitude,
             points,
-            baseline);
+            baseline,
+            track.IsVisible);
     }
 
     private static List<int> SelectIndices(int count, int maximum)
@@ -399,6 +447,8 @@ internal sealed class TrackMap3DController
         var location = _sampleLocations.TryGetValue(sample, out var found)
             ? found
             : FindSampleLocation(sample);
+        if (location.Item1 >= 0 && location.Item1 < _tracks.Count && !_tracks[location.Item1].IsVisible)
+            return null;
         return new
         {
             trackId = location.Item1,
@@ -510,7 +560,8 @@ internal sealed class TrackMap3DController
         string Color,
         bool HasAltitude,
         List<double[]> Points,
-        double Baseline = 0.0);
+        double Baseline = 0.0,
+        bool IsVisible = true);
 
     public sealed record GateDto(
         string Id,

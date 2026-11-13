@@ -59,7 +59,11 @@ public partial class TrackMapPanel : UserControl
     public readonly record struct TrackLayer(
         string Name,
         string ColorHex,
-        IReadOnlyList<VehicleSample> Samples);
+        IReadOnlyList<VehicleSample> Samples,
+        object? Identity = null,
+        bool IsLive = false,
+        bool IsVisible = true,
+        int SourceIndex = -1);
 
     public readonly record struct CompareCursor(
         VehicleSample Sample,
@@ -68,9 +72,12 @@ public partial class TrackMapPanel : UserControl
 
     private readonly ScottPlot.WPF.WpfPlot _wpfPlot = new();
     private readonly List<TrackLayer> _tracks = new();
+    private int? _selectedTrackSourceIndex;
+    private object _liveTrackIdentity = new();
     /// <summary>所有轨迹样本展平，供点选/悬停；与 _sampleTrackIndex 对齐。</summary>
     private readonly List<VehicleSample> _samples = new();
     private readonly List<int> _sampleTrackIndex = new();
+    private readonly Dictionary<VehicleSample, bool> _sampleVisibility = new(ReferenceEqualityComparer.Instance);
     private readonly Stopwatch _refreshStopwatch = Stopwatch.StartNew();
 
     /// <summary>
@@ -140,11 +147,9 @@ public partial class TrackMapPanel : UserControl
         _map3D = new TrackMap3DController(Map3DWebView);
         _map3D.StatusChanged += message => Dispatcher.Invoke(() => Show3DStatus(message));
         _map3D.ManualDrag += () => Dispatcher.Invoke(() => FollowVehicleCheck.IsChecked = false);
-        _map3D.SampleSelected += (trackIndex, sampleIndex) => Dispatcher.Invoke(() =>
+        _map3D.GateSelected += id => Dispatcher.Invoke(() => GateStore.Instance.Select(id));
+        _map3D.SampleSelected += (samples, trackIndex, sampleIndex) => Dispatcher.Invoke(() =>
         {
-            if (trackIndex < 0 || trackIndex >= _tracks.Count)
-                return;
-            var samples = _tracks[trackIndex].Samples;
             if (sampleIndex < 0 || sampleIndex >= samples.Count)
                 return;
             var sample = samples[sampleIndex];
@@ -373,9 +378,10 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
+        SetSelectedTrack(0);
         SetTracks(new[]
         {
-            new TrackLayer("Track", "#E05252", samples)
+            new TrackLayer("Track", "#E05252", samples, _liveTrackIdentity, IsLive: true)
         });
     }
 
@@ -385,6 +391,7 @@ public partial class TrackMapPanel : UserControl
     public void SetTracks(IReadOnlyList<TrackLayer> tracks)
     {
         var valid = tracks
+            .Select((track, index) => track.SourceIndex < 0 ? track with { SourceIndex = index } : track)
             .Where(t => t.Samples is { Count: > 0 })
             .ToList();
 
@@ -410,7 +417,10 @@ public partial class TrackMapPanel : UserControl
             countDelta < 0
             || countDelta > 500
             || _projectionAnchor is null
-            || valid.Count != _tracks.Count;
+            || valid.Count != _tracks.Count
+            || valid.Where((track, index) => index < _tracks.Count
+                && (track.IsVisible != _tracks[index].IsVisible
+                    || track.SourceIndex != _tracks[index].SourceIndex)).Any();
 
         if (!isBigChange
             && _refreshStopwatch.ElapsedMilliseconds
@@ -439,6 +449,8 @@ public partial class TrackMapPanel : UserControl
             if (!ReferenceEquals(a.Samples, b.Samples)
                 || !string.Equals(a.Name, b.Name, StringComparison.Ordinal)
                 || !string.Equals(a.ColorHex, b.ColorHex, StringComparison.Ordinal)
+                || a.IsVisible != b.IsVisible
+                || a.SourceIndex != b.SourceIndex
                 || a.Samples.Count != b.Samples.Count)
             {
                 return false;
@@ -448,15 +460,37 @@ public partial class TrackMapPanel : UserControl
         return true;
     }
 
+    /// <summary>Source index remains stable when other layers are hidden or empty.</summary>
+    public void SetSelectedTrack(int sourceIndex)
+    {
+        if (_selectedTrackSourceIndex == sourceIndex)
+            return;
+        _selectedTrackSourceIndex = sourceIndex;
+        _map3D?.SetSelectedTrack(sourceIndex);
+    }
+
+    private TrackLayer? SelectedTrack
+    {
+        get
+        {
+            foreach (var track in _tracks)
+                if (track.SourceIndex == _selectedTrackSourceIndex)
+                    return track;
+            return _selectedTrackSourceIndex is null && _tracks.Count > 0 ? _tracks[0] : null;
+        }
+    }
+
     /// <summary>
     /// 清空轨迹。
     /// </summary>
     public void Clear()
     {
+        _liveTrackIdentity = new();
         ClearRunHighlights();
         _tracks.Clear();
         _samples.Clear();
         _sampleTrackIndex.Clear();
+        _sampleVisibility.Clear();
         _projection = null;
         _projectionAnchor = null;
         _track = null;
@@ -484,29 +518,36 @@ public partial class TrackMapPanel : UserControl
     }
 
     /// <summary>
-    /// 把轨迹缩放到刚好铺满视图。
+    /// Fit only the selected source, including a hidden source without revealing it.
     /// </summary>
     public void AutoFit()
     {
+        if (SelectedTrack is not { } track || !track.Samples.Any(TrackProjection.IsValidGps))
+        {
+            StatusGate(Loc.T("Map.NoTrackToFit"));
+            return;
+        }
+        FollowVehicleCheck.IsChecked = false;
         if (_is3DMode)
         {
             _map3D?.Fit();
             return;
         }
 
-        if (_projection is null || _samples.Count == 0)
+        if (_projection is null)
         {
             return;
         }
 
-        // 显式复位视野时重新允许后续自动取景
-        _userHasAdjustedView = false;
+        // Preserve this explicit view while other sources update or visibility changes.
+        _userHasAdjustedView = true;
 
-        var gps = TrackProjection.FilterGpsOutliers(_samples);
+        var gps = TrackProjection.FilterGpsOutliers(track.Samples);
         if (gps.Count < 2)
-            gps = _samples.Where(TrackProjection.IsValidGps).ToList();
+            gps = track.Samples.Where(TrackProjection.IsValidGps).ToList();
 
         AutoFitToSamples(gps);
+        _tileLayer?.Invalidate(force: true);
     }
 
     private void AutoFitToSamples(IReadOnlyList<VehicleSample> samples)
@@ -573,7 +614,7 @@ public partial class TrackMapPanel : UserControl
     {
         if (FollowVehicleCheck?.IsChecked != true) return;
         var sample = _cursorSample ?? _samples.LastOrDefault(TrackProjection.IsValidGps);
-        if (sample is null || !TrackProjection.IsValidGps(sample)) return;
+        if (sample is null || !TrackProjection.IsValidGps(sample) || !IsSampleVisible(sample)) return;
         _map3D?.SetCursor(sample);
         if (_projection is null) return;
         _userHasAdjustedView = true;
@@ -634,7 +675,7 @@ public partial class TrackMapPanel : UserControl
         PushGatesTo3D();
     }
 
-    private void Fit3DButton_Click(object sender, RoutedEventArgs e) => _map3D?.Fit();
+    private void FitButton_Click(object sender, RoutedEventArgs e) => AutoFit();
 
     private void Show3DStatus(string message)
     {
@@ -709,15 +750,8 @@ public partial class TrackMapPanel : UserControl
             return;
         }
 
-        // 多文件：丢掉中心点离“场地中位数”过远的整条轨迹（坏文件 / 错场地）
-        filteredLayers = KeepLayersNearVenue(filteredLayers);
-
-        if (filteredLayers.Count == 0)
-        {
-            Clear();
-            EmptyHint.Visibility = Visibility.Visible;
-            return;
-        }
+        // Validate each file independently. A distant selected file must remain
+        // drawable when Fit moves to it; other files are not GPS outliers.
 
         var allGps = filteredLayers.SelectMany(t => t.Gps).ToList();
         var first = allGps[0];
@@ -736,16 +770,19 @@ public partial class TrackMapPanel : UserControl
 
         _tracks.Clear();
         _tracks.AddRange(tracks);
+        _sampleVisibility.Clear();
 
         // 点选/悬停仍用原始样本顺序（与文件对齐），投影时再校验 GPS
         _samples.Clear();
         _sampleTrackIndex.Clear();
         for (var ti = 0; ti < tracks.Count; ti++)
         {
+            if (!tracks[ti].IsVisible)
+                continue;
             foreach (var sample in tracks[ti].Samples)
             {
                 _samples.Add(sample);
-                _sampleTrackIndex.Add(ti);
+                _sampleTrackIndex.Add(tracks[ti].SourceIndex);
             }
         }
 
@@ -769,6 +806,8 @@ public partial class TrackMapPanel : UserControl
         _track = null;
         foreach (var (layer, gps) in filteredLayers)
         {
+            if (!layer.IsVisible)
+                continue;
             var stride = Math.Max(1, gps.Count / MaxDisplayPoints);
             var xs = new List<double>(gps.Count / stride + 1);
             var ys = new List<double>(gps.Count / stride + 1);
@@ -811,7 +850,7 @@ public partial class TrackMapPanel : UserControl
             _track ??= scatter;
         }
 
-        UpdateLegendVisibility(filteredLayers.Count > 1 || _runHighlights.Count > 0);
+        UpdateLegendVisibility(filteredLayers.Count(layer => layer.Layer.IsVisible) > 1 || _runHighlights.Count > 0);
 
         _hasData = true;
         EmptyHint.Visibility = Visibility.Collapsed;
@@ -822,7 +861,10 @@ public partial class TrackMapPanel : UserControl
 
         if (!_userHasAdjustedView)
         {
-            AutoFitToSamples(allGps);
+            var selected = SelectedTrack;
+            var selectedGps = filteredLayers.FirstOrDefault(layer =>
+                layer.Layer.SourceIndex == selected?.SourceIndex).Gps;
+            AutoFitToSamples(selectedGps ?? allGps);
         }
         else
         {
@@ -990,7 +1032,7 @@ public partial class TrackMapPanel : UserControl
         {
             foreach (var cursor in _compareCursors)
             {
-                if (!TrackProjection.IsValidGps(cursor.Sample))
+                if (!TrackProjection.IsValidGps(cursor.Sample) || !IsSampleVisible(cursor.Sample))
                     continue;
                 var (cx, cy) = _projection.ToMeters(cursor.Sample.Latitude, cursor.Sample.Longitude);
                 var marker = _wpfPlot.Plot.Add.Marker(cx, cy);
@@ -1009,7 +1051,7 @@ public partial class TrackMapPanel : UserControl
         if (_cursorSample is null ||
             _projection is null ||
             !_hasData ||
-            !TrackProjection.IsValidGps(_cursorSample))
+            !TrackProjection.IsValidGps(_cursorSample) || !IsSampleVisible(_cursorSample))
         {
             if (refresh)
                 _wpfPlot.Refresh();
@@ -1032,6 +1074,32 @@ public partial class TrackMapPanel : UserControl
 
         if (refresh)
             _wpfPlot.Refresh();
+    }
+
+    private bool IsSampleVisible(VehicleSample sample)
+    {
+        if (_sampleVisibility.TryGetValue(sample, out var visible))
+            return visible;
+        visible = true;
+        var found = false;
+        foreach (var layer in _tracks)
+        {
+            if (sample.Sequence >= 0 && sample.Sequence < layer.Samples.Count
+                && ReferenceEquals(layer.Samples[(int)sample.Sequence], sample))
+            {
+                visible = layer.IsVisible;
+                found = true;
+                break;
+            }
+        }
+        // Check all cheap sequence matches before the rare trimmed/reindexed fallback.
+        if (!found)
+            visible = !_tracks.Any(layer => !layer.IsVisible
+                && layer.Samples.Any(candidate => ReferenceEquals(candidate, sample)));
+        if (_sampleVisibility.Count > 256)
+            _sampleVisibility.Clear();
+        _sampleVisibility[sample] = visible;
+        return visible;
     }
 
     private static string FormatLatitude(double value)
@@ -1388,7 +1456,7 @@ public partial class TrackMapPanel : UserControl
         {
             var run = annotated.Result;
             var samples = annotated.Samples;
-            if (samples.Count == 0)
+            if (samples.Count == 0 || !IsSampleVisible(samples[0]))
                 continue;
 
             var start = Math.Clamp(run.StartSampleIndex, 0, samples.Count - 1);
@@ -1439,7 +1507,7 @@ public partial class TrackMapPanel : UserControl
             _runHighlightPlots.Add(scatter);
         }
 
-        UpdateLegendVisibility(_tracks.Count > 1 || _runHighlights.Count > 0);
+        UpdateLegendVisibility(_tracks.Count(track => track.IsVisible) > 1 || _runHighlightPlots.Count > 0);
         _wpfPlot.Refresh();
     }
 
@@ -1451,7 +1519,7 @@ public partial class TrackMapPanel : UserControl
         _gatePlaceMode = GatePlaceMode.Add;
         if (EmptyHint is not null)
             EmptyHint.Visibility = Visibility.Collapsed;
-        StatusGate("Click the track to place a new gate");
+        StatusGate(Loc.T("Map.AddGateTip"));
     }
 
     private void DeleteGateButton_Click(object sender, RoutedEventArgs e)
@@ -1585,6 +1653,11 @@ public partial class TrackMapPanel : UserControl
 
     private void StatusGate(string msg)
     {
+        if (GateStatusText is not null)
+        {
+            GateStatusText.Text = msg;
+            GateStatusText.Visibility = Visibility.Visible;
+        }
         if (HoverTipText is not null)
             HoverTipText.Text = msg;
         if (HoverTip is not null)
@@ -1665,10 +1738,10 @@ public partial class TrackMapPanel : UserControl
             Map3DSourceLabel.Text = Loc.T("Map.Source");
         if (Map3DSourceCombo is not null)
             Map3DSourceCombo.ToolTip = Loc.T("Map.SourceTip");
-        if (Fit3DButton is not null)
+        if (FitButton is not null)
         {
-            Fit3DButton.Content = Loc.T("Map.Fit");
-            Fit3DButton.ToolTip = Loc.T("Map.FitTip");
+            FitButton.Content = Loc.T("Map.Fit");
+            FitButton.ToolTip = Loc.T("Map.FitTip");
         }
         if (AltitudeModeCombo is not null && AltitudeModeCombo.Items.Count >= 2)
         {
@@ -2205,7 +2278,7 @@ public partial class TrackMapPanel : UserControl
         }
 
         // UpperRight = tracks/files/runs only; UpperLeft = WPF gate color legend.
-        UpdateLegendVisibility(_tracks.Count > 1 || _runHighlights.Count > 0);
+        UpdateLegendVisibility(_tracks.Count(track => track.IsVisible) > 1 || _runHighlightPlots.Count > 0);
         RefreshGateColorLegend();
         _wpfPlot.Refresh();
         PushGatesTo3D();

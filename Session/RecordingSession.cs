@@ -20,21 +20,65 @@ public enum RecordingState
 /// 拥有 <see cref="VboRecorder"/> 生命周期与丢样计数。
 /// UI 按钮外观 / Elapsed 计时器仍由 MainWindow 负责。
 /// </summary>
-public sealed class RecordingSession : IDisposable
+public sealed class RecordingSession : IDisposable, IAsyncDisposable
 {
+    private readonly object _gate = new();
+    private readonly Func<VboRecorder> _createRecorder;
     private VboRecorder? _recorder;
     private bool _disposed;
+    private RecordingState _state;
+    private long? _recordingStartTimestamp;
+    private Task _stopTask = Task.CompletedTask;
 
-    public RecordingState State { get; private set; } = RecordingState.Stopped;
+    public RecordingSession() : this(() => CreateDefaultRecorder(
+        Path.Combine(AppContext.BaseDirectory, "Recordings"), DateTime.Now)) { }
+
+    internal RecordingSession(Func<VboRecorder> createRecorder) =>
+        _createRecorder = createRecorder ?? throw new ArgumentNullException(nameof(createRecorder));
+
+    internal static VboRecorder CreateDefaultRecorder(string directory, DateTime now)
+    {
+        Directory.CreateDirectory(directory);
+        var session = SessionMetadata.Current.Clone();
+        var stem = $"CMTS_{now:yyyyMMdd_HHmmss}";
+        for (var suffix = 1; ; suffix++)
+        {
+            var path = Path.Combine(directory, suffix == 1 ? $"{stem}.vbo" : $"{stem}_{suffix}.vbo");
+            FileStream stream;
+            try
+            {
+                stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+            }
+            catch (IOException) when (File.Exists(path))
+            {
+                continue;
+            }
+
+            try
+            {
+                return new VboRecorder(path, session, stream);
+            }
+            catch
+            {
+                stream.Dispose();
+                throw;
+            }
+        }
+    }
+
+    public RecordingState State { get { lock (_gate) return _state; } }
 
     /// <summary>
     /// 本次录制会话第一条写入样本的时间戳（毫秒），用于 Elapsed UI。
     /// </summary>
-    public long? RecordingStartTimestamp { get; private set; }
+    public long? RecordingStartTimestamp { get { lock (_gate) return _recordingStartTimestamp; } }
 
-    public long DroppedSamples => _recorder?.DroppedSamples ?? 0;
+    public long DroppedSamples { get { lock (_gate) return _recorder?.DroppedSamples ?? 0; } }
 
-    public string? CurrentFilePath => _recorder?.FilePath;
+    public string? CurrentFilePath { get { lock (_gate) return _recorder?.FilePath; } }
+
+    /// <summary>Observe active writer failures as well as stop/close failures.</summary>
+    public Task Completion { get { lock (_gate) return _recorder?.Completion ?? _stopTask; } }
 
     public bool IsRecording => State == RecordingState.Recording;
 
@@ -43,43 +87,62 @@ public sealed class RecordingSession : IDisposable
     /// </summary>
     public void ApplyState(RecordingState state)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-
-        switch (state)
+        if (state == RecordingState.Stopped)
         {
-            case RecordingState.Stopped:
-                _recorder?.Dispose();
-                _recorder = null;
-                RecordingStartTimestamp = null;
-                break;
-
-            case RecordingState.Recording:
-                // 从停止状态开始时才新建文件；
-                // 从暂停恢复时继续写同一个文件。
-                if (_recorder is null)
-                {
-                    RecordingStartTimestamp = null;
-                    StartRecorder();
-                }
-
-                break;
-
-            case RecordingState.Paused:
-                // 暂停只是不写文件，保持同一 recorder。
-                break;
+            StopAsync().GetAwaiter().GetResult();
+            return;
         }
 
-        State = state;
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_stopTask.IsCompleted)
+                throw new InvalidOperationException("The previous recording is still closing.");
+
+            if (state == RecordingState.Recording && _recorder is null)
+            {
+                _recorder = _createRecorder();
+                _stopTask = Task.CompletedTask;
+                _recordingStartTimestamp = null;
+            }
+
+            _state = state;
+        }
     }
 
-    private void StartRecorder()
+    public async Task ApplyStateAsync(RecordingState state)
     {
-        _recorder = new VboRecorder(
-            Path.Combine(
-                AppContext.BaseDirectory,
-                "Recordings",
-                $"CMTS_{DateTime.Now:yyyyMMdd_HHmmss}.vbo"),
-            SessionMetadata.Current.Clone());
+        if (state == RecordingState.Stopped)
+        {
+            await StopAsync().ConfigureAwait(false);
+            return;
+        }
+
+        Task stopping;
+        lock (_gate) stopping = _stopTask;
+        if (!stopping.IsCompleted)
+            await stopping.ConfigureAwait(false);
+        ApplyState(state);
+    }
+
+    public Task StopAsync()
+    {
+        lock (_gate)
+            return StopUnlocked();
+    }
+
+    private Task StopUnlocked()
+    {
+        // Detach atomically with the producer's state check/enqueue so all
+        // accepted rows belong to the old writer and no later rows slip in.
+        _state = RecordingState.Stopped;
+        _recordingStartTimestamp = null;
+        if (_recorder is not null)
+        {
+            _stopTask = _recorder.StopAsync();
+            _recorder = null;
+        }
+        return _stopTask;
     }
 
     /// <summary>
@@ -89,22 +152,24 @@ public sealed class RecordingSession : IDisposable
     /// </summary>
     public void TryWriteIfRecording(VehicleSample sample)
     {
-        if (_disposed || State != RecordingState.Recording)
-            return;
+        lock (_gate)
+        {
+            if (_disposed || _state != RecordingState.Recording)
+                return;
 
-        RecordingStartTimestamp ??= sample.Timestamp;
-        _recorder?.TryWrite(sample);
+            _recordingStartTimestamp ??= sample.Timestamp;
+            _recorder?.TryWrite(sample);
+        }
     }
 
-    public void Dispose()
-    {
-        if (_disposed)
-            return;
+    public void Dispose() => DisposeAsync().GetAwaiter().GetResult();
 
-        _disposed = true;
-        _recorder?.Dispose();
-        _recorder = null;
-        State = RecordingState.Stopped;
-        RecordingStartTimestamp = null;
+    public ValueTask DisposeAsync()
+    {
+        lock (_gate)
+        {
+            _disposed = true;
+            return new ValueTask(StopUnlocked());
+        }
     }
 }

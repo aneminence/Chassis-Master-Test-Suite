@@ -19,6 +19,9 @@ public sealed class OfflineFileEntry
 
     /// <summary>轨迹/曲线配色（#RRGGBB）。</summary>
     public required string ColorHex { get; set; }
+
+    /// <summary>是否绘制轨迹/曲线；与选中状态和样本数据无关。</summary>
+    public bool IsVisible { get; set; } = true;
 }
 
 /// <summary>
@@ -44,6 +47,10 @@ public sealed class OfflineFileSet
     public IReadOnlyList<OfflineFileEntry> Files => _files;
 
     public int Count => _files.Count;
+
+    public IEnumerable<OfflineFileEntry> VisibleFiles => _files.Where(f => f.IsVisible);
+
+    public int VisibleCount => _files.Count(f => f.IsVisible);
 
     /// <summary>当前选中的线下文件（Dashboard 主读数）。未选时退回第一份。</summary>
     public Guid? SelectedId { get; private set; }
@@ -77,7 +84,8 @@ public sealed class OfflineFileSet
         IReadOnlyList<VehicleSample> samples,
         IReadOnlyList<string> columnNames,
         string? displayName = null,
-        string? preferredColorHex = null)
+        string? preferredColorHex = null,
+        bool isVisible = true)
     {
         var color = NormalizeColor(preferredColorHex)
             ?? Palette[_colorIndex % Palette.Length];
@@ -93,12 +101,33 @@ public sealed class OfflineFileSet
                 : displayName.Trim(),
             Samples = samples,
             ColumnNames = columnNames,
-            ColorHex = color
+            ColorHex = color,
+            IsVisible = isVisible
         };
 
         _files.Add(entry);
         SelectedId = entry.Id; // 新打开的文件成为当前选中
         return entry;
+    }
+
+    /// <summary>仅改变绘制状态；成功找到文件时返回 true。</summary>
+    public bool SetVisible(Guid id, bool isVisible)
+    {
+        var entry = _files.FirstOrDefault(f => f.Id == id);
+        if (entry is null)
+            return false;
+        entry.IsVisible = isVisible;
+        return true;
+    }
+
+    /// <summary>切换绘制状态；成功找到文件时返回 true。</summary>
+    public bool ToggleVisibility(Guid id)
+    {
+        var entry = _files.FirstOrDefault(f => f.Id == id);
+        if (entry is null)
+            return false;
+        entry.IsVisible = !entry.IsVisible;
+        return true;
     }
 
     public bool SetColor(Guid id, string colorHex)

@@ -1,4 +1,4 @@
-<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
+﻿<UserControl x:Class="Chassis_Master_Test_Suite.Controls.TrackMapPanel"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
@@ -71,6 +71,8 @@
                             <Button x:Name="Mode3DButton" Content="3D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,10,0"
                                     Click="Mode3DButton_Click" ToolTip="Use the interactive 3D globe"/>
 
+                            <Button x:Name="FitButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,10,0"
+                                    Click="FitButton_Click"/>
                             <StackPanel x:Name="Map2DToolbar" Orientation="Horizontal" VerticalAlignment="Center">
                                 <CheckBox x:Name="BasemapCheck"
                                           Content="Basemap"
@@ -101,8 +103,7 @@
                                     <ComboBoxItem Tag="recorded" Content="Recorded"/>
                                     <ComboBoxItem Tag="ground" Content="Ground" IsSelected="True"/>
                                 </ComboBox>
-                                <Button x:Name="Fit3DButton" Content="Fit" Style="{StaticResource HeaderButtonStyle}"
-                                        Click="Fit3DButton_Click"/>
+
                             </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
@@ -251,7 +252,7 @@
                     </Grid>
 
                     <Grid x:Name="Map3DHost" Visibility="Collapsed">
-                        <wv2:WebView2 x:Name="Map3DWebView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+                        <wv2:WebView2CompositionControl x:Name="Map3DWebView" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
                         <Border x:Name="Map3DStatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
                                 Background="{DynamicResource HudBackground}" BorderBrush="{DynamicResource BorderBrushSoft}"
                                 BorderThickness="1" CornerRadius="4" Padding="14,10" IsHitTestVisible="False">
@@ -263,58 +264,63 @@
 
                     <!-- Gate color legend overlays both 2D and 3D (above Map3DHost in z-order for 2D;
                          3D also mirrors legend inside Cesium HTML because WebView2 HWND airspace). -->
-                    <!-- Gate ops + legend: top-left stack; ops above legend, no overlap -->
+                    <!-- 2D legend; the shared operation toolbar sits outside the map surface. -->
                     <StackPanel Panel.ZIndex="21"
                                 HorizontalAlignment="Left"
                                 VerticalAlignment="Top"
                                 Margin="10,10,0,0"
                                 MaxWidth="720">
-                        <Border x:Name="GateToolbarPanel"
-                                HorizontalAlignment="Left"
-                                Background="{DynamicResource OverlayScrim}"
-                                BorderBrush="{DynamicResource BorderBrushSoft}"
-                                BorderThickness="1"
-                                CornerRadius="4"
-                                Padding="8,6"
-                                Margin="0,0,0,8">
-                            <ScrollViewer HorizontalScrollBarVisibility="Auto"
-                                          VerticalScrollBarVisibility="Disabled"
-                                          Focusable="False">
-                                <StackPanel x:Name="GateToolbar"
-                                            Orientation="Horizontal"
-                                            VerticalAlignment="Center">
-                                    <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                            Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
-                                    <ComboBox x:Name="GateCombo" Width="100" Height="26" Margin="0,0,6,0"
-                                              Style="{StaticResource DarkComboBoxStyle}"
-                                              SelectionChanged="GateCombo_SelectionChanged"
-                                              ToolTip="Select gate"/>
-                                    <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                                    <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
-                                             Text="20" Style="{StaticResource DarkTextBoxStyle}"
-                                             VerticalContentAlignment="Center"
-                                             ToolTip="Gate width (meters)"
-                                             LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
-                                    <TextBlock Text="m" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                    <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                            Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
-                                    <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                            Click="DeleteGateButton_Click" ToolTip="Delete selected gate"/>
-                                    <Button x:Name="DeleteAllGatesButton" Content="Delete All" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                            Click="DeleteAllGatesButton_Click" ToolTip="Remove every gate"/>
-                                    <Button x:Name="ImportGatesButton" Content="Import" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
-                                            Click="ImportGatesButton_Click" ToolTip="Import gates from VBTS (.vbts)"/>
-                                    <Button x:Name="ExportGatesButton"
-                                            Content="Export"
-                                            Style="{StaticResource HeaderButtonStyle}"
-                                            Padding="6,2,0,2"
-                                            Click="ExportGatesButton_Click"
-                                            ToolTip="Export gates (.spl)"/>
-                                </StackPanel>
-                            </ScrollViewer>
-                        </Border>
+            <!-- Shared floating controls overlay the composition-rendered map. -->
+            <Border x:Name="GateToolbarPanel"
+                    HorizontalAlignment="Left"
+                    Background="{DynamicResource OverlayScrim}"
+                    BorderBrush="{DynamicResource BorderBrushSoft}"
+                    BorderThickness="1"
+                    CornerRadius="4"
+                    Padding="8,6"
+                    Margin="0,0,0,8">
+                <StackPanel>
+                    <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                  VerticalScrollBarVisibility="Disabled"
+                                  Focusable="False">
+                        <StackPanel x:Name="GateToolbar"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Center">
+                            <Button x:Name="AddGateButton" Content="Add Gate" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                    Click="AddGateButton_Click" ToolTip="Click track to place a new named gate"/>
+                            <ComboBox x:Name="GateCombo" Width="100" Height="26" Margin="0,0,6,0"
+                                      Style="{StaticResource DarkComboBoxStyle}"
+                                      SelectionChanged="GateCombo_SelectionChanged"
+                                      ToolTip="Select gate"/>
+                            <TextBlock x:Name="GateWidthLabel" Text="W" Foreground="{DynamicResource TextSecondary}" FontSize="11" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                            <TextBox x:Name="GateWidthBox" Width="44" Height="26" Margin="0,0,2,0"
+                                     Text="20" Style="{StaticResource DarkTextBoxStyle}"
+                                     VerticalContentAlignment="Center"
+                                     ToolTip="Gate width (meters)"
+                                     LostFocus="GateWidthBox_LostFocus" KeyDown="GateWidthBox_KeyDown"/>
+                            <TextBlock Text="m" Foreground="{DynamicResource TextMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <Button x:Name="RenameGateButton" Content="Rename" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                    Click="RenameGateButton_Click" ToolTip="Rename selected gate"/>
+                            <Button x:Name="DeleteGateButton" Content="Delete" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                    Click="DeleteGateButton_Click" ToolTip="Delete selected gate"/>
+                            <Button x:Name="DeleteAllGatesButton" Content="Delete All" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                    Click="DeleteAllGatesButton_Click" ToolTip="Remove every gate"/>
+                            <Button x:Name="ImportGatesButton" Content="Import" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,6,0"
+                                    Click="ImportGatesButton_Click" ToolTip="Import gates from VBTS (.vbts)"/>
+                            <Button x:Name="ExportGatesButton"
+                                    Content="Export"
+                                    Style="{StaticResource HeaderButtonStyle}"
+                                    Padding="6,2,0,2"
+                                    Click="ExportGatesButton_Click"
+                                    ToolTip="Export gates (.spl)"/>
+                        </StackPanel>
+                    </ScrollViewer>
+                    <TextBlock x:Name="GateStatusText" Visibility="Collapsed" Margin="0,5,0,0"
+                               Foreground="{DynamicResource TextSecondary}" FontSize="11" TextWrapping="Wrap"/>
+                </StackPanel>
+            </Border>
 
-                        <!-- Gate color legend below ops (WebView2 3D mirrors legend in HTML for HWND airspace). -->
+                        <!-- 2D gate legend; WebView2 mirrors this legend inside its own HTML. -->
                         <Border x:Name="GateLegendPanel"
                                 Visibility="Collapsed"
                                 HorizontalAlignment="Left"

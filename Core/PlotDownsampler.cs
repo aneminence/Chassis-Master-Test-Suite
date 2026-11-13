@@ -101,7 +101,11 @@ public static class PlotDownsampler
         }
 
         // 每桶最多吐 2 点（min + max）→ 桶数 ≈ maxPoints/2
-        var bucketCount = Math.Max(1, maxPoints / 2);
+        // Reserve both endpoints up front. Trimming afterward can discard a
+        // channel's only spike, defeating min/max preservation.
+        if (maxPoints == 2)
+            return new[] { startInclusive, endExclusive - 1 };
+        var bucketCount = Math.Max(1, (maxPoints - 2) / 2);
         var indices = new List<int>(Math.Min(maxPoints + 2, count));
 
         indices.Add(startInclusive);
@@ -125,10 +129,25 @@ public static class PlotDownsampler
             var iMax = scanStart;
             var vMin = getY(scanStart);
             var vMax = vMin;
+            var hasFiniteValue = double.IsFinite(vMin);
 
             for (var i = scanStart + 1; i < bEnd; i++)
             {
                 var v = getY(i);
+                if (!double.IsFinite(v))
+                    continue;
+
+                // NCOM and other sparse channels can start a bucket with a
+                // missing value. NaN cannot seed extrema (all comparisons
+                // would be false). Keep the first point only when the entire
+                // bucket is missing, so that it still represents a gap.
+                if (!hasFiniteValue)
+                {
+                    iMin = iMax = i;
+                    vMin = vMax = v;
+                    hasFiniteValue = true;
+                    continue;
+                }
                 if (v < vMin)
                 {
                     vMin = v;

@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -140,6 +140,9 @@ public partial class MainWindow : Window
 
     /// <summary>线下已打开的 VBO 集合（可多文件对比）。</summary>
     private readonly OfflineFileSet _offlineFiles = new();
+    private readonly Dictionary<string, bool> _fileVisibilityMemory = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<IReadOnlyList<AnnotatedTestRun>, IReadOnlyList<AnnotatedTestRun>> _visibleRunCache =
+        new(ReferenceEqualityComparer.Instance);
     private readonly Dictionary<string, string> _fileColorMemory =
         new(StringComparer.OrdinalIgnoreCase);
 
@@ -352,7 +355,7 @@ public partial class MainWindow : Window
 
                 SyncLayoutMapVisuals();
                 UpdateConnectionStatusUi();
-                ApplyRecordingState(_recordingSession.State);
+                UpdateRecordingStateUi(_recordingSession.State);
                 RefreshThemeToggleUi();
             }
 
@@ -467,45 +470,74 @@ public partial class MainWindow : Window
     // 实时曲线、数值显示和数据消费都照常运行。
     // ============================================================
 
-    private void RecordButton_Click(
+    private async void RecordButton_Click(
         object sender,
         RoutedEventArgs e)
     {
         switch (_recordingSession.State)
         {
             case RecordingState.Stopped:
-                ApplyRecordingState(
+                await ApplyRecordingStateAsync(
                     RecordingState.Recording);
                 break;
 
             case RecordingState.Recording:
-                ApplyRecordingState(
+                await ApplyRecordingStateAsync(
                     RecordingState.Paused);
                 break;
 
             case RecordingState.Paused:
-                ApplyRecordingState(
+                await ApplyRecordingStateAsync(
                     RecordingState.Recording);
                 break;
         }
     }
 
-    private void StopRecordButton_Click(
+    private async void StopRecordButton_Click(
         object sender,
         RoutedEventArgs e)
     {
-        ApplyRecordingState(
+        await ApplyRecordingStateAsync(
             RecordingState.Stopped);
     }
 
     /// <summary>
     /// 切换录制状态（委托 RecordingSession），并同步按钮外观和 Elapsed 计时器。
     /// </summary>
-    private void ApplyRecordingState(
-        RecordingState state)
-    {
-        _recordingSession.ApplyState(state);
+    private bool _recordingTransition;
+    private Task _recordingUiTask = Task.CompletedTask;
 
+    private Task ApplyRecordingStateAsync(RecordingState state)
+    {
+        if (_recordingTransition) return _recordingUiTask;
+        return _recordingUiTask = ChangeRecordingStateAsync(state);
+    }
+
+    private async Task ChangeRecordingStateAsync(RecordingState state)
+    {
+        _recordingTransition = true;
+        RecordButton.IsEnabled = false;
+        StopRecordButton.IsEnabled = false;
+        var path = _recordingSession.CurrentFilePath;
+        try
+        {
+            await _recordingSession.ApplyStateAsync(state);
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, $"录制文件写入或关闭失败：\n{path}\n\n{error.Message}",
+                "Recording", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _recordingTransition = false;
+            RecordButton.IsEnabled = true;
+            UpdateRecordingStateUi(_recordingSession.State);
+        }
+    }
+
+    private void UpdateRecordingStateUi(RecordingState state)
+    {
         switch (state)
         {
             case RecordingState.Stopped:
@@ -598,180 +630,115 @@ public partial class MainWindow : Window
     /// <summary>
     /// Dispatch offline load by extension: VBO, KML/KMZ, or OxTS XCOM/NCOM.
     /// </summary>
+    private CancellationTokenSource? _offlineImportCancellation;
+
     private int LoadOfflineTrackFile(string filePath)
-    {
-        var ext = System.IO.Path.GetExtension(filePath);
-        if (ext.Equals(".kml", StringComparison.OrdinalIgnoreCase) ||
-            ext.Equals(".kmz", StringComparison.OrdinalIgnoreCase))
-            return LoadKmlFile(filePath);
-
-        if (ext.Equals(".xcom", StringComparison.OrdinalIgnoreCase) ||
-            ext.Equals(".ncom", StringComparison.OrdinalIgnoreCase))
-            return LoadXcomFile(filePath);
-
-        return LoadVboFile(filePath);
-    }
-
-    /// <summary>
-    /// OxTS XCOM (container) or raw NCOM import into OfflineFileSet.
-    /// One entry per NCOM stream; RCOM as a separate entry (relative channels).
-    /// </summary>
-    public int LoadXcomFile(string filePath)
     {
         try
         {
-            if (filePath.EndsWith(".ncom", StringComparison.OrdinalIgnoreCase))
-            {
-                var track = XcomImporter.ImportNcomFile(filePath);
-                if (track.Samples.Count == 0)
-                    return 0;
-
-                var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(track.Samples));
-                var columnNames = track.ColumnNames.Count > 0
-                    ? track.ColumnNames.ToList()
-                    : samples[0].Channels.Keys.ToList();
-                if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
-                    columnNames.Add(ChannelIds.SlopePct);
-
-                _offlineFiles.Add(filePath, samples, columnNames, displayName: track.DisplayName);
-                ApplyOfflineDataset();
-                _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
-                SaveSessionMemory();
-                return samples.Count;
-            }
-
-            var imported = XcomImporter.ImportFile(filePath);
-            var total = 0;
-            foreach (var track in imported.Tracks)
-            {
-                if (track.Samples.Count == 0)
-                    continue;
-
-                var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(track.Samples));
-                var columnNames = track.ColumnNames.Count > 0
-                    ? track.ColumnNames.ToList()
-                    : samples[0].Channels.Keys.ToList();
-                if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
-                    columnNames.Add(ChannelIds.SlopePct);
-
-                var virtualPath = $"{filePath}#{track.StreamSerial}-{track.Kind}";
-                _offlineFiles.Add(virtualPath, samples, columnNames, displayName: track.DisplayName);
-                total += samples.Count;
-            }
-
-            if (total <= 0)
-            {
-                MessageBox.Show(
-                    this,
-                    $"XCOM has no usable samples:\n{filePath}\n\n{imported.Summary}",
-                    "XCOM",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return 0;
-            }
-
-            ApplyOfflineDataset();
-            _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
-            SaveSessionMemory();
+            var total = CommitOfflineTrack(OfflineTrackLoader.Load(filePath));
+            if (total > 0) FinishOfflineImport();
             return total;
         }
         catch (Exception ex)
         {
-            MessageBox.Show(
-                this,
-                $"Failed to read OxTS file:\n{filePath}\n\n{ex.Message}",
-                "XCOM",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            ShowOfflineImportError(filePath, ex);
             return 0;
         }
     }
 
+    // Retain synchronous entry points for automation/embedding callers.
+    // Interactive loading and startup restoration use the asynchronous batch path.
+    public int LoadXcomFile(string filePath) => LoadOfflineTrackFile(filePath);
+    public int LoadKmlFile(string filePath) => LoadOfflineTrackFile(filePath);
+    public int LoadVboFile(string filePath) => LoadOfflineTrackFile(filePath);
 
-    /// <summary>
-    /// Phase-1 KML/KMZ import: parse track and overlay on TrackMap via OfflineFileSet.
-    /// </summary>
-    public int LoadKmlFile(string filePath)
+    private int CommitOfflineTrack(OfflineTrackLoadResult loaded)
     {
-        try
+        if (loaded.Warning is { } warning)
+            MessageBox.Show(this, warning, "XCOM", MessageBoxButton.OK, MessageBoxImage.Warning);
+        if (loaded.Metadata is { } metadata)
         {
-            var track = KmlTrackImporter.ImportFile(filePath);
-            var raw = KmlTrackImporter.ToVehicleSamples(track);
-            if (raw.Count == 0)
-                return 0;
-
-            var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
-            var columnNames = samples[0].Channels.Keys.ToList();
-            var entry = _offlineFiles.Add(filePath, samples, columnNames, displayName: track.Name,
-                preferredColorHex: ResolvePreferredFileColor(filePath));
-            _kmlEditSessions[entry.Id] = new KmlEditSession(track);
-            ApplyOfflineDataset();
-            UpdateKmlEditUi();
-
-            _lastLoadedChannelCount =
-                ChannelRegistry.Instance.AvailablePlotChannels.Count;
-
-            SaveSessionMemory();
-            return samples.Count;
+            SessionMetadata.Current = metadata;
+            TestResultsPanelControl.RefreshSessionSummary();
         }
-        catch (Exception ex)
+        var total = 0;
+        foreach (var track in loaded.Tracks)
         {
-            MessageBox.Show(
-                this,
-                $"无法读取 KML/KMZ 文件：\n{filePath}\n\n{ex.Message}",
-                "KML",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-
-            return 0;
+            var entry = _offlineFiles.Add(track.Path, track.Samples, track.Columns, track.Name,
+                track.RememberColor ? ResolvePreferredFileColor(track.Path) : null,
+                isVisible: !_fileVisibilityMemory.TryGetValue(track.Path, out var visible) || visible);
+            if (track.Kml is { } kml)
+                _kmlEditSessions[entry.Id] = new KmlEditSession(kml);
+            total += track.Samples.Count;
         }
+        return total;
     }
 
-
-    public int LoadVboFile(string filePath)
+    private void FinishOfflineImport()
     {
+        ApplyOfflineDataset();
+        UpdateKmlEditUi();
+        _lastLoadedChannelCount = ChannelRegistry.Instance.AvailablePlotChannels.Count;
+        SaveSessionMemory();
+    }
+
+    private void ShowOfflineImportError(string path, Exception error)
+    {
+        var ext = Path.GetExtension(path).ToLowerInvariant();
+        var title = ext is ".xcom" or ".ncom" ? "XCOM" : ext is ".kml" or ".kmz" ? "KML" : "VBO";
+        var prefix = title == "XCOM" ? "Failed to read OxTS file:" : $"无法读取 {title} 文件：";
+        MessageBox.Show(this, $"{prefix}\n{path}\n\n{error.Message}", title,
+            MessageBoxButton.OK, MessageBoxImage.Warning);
+    }
+
+    private async Task<int> LoadOfflineTrackFilesAsync(IEnumerable<string> paths)
+    {
+        if (_offlineImportCancellation is not null) return 0;
+        using var cancellation = new CancellationTokenSource();
+        _offlineImportCancellation = cancellation;
+        var wasEnabled = IsEnabled;
+        var previousCursor = Cursor;
+        IsEnabled = false;
+        Cursor = Cursors.Wait;
         try
         {
-            var reader = new VboReader(filePath);
-            var raw = reader.ReadAll();
-            if (raw.Count == 0)
-                return 0;
-
-            if (reader.SessionData.Count > 0)
+            var files = paths.ToArray();
+            var results = await Task.Run(() =>
             {
-                SessionMetadata.Current = SessionMetadata.FromVboLines(reader.SessionData);
-                TestResultsPanelControl.RefreshSessionSummary();
+                var loaded = new List<(string Path, OfflineTrackLoadResult? Result, Exception? Error)>();
+                foreach (var path in files)
+                {
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    try { loaded.Add((path, OfflineTrackLoader.Load(path, cancellation.Token), null)); }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception error) { loaded.Add((path, null, error)); }
+                }
+                return loaded;
+            }, cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            var total = 0;
+            // UI changes stay on the dispatcher and preserve file/stream order.
+            foreach (var result in results)
+            {
+                if (result.Error is { } error) ShowOfflineImportError(result.Path, error);
+                else if (result.Result is { } loaded) total += CommitOfflineTrack(loaded);
             }
-
-            var samples = SlopeEnricher.EnrichAll(SampleEnricher.EnrichAll(raw));
-
-            var columnNames = reader.Columns.Count > 0
-                ? reader.Columns.ToList()
-                : samples[0].Channels.Keys.ToList();
-            // SlopeEnricher writes slope_pct into Channels; VBO column headers do not list it.
-            if (!columnNames.Contains(ChannelIds.SlopePct, StringComparer.OrdinalIgnoreCase))
-                columnNames.Add(ChannelIds.SlopePct);
-
-            var entry = _offlineFiles.Add(filePath, samples, columnNames,
-                preferredColorHex: ResolvePreferredFileColor(filePath));
-            ApplyOfflineDataset();
-
-            _lastLoadedChannelCount =
-                ChannelRegistry.Instance.AvailablePlotChannels.Count;
-
-            SaveSessionMemory();
-            return samples.Count;
+            if (total > 0) FinishOfflineImport();
+            return total;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { return 0; }
+        catch (Exception error)
         {
-            MessageBox.Show(
-                this,
-                $"无法读取 VBO 文件：\n{filePath}\n\n{ex.Message}",
-                "VBO",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-
+            MessageBox.Show(this, $"文件导入失败：\n{error.Message}", "Import",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
             return 0;
+        }
+        finally
+        {
+            _offlineImportCancellation = null;
+            if (!_closingInProgress) IsEnabled = wasEnabled;
+            Cursor = previousCursor;
         }
     }
 
@@ -781,6 +748,7 @@ public partial class MainWindow : Window
     /// </summary>
     private void ApplyOfflineDataset()
     {
+        _visibleRunCache.Clear();
         _historyOfflineMode = true;
 
         if (_offlineFiles.Count == 0)
@@ -801,11 +769,11 @@ public partial class MainWindow : Window
         RemergeMathsChannels();
         RefreshChannelSelectorsFromRegistry();
 
-        // 主历史 = 当前选中文件（芯片点击切换；默认最新打开）
+        // Offline history is the complete selected file. Do not copy it into
+        // the bounded live buffer: long recordings would lose their beginning.
         var primary = _offlineFiles.Primary!;
         _sampleHistory.Clear();
-        _sampleHistory.AddRange(primary.Samples);
-        _latestSample = primary.Samples[^1];
+        _latestSample = primary.Samples.Count > 0 ? primary.Samples[^1] : null;
 
         RebuildOfflineFileChips();
         RefreshAllPlots(force: true);
@@ -850,16 +818,33 @@ public partial class MainWindow : Window
                 Tag = file.Id,
                 ToolTip = isSelected
                     ? $"Selected: {file.FilePath}" + (isDirty ? " · modified, not saved" : "")
-                    : $"Click to focus Dashboard / cursor on: {file.DisplayName} (all files stay overlaid)"
+                    : Loc.T("Curves.FocusFileTip", file.DisplayName)
             };
 
             chip.MouseLeftButtonUp += OfflineFileChip_Click;
 
             var row = new StackPanel { Orientation = Orientation.Horizontal };
 
+            var visibility = new Button
+            {
+                Content = CreateFileVisibilityIcon(file.IsVisible),
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(2),
+                Margin = new Thickness(0, 0, 4, 0),
+                Tag = file.Id,
+                Style = TryFindResource("ToolButtonStyle") as Style,
+                ToolTip = Loc.T(file.IsVisible ? "Curves.HideFileTip" : "Curves.ShowFileTip")
+            };
+            System.Windows.Automation.AutomationProperties.SetName(visibility,
+                $"{visibility.ToolTip}: {file.DisplayName}");
+            visibility.Click += OfflineFileVisibilityButton_Click;
+            row.Children.Add(visibility);
+
             row.Children.Add(new TextBlock
             {
                 Text = file.DisplayName + (isDirty ? " *" : ""),
+                Opacity = file.IsVisible ? 1.0 : 0.5,
                 Foreground = (Brush)FindResource("TextPrimary"),
                 FontSize = 11,
                 FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
@@ -909,6 +894,41 @@ public partial class MainWindow : Window
         "#C06AD8", "#E08A4A", "#5AC8C8", "#D8D84A",
         "#7EB6FF", "#FF7EB6", "#A0E060", "#FFB347"
     };
+
+    private static FrameworkElement CreateFileVisibilityIcon(bool visible)
+    {
+        var brush = ThemeBrushes.Brush(visible ? "TextPrimary" : "TextSecondary");
+        var canvas = new Canvas { Width = 16, Height = 16, IsHitTestVisible = false };
+        canvas.Children.Add(new System.Windows.Shapes.Path
+        {
+            Data = Geometry.Parse("M1,8 C4,2 12,2 15,8 C12,14 4,14 1,8 Z M10,8 A2,2 0 1 1 6,8 A2,2 0 1 1 10,8"),
+            Stroke = brush, StrokeThickness = 1.2
+        });
+        if (!visible)
+            canvas.Children.Add(new System.Windows.Shapes.Line
+            {
+                X1 = 2, Y1 = 2, X2 = 14, Y2 = 14, Stroke = brush, StrokeThickness = 1.6
+            });
+        return canvas;
+    }
+
+    private void OfflineFileVisibilityButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: Guid id } || !_offlineFiles.ToggleVisibility(id))
+            return;
+        e.Handled = true;
+        var file = _offlineFiles.Files.First(f => f.Id == id);
+        _fileVisibilityMemory[file.FilePath] = file.IsVisible;
+        _visibleRunCache.Clear();
+        // Keep the cursor's X coordinate and recompute visible-file readouts.
+        foreach (var plot in _plots)
+            UpdateSelectionMeasure(plot);
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        ApplyRunAnnotationsToUi();
+        UpdateNumericDisplay();
+        SaveSessionMemory();
+    }
 
     private void OfflineFileColorButton_Click(object sender, RoutedEventArgs e)
     {
@@ -1189,9 +1209,7 @@ public partial class MainWindow : Window
         if (dialog.ShowDialog(this) != true)
             return;
 
-        var total = 0;
-        foreach (var file in dialog.FileNames)
-            total += LoadOfflineTrackFile(file);
+        var total = await LoadOfflineTrackFilesAsync(dialog.FileNames);
 
         if (total <= 0)
             return;
@@ -1704,6 +1722,8 @@ public partial class MainWindow : Window
                 plot.AddPlotButton.Content = Loc.T("Curves.AddPlot");
             if (plot.RemovePlotButton is not null)
                 plot.RemovePlotButton.Content = Loc.T("Curves.RemovePlot");
+            if (plot.WpfPlot?.Plot.Axes.Bottom.TickGenerator is ElapsedTimeTickGenerator)
+                plot.WpfPlot.Refresh();
         }
     }
 
@@ -3137,6 +3157,8 @@ public partial class MainWindow : Window
     // 刷新所有 Plot
     // ============================================================
 
+    private readonly Dictionary<(Guid File, string Axis, bool Elapsed), PlotXAxisData> _offlinePlotXCache = new();
+
     private void RefreshAllPlots(bool force = false)
     {
         if (_isRefreshingPlots)
@@ -3146,8 +3168,8 @@ public partial class MainWindow : Window
 
         try
         {
-            // 整拍只 Snapshot 一次，所有 Plot + Track Map 共用。
-            var history = _sampleHistory.Snapshot();
+            // One stable active list for all plots and map/cursor synchronization.
+            var history = GetHistorySnapshot();
 
             // 手动平移/缩放时不要 Clear+重建，否则像「缩放被锁定」
             if (_activeManualAxisGestures == 0)
@@ -3219,23 +3241,25 @@ public partial class MainWindow : Window
     private void RefreshTrackMap(
         IReadOnlyList<VehicleSample>? liveSnapshot = null)
     {
-        if (_isOfflineMode && _offlineFiles.Count > 0)
+        if ((_isOfflineMode || _historyOfflineMode) && _offlineFiles.Count > 0)
         {
             var layers = _offlineFiles.Files
-                .Select(f => new Controls.TrackMapPanel.TrackLayer(
+                .Select((f, index) => new Controls.TrackMapPanel.TrackLayer(
                     f.DisplayName,
                     f.ColorHex,
-                    f.Samples))
+                    f.Samples, IsVisible: f.IsVisible, SourceIndex: index))
                 .ToList();
+            var selectedIndex = _offlineFiles.Files.ToList().FindIndex(f => f.Id == _offlineFiles.Primary?.Id);
+            TrackMapPanelControl.SetSelectedTrack(selectedIndex);
             TrackMapPanelControl.SetTracks(layers);
             TrackMapPanelControl.SetRunHighlights(
-                _annotatedRuns,
-                _selectedAnnotatedRun);
+                GetVisibleRuns(_annotatedRuns),
+                VisibleSelectedRunNumber);
             return;
         }
 
         TrackMapPanelControl.SetTrack(
-            liveSnapshot ?? _sampleHistory.Snapshot());
+            liveSnapshot ?? GetHistorySnapshot());
         TrackMapPanelControl.SetRunHighlights(
             _annotatedRuns,
             _selectedAnnotatedRun);
@@ -3289,6 +3313,17 @@ public partial class MainWindow : Window
         plot.LastSamples = null;
         plot.LastChannelSeries.Clear();
         plot.IsTimeAxis = string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
+
+        if ((_isOfflineMode || _historyOfflineMode) && _offlineFiles.VisibleCount == 0)
+        {
+            ClearCompareEdgeLegend(scottPlot);
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            scottPlot.XLabel(GetAxisLabel(selectedXSignal));
+            ApplyDateTimeAxisIfNeeded(plot, selectedXSignal);
+            RefreshPlotTitle(plot);
+            plot.WpfPlot.Refresh();
+            return;
+        }
 
 
         // ========================================================
@@ -3406,64 +3441,47 @@ public partial class MainWindow : Window
 
 
         // 线下多文件：同一通道叠多条曲线（按文件着色）
-        // Offline multi-file: ALWAYS overlay every open file (chip click = focus, not hide).
+        // File focus and visibility are independent. Only visible files contribute
+        // geometry and automatic bounds; every file retains its original data.
         // X policy: if all files' time windows overlap within 2h, use absolute Beijing time;
         // otherwise use elapsed seconds from each file's first sample so curves superimpose.
-        if (_isOfflineMode && _offlineFiles.Count > 1)
+        if ((_isOfflineMode || _historyOfflineMode) && _offlineFiles.Count > 1)
         {
+            foreach (var key in _offlinePlotXCache.Keys
+                .Where(key => key.Axis != selectedXSignal || !_offlineFiles.Files.Any(file => file.Id == key.File)).ToArray())
+                _offlinePlotXCache.Remove(key);
             var focusId = _offlineFiles.Selected?.Id;
-            var useElapsedTime = false;
-            var isTimeAxis = string.Equals(selectedXSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase);
-            if (isTimeAxis)
-            {
-                long globalMin = long.MaxValue, globalMax = long.MinValue;
-                foreach (var file in _offlineFiles.Files)
-                {
-                    if (file.Samples.Count < 2) continue;
-                    var t0 = file.Samples[0].Timestamp;
-                    var t1 = file.Samples[^1].Timestamp;
-                    if (t0 > t1) (t0, t1) = (t1, t0);
-                    if (t0 < globalMin) globalMin = t0;
-                    if (t1 > globalMax) globalMax = t1;
-                }
-                // Different days / far-apart sessions → elapsed overlay
-                useElapsedTime = globalMax > globalMin && (globalMax - globalMin) > 2L * 60 * 60 * 1000;
-            }
+            var useElapsedTime = ShouldUseElapsedTimeOverlay(selectedXSignal);
 
             double minX = double.MaxValue, maxX = double.MinValue;
-            var allXsForLimits = new List<double>();
-
-            foreach (var channel in selectedChannels)
+            foreach (var file in _offlineFiles.VisibleFiles)
             {
-                foreach (var file in _offlineFiles.Files)
+                if (file.Samples.Count < 2) continue;
+                var cacheKey = (file.Id, selectedXSignal, useElapsedTime);
+                if (!_offlinePlotXCache.TryGetValue(cacheKey, out var axis)
+                    || !ReferenceEquals(axis.Samples, file.Samples))
                 {
-                    if (file.Samples.Count < 2)
-                        continue;
-
-                    var n = file.Samples.Count;
-                    var fileXs = new double[n];
-                    var fileYs = new double[n];
-                    var tOrigin = file.Samples[0].Timestamp;
-
-                    for (var i = 0; i < n; i++)
+                    var origin = file.Samples[0].Timestamp;
+                    axis = new PlotXAxisData(file.Samples, sample => useElapsedTime
+                        ? (sample.Timestamp - origin) / 1000.0
+                        : GetAxisValue(sample, selectedXSignal));
+                    _offlinePlotXCache[cacheKey] = axis;
+                }
+                minX = Math.Min(minX, axis.Min);
+                maxX = Math.Max(maxX, axis.Max);
+                foreach (var channel in selectedChannels)
+                {
+                    // Each channel chooses its own extrema; shared indices from
+                    // the first channel would hide spikes in the other channels.
+                    var (fileXs, fileYs) = axis.BuildSeries(
+                        sample => GetSignalValue(sample, channel.ChannelId),
+                        previousLimits.Left, previousLimits.Right, autoX);
+                    foreach (var value in fileYs)
                     {
-                        if (useElapsedTime)
-                            fileXs[i] = (file.Samples[i].Timestamp - tOrigin) / 1000.0;
-                        else
-                            fileXs[i] = GetAxisValue(file.Samples[i], selectedXSignal);
-
-                        var value = GetSignalValue(file.Samples[i], channel.ChannelId);
-                        fileYs[i] = value;
-                        if (!double.IsNaN(value) && !double.IsInfinity(value))
-                        {
-                            if (value < minY) minY = value;
-                            if (value > maxY) maxY = value;
-                        }
-                        if (fileXs[i] < minX) minX = fileXs[i];
-                        if (fileXs[i] > maxX) maxX = fileXs[i];
-                        allXsForLimits.Add(fileXs[i]);
+                        if (!double.IsFinite(value)) continue;
+                        minY = Math.Min(minY, value);
+                        maxY = Math.Max(maxY, value);
                     }
-
                     var focused = focusId is Guid fid && file.Id == fid;
                     var scatter = scottPlot.Add.Scatter(fileXs, fileYs);
                     scatter.Color = ScottPlot.Color.FromHex(file.ColorHex);
@@ -3496,18 +3514,23 @@ public partial class MainWindow : Window
                     history, indices, sample => GetSignalValue(sample, channel.ChannelId));
                 plot.LastChannelSeries.Add((channel.ChannelId, ys));
             }
+            if (_offlineFiles.Primary is { IsVisible: false })
+            {
+                plot.LastXs = null;
+                plot.LastSamples = null;
+                plot.LastChannelSeries.Clear();
+            }
 
             // Axis label + datetime ticks
             if (useElapsedTime)
             {
                 plot.IsTimeAxis = false;
                 scottPlot.Title(plot.Name);
-                scottPlot.XLabel("Elapsed (s) — multi-file overlay");
                 scottPlot.YLabel("Value");
                 scottPlot.Legend.IsVisible = true;
                 ApplyDarkPlotStyle(plot.WpfPlot);
-                // No DateTime axis when using elapsed overlay
-                var limitXs = allXsForLimits.Count > 0 ? allXsForLimits.ToArray() : xs;
+                ApplyElapsedTimeAxis(plot, "Curves.ElapsedOverlayAxis");
+                var limitXs = double.IsFinite(minX) && double.IsFinite(maxX) ? new[] { minX, maxX } : xs;
                 ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
                 ApplyPlotOverlays(plot);
                 plot.WpfPlot.Refresh();
@@ -3516,7 +3539,7 @@ public partial class MainWindow : Window
             else
             {
                 // Absolute time: limits must span ALL files, not just primary xs
-                var limitXs = allXsForLimits.Count > 0 ? allXsForLimits.ToArray() : xs;
+                var limitXs = double.IsFinite(minX) && double.IsFinite(maxX) ? new[] { minX, maxX } : xs;
                 // Fall through to shared title/limits below using limitXs — stash on plot via local replace of xs
                 xs = limitXs;
             }
@@ -4214,7 +4237,6 @@ public partial class MainWindow : Window
             {
                 _offlineFiles.Select(file.Id);
                 _sampleHistory.Clear();
-                _sampleHistory.AddRange(file.Samples);
                 _latestSample = file.Samples.Count > 0 ? file.Samples[^1] : null;
                 RebuildOfflineFileChips();
                 RefreshAllPlots(force: true);
@@ -4466,6 +4488,10 @@ public partial class MainWindow : Window
                 tickGen.LabelFormatter = FormatBeijingTickLabel;
             }
         }
+        else if (string.Equals(selectedXSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyElapsedTimeAxis(plot, "Curves.ElapsedAxis");
+        }
         else
         {
             // Leaving Time: DateTimeTicksBottom() replaced Bottom with DateTimeXAxis.
@@ -4477,6 +4503,22 @@ public partial class MainWindow : Window
 
         // DateTimeTicksBottom 会把刻度字重置成黑色，必须再刷浅色
         ApplyAxisLabelColors(plot.WpfPlot.Plot);
+    }
+
+
+    private static void ApplyElapsedTimeAxis(PlotDefinition plot, string labelKey)
+    {
+        if (plot.WpfPlot is null)
+            return;
+        var scottPlot = plot.WpfPlot.Plot;
+        // Restore the complete numeric axis when entering from absolute Time mode.
+        scottPlot.Axes.NumericTicksBottom();
+        scottPlot.Axes.Bottom.TickGenerator = new ElapsedTimeTickGenerator(
+            pattern => scottPlot.XLabel(Loc.T(labelKey, pattern)));
+        var limits = scottPlot.Axes.GetLimits();
+        scottPlot.XLabel(Loc.T(labelKey,
+            ElapsedTimeAxisFormat.ForRange(limits.Left, limits.Right, double.NaN).Pattern));
+        ApplyAxisLabelColors(scottPlot);
     }
 
 
@@ -4577,6 +4619,29 @@ public partial class MainWindow : Window
 
     private bool IsCompareModeActive => _compareRuns.Count >= 2;
 
+    private bool IsRunVisible(AnnotatedTestRun run) =>
+        !(_isOfflineMode || _historyOfflineMode)
+        || run.SourceFileId is not Guid id
+        || _offlineFiles.Files.FirstOrDefault(file => file.Id == id)?.IsVisible != false;
+
+    private IReadOnlyList<AnnotatedTestRun> GetVisibleRuns(IReadOnlyList<AnnotatedTestRun> runs)
+    {
+        if (!(_isOfflineMode || _historyOfflineMode) || _offlineFiles.VisibleCount == _offlineFiles.Count)
+            return runs;
+        if (_visibleRunCache.TryGetValue(runs, out var cached))
+            return cached;
+        if (_visibleRunCache.Count >= 2)
+            _visibleRunCache.Clear();
+        var visible = runs.Where(IsRunVisible).ToArray();
+        IReadOnlyList<AnnotatedTestRun> result = visible.Length == runs.Count ? runs : visible;
+        _visibleRunCache[runs] = result;
+        return result;
+    }
+
+    private int? VisibleSelectedRunNumber => _selectedAnnotatedRun is int number
+        && _annotatedRuns.Any(run => run.RunNumber == number && IsRunVisible(run))
+            ? number : null;
+
     private void ApplyRunAnnotationsToUi()
     {
         foreach (var plot in _plots)
@@ -4587,7 +4652,7 @@ public partial class MainWindow : Window
 
         // Map: when comparing, highlight checked runs; else all annotated with focus.
         var mapRuns = IsCompareModeActive ? _compareRuns : _annotatedRuns;
-        TrackMapPanelControl.SetRunHighlights(mapRuns, _selectedAnnotatedRun);
+        TrackMapPanelControl.SetRunHighlights(GetVisibleRuns(mapRuns), VisibleSelectedRunNumber);
     }
 
     private void DrawCompareOverlay(
@@ -4617,6 +4682,14 @@ public partial class MainWindow : Window
                 : GetAxisLabel(xSignal));
         scottPlot.YLabel("Value");
 
+        if (useTimestampTime || useRelativeElapsed)
+            ApplyElapsedTimeAxis(plot, useTimestampTime ? "Curves.RunTimeAxis" : "Curves.LapElapsedAxis");
+        else
+        {
+            scottPlot.Axes.NumericTicksBottom();
+            ApplyAxisLabelColors(scottPlot);
+        }
+
         double minY = double.MaxValue;
         double maxY = double.MinValue;
         double minX = double.MaxValue;
@@ -4629,7 +4702,7 @@ public partial class MainWindow : Window
                 new ChannelDefinition { ChannelId = ChannelIds.Velocity }
             };
 
-        foreach (var annotated in _compareRuns)
+        foreach (var annotated in _compareRuns.Where(IsRunVisible))
         {
             var run = annotated.Result;
             var samples = annotated.Samples;
@@ -4751,7 +4824,7 @@ public partial class MainWindow : Window
 
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
 
-        foreach (var annotated in _annotatedRuns)
+        foreach (var annotated in _annotatedRuns.Where(IsRunVisible))
         {
             var run = annotated.Result;
             if (!TryGetRunAxisRange(annotated, xSignal, out var left, out var right))
@@ -4916,6 +4989,8 @@ public partial class MainWindow : Window
     {
         if (!TryGetSelectedKmlEdit(out var entry, out var session))
             return;
+        if (!entry.IsVisible)
+            return;
 
         var xChannel = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
         foreach (var mark in session.Marks)
@@ -4955,11 +5030,7 @@ public partial class MainWindow : Window
 
     private IReadOnlyList<VehicleSample> GetGatePlotSamples()
     {
-        if (_isOfflineMode && _offlineFiles.Selected is { Samples.Count: > 1 } selected)
-            return selected.Samples;
-        if (_isOfflineMode && _offlineFiles.Primary is { Samples.Count: > 1 } primary)
-            return primary.Samples;
-        return _sampleHistory.Snapshot();
+        return GetHistorySnapshot();
     }
 
     private static bool TryFindGateCrossingX(
@@ -5109,7 +5180,7 @@ public partial class MainWindow : Window
             plot.LastXs.Length == 0 ||
             plot.LastChannelSeries.Count == 0)
         {
-            return FormatAxisValue(cursorX, plot.IsTimeAxis);
+            return FormatAxisValue(cursorX, plot);
         }
 
         var index = FindNearestIndex(plot.LastXs, cursorX);
@@ -5117,7 +5188,7 @@ public partial class MainWindow : Window
 
         var lines = new List<string>
         {
-            FormatAxisValue(xAt, plot.IsTimeAxis)
+            FormatAxisValue(xAt, plot)
         };
 
         foreach (var (signal, ys) in plot.LastChannelSeries)
@@ -5136,9 +5207,15 @@ public partial class MainWindow : Window
 
     private static string FormatAxisValue(
         double x,
-        bool isTimeAxis)
+        PlotDefinition plot)
     {
-        if (!isTimeAxis)
+        if (plot.WpfPlot?.Plot.Axes.Bottom.TickGenerator is ElapsedTimeTickGenerator)
+        {
+            var limits = plot.WpfPlot.Plot.Axes.GetLimits();
+            var format = ElapsedTimeAxisFormat.ForReadout(limits.Left, limits.Right);
+            return $"X = {format.Format(x)} ({format.Pattern})";
+        }
+        if (!plot.IsTimeAxis)
             return $"X = {x:0.###}";
 
         try
@@ -5235,6 +5312,7 @@ public partial class MainWindow : Window
 
     private void RemergeMathsChannels()
     {
+        _offlinePlotXCache.Clear();
         var maths = MathsChannelStore.Instance.Definitions
             .Select(d => (
                 d.Id,
@@ -5285,7 +5363,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        plot.MeasureText = FormatSelectionMeasures(measures, x1, x2);
+        plot.MeasureText = FormatSelectionMeasures(measures, x1, x2,
+            plot.WpfPlot?.Plot.Axes.Bottom.TickGenerator is ElapsedTimeTickGenerator
+                ? ElapsedTimeAxisFormat.ForReadout(x1, x2)
+                : null);
     }
 
     private List<(string Label, SelectionMeasure.Result Measure)> BuildSelectionMeasures(
@@ -5298,7 +5379,7 @@ public partial class MainWindow : Window
 
         if (IsCompareModeActive)
         {
-            foreach (var run in _compareRuns)
+            foreach (var run in _compareRuns.Where(IsRunVisible))
             {
                 var source = run.Samples;
                 if (source.Count == 0)
@@ -5326,7 +5407,7 @@ public partial class MainWindow : Window
         if (_isOfflineMode && _offlineFiles.Count > 0)
         {
             var useElapsedTime = ShouldUseElapsedTimeOverlay(xSignal);
-            foreach (var file in _offlineFiles.Files)
+            foreach (var file in _offlineFiles.VisibleFiles)
             {
                 var samples = MathsEnricher.Apply(file.Samples, MathsChannelStore.Instance.Definitions);
                 if (samples.Count == 0)
@@ -5352,6 +5433,8 @@ public partial class MainWindow : Window
 
     private bool ShouldUseElapsedTimeOverlay(string xSignal)
     {
+        // Keep the coordinate convention stable while toggling layer visibility.
+        // Visible layers alone determine drawn geometry and automatic bounds.
         if (_offlineFiles.Count <= 1 ||
             !string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
             return false;
@@ -5370,11 +5453,15 @@ public partial class MainWindow : Window
     private static string FormatSelectionMeasures(
         IReadOnlyList<(string Label, SelectionMeasure.Result Measure)> measures,
         double x1,
-        double x2)
+        double x2,
+        ElapsedTimeAxisFormat? elapsedFormat)
     {
+        var range = elapsedFormat is { } format
+            ? $"{format.Format(Math.Min(x1, x2))}..{format.Format(Math.Max(x1, x2))} ({format.Pattern})"
+            : $"{Math.Min(x1, x2):0.###}..{Math.Max(x1, x2):0.###}";
         var lines = new List<string>
         {
-            $"Measure [{Math.Min(x1, x2):0.###}..{Math.Max(x1, x2):0.###}]"
+            $"Measure [{range}]"
         };
         var showLabels = measures.Count > 1;
         foreach (var (label, measure) in measures)
@@ -5401,7 +5488,8 @@ public partial class MainWindow : Window
 
     private IReadOnlyList<VehicleSample> GetHistorySnapshot()
     {
-        return _sampleHistory.Snapshot();
+        return ActiveSampleHistory.GetSnapshot(
+            _historyOfflineMode || _isOfflineMode, _offlineFiles, _sampleHistory);
     }
 
     private IReadOnlyList<SampleSource> GetTestSampleSources()
@@ -5420,7 +5508,7 @@ public partial class MainWindow : Window
                 .ToList();
         }
 
-        var live = _sampleHistory.Snapshot();
+        var live = GetHistorySnapshot();
         if (live.Count == 0)
             return Array.Empty<SampleSource>();
 
@@ -6578,6 +6666,9 @@ public partial class MainWindow : Window
         object? sender,
         EventArgs e)
     {
+        if (!_recordingTransition && _recordingSession.State != RecordingState.Stopped
+            && _recordingSession.Completion.IsFaulted)
+            _ = ApplyRecordingStateAsync(RecordingState.Stopped);
         UpdateNumericDisplay();
 
         UpdateNetworkDisplay();
@@ -6683,7 +6774,9 @@ public partial class MainWindow : Window
         }
         else
         {
-            TrackMapPanelControl.SetCursorSample(cursorSample);
+            TrackMapPanelControl.SetCursorSample(
+                (_isOfflineMode || _historyOfflineMode) && _offlineFiles.Primary is { IsVisible: false }
+                    ? null : cursorSample);
         }
     }
 
@@ -6727,7 +6820,7 @@ public partial class MainWindow : Window
         var relativeNumericAxis = relativeElapsed || relativeDistance;
         var result = new List<TrackMapPanel.CompareCursor>(_compareRuns.Count);
 
-        foreach (var annotated in _compareRuns)
+        foreach (var annotated in _compareRuns.Where(IsRunVisible))
         {
             var run = annotated.Result;
             var samples = annotated.Samples;
@@ -7152,14 +7245,38 @@ public partial class MainWindow : Window
     // 程序关闭
     // ============================================================
 
-    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    private bool _closingInProgress;
+    private bool _allowClose;
+
+    private async void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
     {
+        if (_allowClose) return;
+        e.Cancel = true;
+        if (_closingInProgress) return;
         foreach (var id in _offlineFiles.Files.Select(f => f.Id).ToList())
+            if (!ConfirmLeaveKmlEdit(id)) return;
+
+        _closingInProgress = true;
+        _offlineImportCancellation?.Cancel();
+        IsEnabled = false;
+        _uiTimer.Stop();
+        var path = _recordingSession.CurrentFilePath;
+        try
         {
-            if (ConfirmLeaveKmlEdit(id))
-                continue;
-            e.Cancel = true;
-            return;
+            await _recordingUiTask;
+            await _recordingSession.DisposeAsync();
+        }
+        catch (Exception error)
+        {
+            MessageBox.Show(this, $"录制文件关闭失败：\n{path}\n\n{error.Message}",
+                "Recording", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _allowClose = true;
+            // Dispose may finish synchronously: do not re-enter Close while
+            // WPF is still dispatching the original Closing event.
+            _ = Dispatcher.BeginInvoke(new Action(Close));
         }
     }
 
@@ -7218,7 +7335,7 @@ public partial class MainWindow : Window
         // 释放资源
         // ========================================================
 
-        _recordingSession.Dispose();
+        // RecordingSession has already drained asynchronously in Closing.
 
 
         _udpSender?.Dispose();
@@ -7360,6 +7477,8 @@ public partial class MainWindow : Window
         {
             snap.VboFiles.Add(f.FilePath);
             snap.FileColors[f.FilePath] = f.ColorHex;
+            snap.FileVisibility[f.FilePath] = f.IsVisible;
+            _fileVisibilityMemory[f.FilePath] = f.IsVisible;
             _fileColorMemory[f.FilePath] = f.ColorHex;
         }
 
@@ -7368,6 +7487,8 @@ public partial class MainWindow : Window
             if (!snap.FileColors.ContainsKey(kv.Key))
                 snap.FileColors[kv.Key] = kv.Value;
         }
+        foreach (var kv in _fileVisibilityMemory)
+            snap.FileVisibility.TryAdd(kv.Key, kv.Value);
 
         foreach (var g in GateStore.Instance.Gates)
             snap.Gates.Add(SessionMemoryStore.FromGate(g));
@@ -7446,6 +7567,10 @@ public partial class MainWindow : Window
                 }
             }
 
+            foreach (var pair in snap.FileVisibility)
+                if (!string.IsNullOrWhiteSpace(pair.Key))
+                    _fileVisibilityMemory[pair.Key] = pair.Value;
+
             var existing = snap.VboFiles
                 .Where(p => !string.IsNullOrWhiteSpace(p) && File.Exists(p))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -7455,8 +7580,8 @@ public partial class MainWindow : Window
             {
                 await EnterOfflineModeAsync(stopOnline: true);
                 // VboFiles list holds all offline tracks (VBO and KML/KMZ).
-                foreach (var path in existing)
-                    LoadOfflineTrackFile(path);
+                await LoadOfflineTrackFilesAsync(existing);
+                if (_closingInProgress) return;
 
                 if (!string.IsNullOrWhiteSpace(snap.ActiveVboPath))
                 {

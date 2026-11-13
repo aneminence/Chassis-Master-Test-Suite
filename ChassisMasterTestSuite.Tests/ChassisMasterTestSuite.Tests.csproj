@@ -30,7 +30,10 @@
     <Compile Include="..\Core\ChannelInfo.cs" Link="Linked\Core\ChannelInfo.cs" />
     <Compile Include="..\Core\ChannelRegistry.cs" Link="Linked\Core\ChannelRegistry.cs" />
     <Compile Include="..\Core\DataBus.cs" Link="Linked\Core\DataBus.cs" />
+    <Compile Include="..\Core\ElapsedTimeAxisFormat.cs" Link="Linked\Core\ElapsedTimeAxisFormat.cs" />
     <Compile Include="..\Core\PlotDownsampler.cs" Link="Linked\Core\PlotDownsampler.cs" />
+    <Compile Include="..\Core\PlotXAxisData.cs" Link="Linked\Core\PlotXAxisData.cs" />
+    <Compile Include="..\Core\TrackUpdateGate.cs" Link="Linked\Core\TrackUpdateGate.cs" />
     <Compile Include="..\Core\SampleHistoryBuffer.cs" Link="Linked\Core\SampleHistoryBuffer.cs" />
     <Compile Include="..\Core\VehicleSample.cs" Link="Linked\Core\VehicleSample.cs" />
     <Compile Include="..\Core\LiveVehicleRoster.cs" Link="Linked\Core\LiveVehicleRoster.cs" />
@@ -52,6 +55,9 @@
     <Compile Include="..\Analysis\TestRunResult.cs" Link="Linked\Analysis\TestRunResult.cs" />
     <Compile Include="..\Analysis\SpeedToSpeedEngine.cs" Link="Linked\Analysis\SpeedToSpeedEngine.cs" />
     <Compile Include="..\Session\SessionMetadata.cs" Link="Linked\Session\SessionMetadata.cs" />
+    <Compile Include="..\Session\OfflineFileSet.cs" Link="Linked\Session\OfflineFileSet.cs" />
+    <Compile Include="..\Session\ActiveSampleHistory.cs" Link="Linked\Session\ActiveSampleHistory.cs" />
+    <Compile Include="..\Session\RecordingSession.cs" Link="Linked\Session\RecordingSession.cs" />
     <Compile Include="..\Analysis\SampleSource.cs" Link="Linked\Analysis\SampleSource.cs" />
     <Compile Include="..\Analysis\AnnotatedTestRun.cs" Link="Linked\Analysis\AnnotatedTestRun.cs" />
     <Compile Include="..\Analysis\SelectionMeasure.cs" Link="Linked\Analysis\SelectionMeasure.cs" />
@@ -81,6 +87,7 @@
     <Compile Include="..\Communication\Remote\CMTSRemoteConnectionUri.cs" Link="Linked\Communication\Remote\CMTSRemoteConnectionUri.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
+    <Compile Include="..\Recorder\OfflineTrackLoader.cs" Link="Linked\Recorder\OfflineTrackLoader.cs" />
     <Compile Include="..\Recorder\OxTS\XcomContainerReader.cs" Link="Linked\Recorder\OxTS\XcomContainerReader.cs" />
     <Compile Include="..\Recorder\OxTS\NcomDecoder.cs" Link="Linked\Recorder\OxTS\NcomDecoder.cs" />
     <Compile Include="..\Recorder\OxTS\NcomTime.cs" Link="Linked\Recorder\OxTS\NcomTime.cs" />
