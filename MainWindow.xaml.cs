@@ -88,6 +88,18 @@ public partial class MainWindow : Window
 
     private readonly DispatcherTimer _uiTimer;
 
+    private readonly PlaybackClock _playback = new();
+
+    private readonly DispatcherTimer _playbackTimer;
+
+    private bool _playbackApplying;
+
+    private bool _playbackSliderDragging;
+
+    private bool _playbackUpdatingUi;
+
+    private bool _playbackResumeAfterScrub;
+
     private VehicleSample? _latestSample;
 
     /// <summary>true = 线下模式（VBO）；false = 线上模式。</summary>
@@ -331,6 +343,13 @@ public partial class MainWindow : Window
         };
 
         _uiTimer.Tick += UiTimer_Tick;
+
+        _playbackTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(33)
+        };
+        _playbackTimer.Tick += PlaybackTimer_Tick;
+        InitializePlaybackSpeedCombo();
 
         StartClock();
 
@@ -761,6 +780,7 @@ public partial class MainWindow : Window
             RebuildOfflineFileChips();
             RefreshAllPlots(force: true);
             UpdateNumericDisplay();
+            BindPlaybackToCurrentFile();
             return;
         }
 
@@ -778,6 +798,7 @@ public partial class MainWindow : Window
         RebuildOfflineFileChips();
         RefreshAllPlots(force: true);
         UpdateNumericDisplay();
+        BindPlaybackToCurrentFile();
     }
 
 
@@ -1276,6 +1297,7 @@ public partial class MainWindow : Window
         // Already online with live history: only refresh toolbar.
         if (!wasOffline && !_historyOfflineMode)
         {
+            StopPlaybackUi();
             UpdateConnectionStatusUi();
             return;
         }
@@ -1294,6 +1316,7 @@ public partial class MainWindow : Window
         RefreshChannelSelectorsFromRegistry();
         RefreshAllPlots(force: true);
         UpdateNumericDisplay();
+        StopPlaybackUi();
 
         // 若当前无连接，尝试拉起默认 UDP
         if (_dataSourceSession.Current is null ||
@@ -1667,6 +1690,14 @@ public partial class MainWindow : Window
             CutKmlButton.Content = Loc.T("Curves.Cut");
             CutKmlButton.ToolTip = Loc.T("Curves.CutTip");
         }
+        if (PlaybackSpeedLabelText is not null)
+            PlaybackSpeedLabelText.Text = Loc.T("Curves.PlaybackSpeed");
+        if (PlaybackStopButton is not null)
+        {
+            PlaybackStopButton.Content = Loc.T("Curves.PlaybackStop");
+            PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
+        }
+        RefreshPlaybackBar();
         if (CutBeforeCursorItem is not null)
             CutBeforeCursorItem.Header = Loc.T("Curves.CutBefore");
         if (CutAfterCursorItem is not null)
@@ -3680,7 +3711,10 @@ public partial class MainWindow : Window
             plot.CursorX = cursorX;
 
         if (!refreshOverlays)
+        {
+            SyncPlaybackFromCursor();
             return;
+        }
 
         // While dragging: only move the yellow VerticalLine (gates/KML stay put).
         var dragging = false;
@@ -3710,6 +3744,7 @@ public partial class MainWindow : Window
                     plot.WpfPlot.Refresh();
                 }
             }
+            SyncPlaybackFromCursor();
             return;
         }
 
@@ -3720,6 +3755,8 @@ public partial class MainWindow : Window
             ApplyPlotOverlays(plot);
             plot.WpfPlot.Refresh();
         }
+
+        SyncPlaybackFromCursor();
     }
 
     private void InvalidateGateXCache() => _gateXCacheDirty = true;
@@ -4018,6 +4055,13 @@ public partial class MainWindow : Window
             if (e.Key != Key.Escape)
                 return;
 
+            if (_playback.IsPlaying)
+            {
+                PausePlayback();
+                e.Handled = true;
+                return;
+            }
+
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
             foreach (var p in _plots)
@@ -4219,6 +4263,304 @@ public partial class MainWindow : Window
         }
 
         _forcePlotRebuild = true;
+    }
+
+
+
+    // ============================================================
+    // 离线真实时间播放：驱动共享光标，仪表盘 / 地图 / 曲线同步。
+    // ============================================================
+
+    private static long PlaybackWallMs() => Environment.TickCount64;
+
+    private static string FormatPlaybackSpeed(double speed)
+    {
+        if (Math.Abs(speed - Math.Round(speed)) < 1e-9)
+            return $"{speed:0}x";
+        return $"{speed:0.##}x";
+    }
+
+    private void InitializePlaybackSpeedCombo()
+    {
+        if (PlaybackSpeedCombo is null)
+            return;
+
+        _playbackUpdatingUi = true;
+        try
+        {
+            PlaybackSpeedCombo.Items.Clear();
+            var selected = 1.0;
+            foreach (var speed in PlaybackClock.StandardSpeeds)
+            {
+                var item = new ComboBoxItem
+                {
+                    Content = FormatPlaybackSpeed(speed),
+                    Tag = speed
+                };
+                PlaybackSpeedCombo.Items.Add(item);
+                if (Math.Abs(speed - selected) < 1e-9)
+                    PlaybackSpeedCombo.SelectedItem = item;
+            }
+        }
+        finally
+        {
+            _playbackUpdatingUi = false;
+        }
+    }
+
+    private void BindPlaybackToCurrentFile()
+    {
+        var offline = _isOfflineMode || _historyOfflineMode;
+        var file = offline ? (_offlineFiles.Selected ?? _offlineFiles.Primary) : null;
+        _playback.SetSamples(file?.Samples, resetPosition: true);
+        if (!_playback.CanPlay)
+            _playbackTimer.Stop();
+        RefreshPlaybackBar();
+    }
+
+    private void StopPlaybackUi()
+    {
+        _playback.Pause();
+        _playbackTimer.Stop();
+        _playback.SetSamples(null);
+        RefreshPlaybackBar();
+    }
+
+    private void PausePlayback()
+    {
+        _playback.Pause();
+        _playbackTimer.Stop();
+        RefreshPlaybackBar();
+    }
+
+    private void StartPlayback()
+    {
+        if (!_playback.CanPlay)
+            return;
+
+        _playback.Play(PlaybackWallMs());
+        _playbackTimer.Start();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackPlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_playback.IsPlaying)
+            PausePlayback();
+        else
+            StartPlayback();
+    }
+
+    private void PlaybackStopButton_Click(object sender, RoutedEventArgs e)
+    {
+        _playback.Stop();
+        _playbackTimer.Stop();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackSpeedCombo_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_playbackUpdatingUi)
+            return;
+        if (PlaybackSpeedCombo?.SelectedItem is not ComboBoxItem item)
+            return;
+        if (item.Tag is not double speed)
+            return;
+
+        _playback.SetSpeed(speed, PlaybackWallMs());
+    }
+
+    private void PlaybackSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _playbackSliderDragging = true;
+        _playbackResumeAfterScrub = _playback.IsPlaying;
+        if (_playback.IsPlaying)
+        {
+            _playback.Pause();
+            _playbackTimer.Stop();
+        }
+    }
+
+    private void PlaybackSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) =>
+        FinishPlaybackScrub();
+
+    private void PlaybackSlider_LostMouseCapture(object sender, MouseEventArgs e) =>
+        FinishPlaybackScrub();
+
+    private void FinishPlaybackScrub()
+    {
+        if (!_playbackSliderDragging)
+            return;
+
+        _playbackSliderDragging = false;
+        SeekPlaybackFromSlider();
+        ApplyPlaybackCursor();
+        if (_playbackResumeAfterScrub && _playback.CanPlay)
+        {
+            _playback.Play(PlaybackWallMs());
+            _playbackTimer.Start();
+        }
+
+        _playbackResumeAfterScrub = false;
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_playbackUpdatingUi || !_playbackSliderDragging)
+            return;
+
+        SeekPlaybackFromSlider();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBarPosition();
+    }
+
+    private void SeekPlaybackFromSlider()
+    {
+        if (!_playback.CanPlay || PlaybackSlider is null)
+            return;
+
+        _playback.SeekToProgress(PlaybackSlider.Value, PlaybackWallMs());
+    }
+
+    private void PlaybackTimer_Tick(object? sender, EventArgs e)
+    {
+        _playback.Tick(PlaybackWallMs());
+        ApplyPlaybackCursor();
+        RefreshPlaybackBarPosition();
+        if (!_playback.IsPlaying)
+        {
+            _playbackTimer.Stop();
+            RefreshPlaybackBar();
+        }
+    }
+
+    private void ApplyPlaybackCursor()
+    {
+        var sample = _playback.CurrentSample;
+        if (sample is null)
+            return;
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        double cursorX;
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            cursorX = DateTimeOffset
+                .FromUnixTimeMilliseconds(_playback.CurrentTimestampMs)
+                .UtcDateTime
+                .ToOADate();
+        }
+        else
+        {
+            cursorX = GetAxisValue(sample, xSignal);
+        }
+
+        _playbackApplying = true;
+        try
+        {
+            var source = _plots.Count > 0 ? _plots[0] : null;
+            SetSharedCursor(cursorX, source);
+            UpdateNumericDisplay();
+            TrackMapPanelControl.SetCursorSample(sample);
+        }
+        finally
+        {
+            _playbackApplying = false;
+        }
+    }
+
+    private void SyncPlaybackFromCursor()
+    {
+        if (_playbackApplying || !_playback.CanPlay)
+            return;
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        double? cursorX = null;
+        foreach (var plot in _plots)
+        {
+            if (plot.CursorX is double cx)
+            {
+                cursorX = cx;
+                break;
+            }
+        }
+
+        long timestamp;
+        if (cursorX is double oa &&
+            string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            var utc = DateTime.SpecifyKind(DateTime.FromOADate(oa), DateTimeKind.Utc);
+            timestamp = new DateTimeOffset(utc).ToUnixTimeMilliseconds();
+        }
+        else if (TryGetCursorSample() is { } sample)
+        {
+            timestamp = sample.Timestamp;
+        }
+        else
+        {
+            return;
+        }
+
+        _playback.SeekToTimestamp(timestamp, PlaybackWallMs());
+        RefreshPlaybackBarPosition();
+    }
+
+    private void RefreshPlaybackBar()
+    {
+        if (PlaybackBar is null)
+            return;
+
+        var visible = (_isOfflineMode || _historyOfflineMode) && _playback.CanPlay;
+        PlaybackBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (PlaybackPlayButton is not null)
+        {
+            PlaybackPlayButton.Content = _playback.IsPlaying
+                ? Loc.T("Curves.PlaybackPause")
+                : Loc.T("Curves.PlaybackPlay");
+            PlaybackPlayButton.ToolTip = _playback.IsPlaying
+                ? Loc.T("Curves.PlaybackPauseTip")
+                : Loc.T("Curves.PlaybackPlayTip");
+        }
+
+        if (PlaybackStopButton is not null)
+        {
+            PlaybackStopButton.IsEnabled = visible;
+            PlaybackStopButton.Content = Loc.T("Curves.PlaybackStop");
+            PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
+        }
+
+        if (PlaybackPlayButton is not null)
+            PlaybackPlayButton.IsEnabled = visible;
+
+        if (PlaybackSpeedCombo is not null)
+            PlaybackSpeedCombo.IsEnabled = visible;
+        if (PlaybackSlider is not null)
+            PlaybackSlider.IsEnabled = visible;
+
+        RefreshPlaybackBarPosition();
+    }
+
+    private void RefreshPlaybackBarPosition()
+    {
+        if (PlaybackTimeText is not null)
+            PlaybackTimeText.Text = _playback.CanPlay
+                ? _playback.FormatPositionLabel()
+                : "0:00.0 / 0:00.0";
+
+        if (PlaybackSlider is null || _playbackSliderDragging)
+            return;
+
+        _playbackUpdatingUi = true;
+        try
+        {
+            PlaybackSlider.Value = _playback.Progress;
+        }
+        finally
+        {
+            _playbackUpdatingUi = false;
+        }
     }
 
 
@@ -7287,6 +7629,7 @@ public partial class MainWindow : Window
         try { SaveSessionMemory(); } catch { /* best-effort */ }
 
         _uiTimer.Stop();
+        _playbackTimer.Stop();
 
 
         // ========================================================
