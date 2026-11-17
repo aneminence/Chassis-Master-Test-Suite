@@ -622,6 +622,7 @@
 
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
@@ -864,9 +865,93 @@
 
                 </Grid>
 
+                <!--  离线播放栏（有可播数据时显示）  -->
+                <Grid x:Name="PlaybackBar"
+                      Grid.Row="1"
+                      Margin="0,0,0,8"
+                      Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal"
+                                VerticalAlignment="Center">
+                        <Button x:Name="PlaybackPlayButton"
+                                Style="{StaticResource PlaybackIconButtonStyle}"
+                                Margin="0,0,6,0"
+                                Click="PlaybackPlayButton_Click"
+                                ToolTip="Play recorded data in real time"
+                                AutomationProperties.Name="Play">
+                            <Grid Width="12" Height="12">
+                                <Path x:Name="PlaybackPlayIcon"
+                                      Data="M 2,1 L 11,6 L 2,11 Z"
+                                      Fill="{DynamicResource AccentBrush}"
+                                      Stretch="Uniform"/>
+                                <Path x:Name="PlaybackPauseIcon"
+                                      Data="M 1,1 H 4.4 V 11 H 1 Z M 7.6,1 H 11 V 11 H 7.6 Z"
+                                      Fill="{DynamicResource AccentBrush}"
+                                      Stretch="Uniform"
+                                      Visibility="Collapsed"/>
+                            </Grid>
+                        </Button>
+                        <Button x:Name="PlaybackStopButton"
+                                Style="{StaticResource PlaybackIconButtonStyle}"
+                                Click="PlaybackStopButton_Click"
+                                ToolTip="Stop and return to the start"
+                                AutomationProperties.Name="Stop">
+                            <Path Width="10" Height="10"
+                                  Data="M 0,0 H 10 V 10 H 0 Z"
+                                  Fill="{DynamicResource AccentBrush}"
+                                  Stretch="Uniform"/>
+                        </Button>
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="1"
+                                Orientation="Horizontal"
+                                VerticalAlignment="Center"
+                                Margin="10,0,10,0">
+                        <TextBlock x:Name="PlaybackSpeedLabelText"
+                                   Text="Speed"
+                                   Foreground="{DynamicResource TextSecondary}"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,6,0"/>
+                        <ComboBox x:Name="PlaybackSpeedCombo"
+                                  Width="72"
+                                  Style="{StaticResource DarkComboBoxStyle}"
+                                  SelectionChanged="PlaybackSpeedCombo_Changed"/>
+                    </StackPanel>
+
+                    <Slider x:Name="PlaybackSlider"
+                            Grid.Column="2"
+                            Style="{StaticResource PlaybackSliderStyle}"
+                            Minimum="0"
+                            Maximum="1"
+                            SmallChange="0.001"
+                            LargeChange="0.05"
+                            IsMoveToPointEnabled="False"
+                            VerticalAlignment="Center"
+                            LostMouseCapture="PlaybackSlider_LostMouseCapture"
+                            ValueChanged="PlaybackSlider_ValueChanged"/>
+
+                    <TextBlock x:Name="PlaybackTimeText"
+                               Grid.Column="3"
+                               Text="0:00.0 / 0:00.0"
+                               FontFamily="Consolas"
+                               FontSize="11"
+                               Foreground="{DynamicResource AccentBrush}"
+                               VerticalAlignment="Center"
+                               Margin="12,0,0,0"
+                               MinWidth="110"
+                               TextAlignment="Right"/>
+                </Grid>
+
                 <!--  曲线容器（独立滚动）  -->
 
-                <Border Grid.Row="1"
+                <Border Grid.Row="2"
                         Background="{DynamicResource CardBackground}"
                         BorderBrush="{DynamicResource BorderBrushSoft}"
                         BorderThickness="1"

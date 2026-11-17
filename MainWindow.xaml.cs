@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -87,6 +88,18 @@ public partial class MainWindow : Window
     private int _lastLoadedChannelCount;
 
     private readonly DispatcherTimer _uiTimer;
+
+    private readonly PlaybackClock _playback = new();
+
+    private readonly DispatcherTimer _playbackTimer;
+
+    private bool _playbackApplying;
+
+    private bool _playbackSliderDragging;
+
+    private bool _playbackUpdatingUi;
+
+    private bool _playbackResumeAfterScrub;
 
     private VehicleSample? _latestSample;
 
@@ -331,6 +344,14 @@ public partial class MainWindow : Window
         };
 
         _uiTimer.Tick += UiTimer_Tick;
+
+        _playbackTimer = new DispatcherTimer
+        {
+            Interval = TimeSpan.FromMilliseconds(33)
+        };
+        _playbackTimer.Tick += PlaybackTimer_Tick;
+        InitializePlaybackSpeedCombo();
+        HookPlaybackSliderInput();
 
         StartClock();
 
@@ -761,6 +782,7 @@ public partial class MainWindow : Window
             RebuildOfflineFileChips();
             RefreshAllPlots(force: true);
             UpdateNumericDisplay();
+            BindPlaybackToCurrentFile();
             return;
         }
 
@@ -778,6 +800,7 @@ public partial class MainWindow : Window
         RebuildOfflineFileChips();
         RefreshAllPlots(force: true);
         UpdateNumericDisplay();
+        BindPlaybackToCurrentFile();
     }
 
 
@@ -1276,6 +1299,7 @@ public partial class MainWindow : Window
         // Already online with live history: only refresh toolbar.
         if (!wasOffline && !_historyOfflineMode)
         {
+            StopPlaybackUi();
             UpdateConnectionStatusUi();
             return;
         }
@@ -1294,6 +1318,7 @@ public partial class MainWindow : Window
         RefreshChannelSelectorsFromRegistry();
         RefreshAllPlots(force: true);
         UpdateNumericDisplay();
+        StopPlaybackUi();
 
         // 若当前无连接，尝试拉起默认 UDP
         if (_dataSourceSession.Current is null ||
@@ -1667,6 +1692,11 @@ public partial class MainWindow : Window
             CutKmlButton.Content = Loc.T("Curves.Cut");
             CutKmlButton.ToolTip = Loc.T("Curves.CutTip");
         }
+        if (PlaybackSpeedLabelText is not null)
+            PlaybackSpeedLabelText.Text = Loc.T("Curves.PlaybackSpeed");
+        if (PlaybackStopButton is not null)
+            PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
+        RefreshPlaybackBar();
         if (CutBeforeCursorItem is not null)
             CutBeforeCursorItem.Header = Loc.T("Curves.CutBefore");
         if (CutAfterCursorItem is not null)
@@ -3680,7 +3710,10 @@ public partial class MainWindow : Window
             plot.CursorX = cursorX;
 
         if (!refreshOverlays)
+        {
+            SyncPlaybackFromCursor();
             return;
+        }
 
         // While dragging: only move the yellow VerticalLine (gates/KML stay put).
         var dragging = false;
@@ -3710,6 +3743,7 @@ public partial class MainWindow : Window
                     plot.WpfPlot.Refresh();
                 }
             }
+            SyncPlaybackFromCursor();
             return;
         }
 
@@ -3720,6 +3754,8 @@ public partial class MainWindow : Window
             ApplyPlotOverlays(plot);
             plot.WpfPlot.Refresh();
         }
+
+        SyncPlaybackFromCursor();
     }
 
     private void InvalidateGateXCache() => _gateXCacheDirty = true;
@@ -4018,6 +4054,13 @@ public partial class MainWindow : Window
             if (e.Key != Key.Escape)
                 return;
 
+            if (_playback.IsPlaying)
+            {
+                PausePlayback();
+                e.Handled = true;
+                return;
+            }
+
             plot.SelectionX1 = null;
             plot.SelectionX2 = null;
             foreach (var p in _plots)
@@ -4219,6 +4262,396 @@ public partial class MainWindow : Window
         }
 
         _forcePlotRebuild = true;
+    }
+
+
+
+    // ============================================================
+    // 离线真实时间播放：驱动共享光标，仪表盘 / 地图 / 曲线同步。
+    // ============================================================
+
+    private static long PlaybackWallMs() => Environment.TickCount64;
+
+    private static string FormatPlaybackSpeed(double speed)
+    {
+        if (Math.Abs(speed - Math.Round(speed)) < 1e-9)
+            return $"{speed:0}x";
+        return $"{speed:0.##}x";
+    }
+
+    private void InitializePlaybackSpeedCombo()
+    {
+        if (PlaybackSpeedCombo is null)
+            return;
+
+        _playbackUpdatingUi = true;
+        try
+        {
+            PlaybackSpeedCombo.Items.Clear();
+            var selected = 1.0;
+            foreach (var speed in PlaybackClock.StandardSpeeds)
+            {
+                var item = new ComboBoxItem
+                {
+                    Content = FormatPlaybackSpeed(speed),
+                    Tag = speed
+                };
+                PlaybackSpeedCombo.Items.Add(item);
+                if (Math.Abs(speed - selected) < 1e-9)
+                    PlaybackSpeedCombo.SelectedItem = item;
+            }
+        }
+        finally
+        {
+            _playbackUpdatingUi = false;
+        }
+    }
+
+    private void BindPlaybackToCurrentFile()
+    {
+        var offline = _isOfflineMode || _historyOfflineMode;
+        var file = offline ? (_offlineFiles.Selected ?? _offlineFiles.Primary) : null;
+        _playback.SetSamples(file?.Samples, resetPosition: true);
+        if (!_playback.CanPlay)
+            _playbackTimer.Stop();
+        RefreshPlaybackBar();
+    }
+
+    private void StopPlaybackUi()
+    {
+        _playback.Pause();
+        _playbackTimer.Stop();
+        _playback.SetSamples(null);
+        RefreshPlaybackBar();
+    }
+
+    private void PausePlayback()
+    {
+        _playback.Pause();
+        _playbackTimer.Stop();
+        RefreshPlaybackBar();
+    }
+
+    private void StartPlayback()
+    {
+        if (!_playback.CanPlay)
+            return;
+
+        _playback.Play(PlaybackWallMs());
+        _playbackTimer.Start();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackPlayButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_playback.IsPlaying)
+            PausePlayback();
+        else
+            StartPlayback();
+    }
+
+    private void PlaybackStopButton_Click(object sender, RoutedEventArgs e)
+    {
+        _playback.Stop();
+        _playbackTimer.Stop();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackSpeedCombo_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_playbackUpdatingUi)
+            return;
+        if (PlaybackSpeedCombo?.SelectedItem is not ComboBoxItem item)
+            return;
+        if (item.Tag is not double speed)
+            return;
+
+        _playback.SetSpeed(speed, PlaybackWallMs());
+    }
+
+    private void HookPlaybackSliderInput()
+    {
+        if (PlaybackSlider is null)
+            return;
+
+        // IsMoveToPointEnabled marks the preview click handled, so the XAML
+        // instance handlers would miss it. Listen with HandledEventsToo.
+        PlaybackSlider.AddHandler(
+            PreviewMouseLeftButtonDownEvent,
+            new MouseButtonEventHandler(PlaybackSlider_PreviewMouseDown),
+            handledEventsToo: true);
+        PlaybackSlider.AddHandler(
+            PreviewMouseLeftButtonUpEvent,
+            new MouseButtonEventHandler(PlaybackSlider_PreviewMouseUp),
+            handledEventsToo: true);
+        PlaybackSlider.MouseMove += PlaybackSlider_MouseMove;
+    }
+
+    private void PlaybackSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || PlaybackSlider is null)
+            return;
+
+        _playbackSliderDragging = true;
+        _playbackResumeAfterScrub = _playback.IsPlaying;
+        if (_playback.IsPlaying)
+        {
+            _playback.Pause();
+            _playbackTimer.Stop();
+        }
+
+        ApplyPlaybackSliderPoint();
+        if (!PlaybackSlider.IsMouseCaptured)
+            PlaybackSlider.CaptureMouse();
+    }
+
+    private void PlaybackSlider_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_playbackSliderDragging || PlaybackSlider is null || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        ApplyPlaybackSliderPoint();
+    }
+
+    private void PlaybackSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) =>
+        FinishPlaybackScrub();
+
+    private void PlaybackSlider_LostMouseCapture(object sender, MouseEventArgs e) =>
+        FinishPlaybackScrub();
+
+    private void FinishPlaybackScrub()
+    {
+        if (!_playbackSliderDragging)
+            return;
+
+        _playbackSliderDragging = false;
+        if (PlaybackSlider is not null && PlaybackSlider.IsMouseCaptured)
+            PlaybackSlider.ReleaseMouseCapture();
+
+        SeekPlaybackFromSlider();
+        ApplyPlaybackCursor();
+        if (_playbackResumeAfterScrub && _playback.CanPlay)
+        {
+            _playback.Play(PlaybackWallMs());
+            _playbackTimer.Start();
+        }
+
+        _playbackResumeAfterScrub = false;
+        RefreshPlaybackBar();
+    }
+
+    private void PlaybackSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        if (_playbackUpdatingUi)
+            return;
+
+        SeekPlaybackFromSlider();
+        ApplyPlaybackCursor();
+        RefreshPlaybackBarPosition();
+    }
+
+    private void ApplyPlaybackSliderPoint()
+    {
+        if (PlaybackSlider is null)
+            return;
+        if (PlaybackSlider.Template?.FindName("PART_Track", PlaybackSlider) is not Track track)
+            return;
+        if (track.ActualWidth <= 0)
+            return;
+
+        // ValueFromPoint is a delta from the current thumb center. Using it after a
+        // value change (or on every mouse move before layout) applies the offset
+        // twice and the playhead jumps away from the click. Map X absolutely.
+        var x = Mouse.GetPosition(track).X;
+        var thumbWidth = track.Thumb?.ActualWidth ?? 0;
+        var usable = Math.Max(1.0, track.ActualWidth - thumbWidth);
+        var t = Math.Clamp((x - thumbWidth / 2.0) / usable, 0, 1);
+        if (PlaybackSlider.IsDirectionReversed)
+            t = 1 - t;
+
+        PlaybackSlider.Value = PlaybackSlider.Minimum + t * (PlaybackSlider.Maximum - PlaybackSlider.Minimum);
+    }
+
+    private void SeekPlaybackFromSlider()
+    {
+        if (!_playback.CanPlay || PlaybackSlider is null)
+            return;
+
+        _playback.SeekToProgress(PlaybackSlider.Value, PlaybackWallMs());
+    }
+
+    private void PlaybackTimer_Tick(object? sender, EventArgs e)
+    {
+        _playback.Tick(PlaybackWallMs());
+        ApplyPlaybackCursor();
+        RefreshPlaybackBarPosition();
+        if (!_playback.IsPlaying)
+        {
+            _playbackTimer.Stop();
+            RefreshPlaybackBar();
+        }
+    }
+
+    private void ApplyPlaybackCursor()
+    {
+        var sample = _playback.CurrentSample;
+        if (sample is null)
+            return;
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        var cursorX = GetPlaybackAxisValue(sample, xSignal);
+
+        _playbackApplying = true;
+        try
+        {
+            var source = _plots.Count > 0 ? _plots[0] : null;
+            SetSharedCursor(cursorX, source);
+            UpdateNumericDisplay();
+            TrackMapPanelControl.SetCursorSample(sample);
+        }
+        finally
+        {
+            _playbackApplying = false;
+        }
+    }
+
+    private void SyncPlaybackFromCursor()
+    {
+        if (_playbackApplying || !_playback.CanPlay)
+            return;
+
+        var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
+        double? cursorX = null;
+        foreach (var plot in _plots)
+        {
+            if (plot.CursorX is double cx)
+            {
+                cursorX = cx;
+                break;
+            }
+        }
+
+        if (cursorX is not double x ||
+            !TryGetPlaybackTimestampFromAxisX(x, xSignal, out var timestamp))
+        {
+            return;
+        }
+
+        _playback.SeekToTimestamp(timestamp, PlaybackWallMs());
+        RefreshPlaybackBarPosition();
+    }
+
+    /// <summary>
+    /// Plot X for the current playback instant. Time / Test Elapsed stay continuous
+    /// so the cursor can sit exactly on the clicked time, not the nearest sample.
+    /// </summary>
+    private double GetPlaybackAxisValue(VehicleSample sample, string xSignal)
+    {
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            return DateTimeOffset
+                .FromUnixTimeMilliseconds(_playback.CurrentTimestampMs)
+                .UtcDateTime
+                .ToOADate();
+        }
+
+        if (string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase))
+        {
+            var elapsedAtSample = GetAxisValue(sample, xSignal);
+            return elapsedAtSample + (_playback.CurrentTimestampMs - sample.Timestamp) / 1000.0;
+        }
+
+        return GetAxisValue(sample, xSignal);
+    }
+
+    private bool TryGetPlaybackTimestampFromAxisX(double cursorX, string xSignal, out long timestamp)
+    {
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            var utc = DateTime.SpecifyKind(DateTime.FromOADate(cursorX), DateTimeKind.Utc);
+            timestamp = new DateTimeOffset(utc).ToUnixTimeMilliseconds();
+            return true;
+        }
+
+        if (string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase))
+        {
+            var originMs = _playback.StartTimestampMs;
+            if (_playback.CurrentSample is { } sample)
+            {
+                var elapsedAtSample = GetAxisValue(sample, xSignal);
+                originMs = sample.Timestamp - (long)Math.Round(elapsedAtSample * 1000.0);
+            }
+
+            timestamp = originMs + (long)Math.Round(cursorX * 1000.0);
+            return true;
+        }
+
+        if (TryGetCursorSample() is { } snapped)
+        {
+            timestamp = snapped.Timestamp;
+            return true;
+        }
+
+        timestamp = 0;
+        return false;
+    }
+
+    private void RefreshPlaybackBar()
+    {
+        if (PlaybackBar is null)
+            return;
+
+        var visible = (_isOfflineMode || _historyOfflineMode) && _playback.CanPlay;
+        PlaybackBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (PlaybackPlayButton is not null)
+        {
+            PlaybackPlayButton.ToolTip = _playback.IsPlaying
+                ? Loc.T("Curves.PlaybackPauseTip")
+                : Loc.T("Curves.PlaybackPlayTip");
+            if (PlaybackPlayIcon is not null)
+                PlaybackPlayIcon.Visibility = _playback.IsPlaying ? Visibility.Collapsed : Visibility.Visible;
+            if (PlaybackPauseIcon is not null)
+                PlaybackPauseIcon.Visibility = _playback.IsPlaying ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        if (PlaybackStopButton is not null)
+        {
+            PlaybackStopButton.IsEnabled = visible;
+            PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
+        }
+
+        if (PlaybackPlayButton is not null)
+            PlaybackPlayButton.IsEnabled = visible;
+
+        if (PlaybackSpeedCombo is not null)
+            PlaybackSpeedCombo.IsEnabled = visible;
+        if (PlaybackSlider is not null)
+            PlaybackSlider.IsEnabled = visible;
+
+        RefreshPlaybackBarPosition();
+    }
+
+    private void RefreshPlaybackBarPosition()
+    {
+        if (PlaybackTimeText is not null)
+            PlaybackTimeText.Text = _playback.CanPlay
+                ? _playback.FormatPositionLabel()
+                : "0:00.0 / 0:00.0";
+
+        if (PlaybackSlider is null || _playbackSliderDragging)
+            return;
+
+        _playbackUpdatingUi = true;
+        try
+        {
+            PlaybackSlider.Value = _playback.Progress;
+        }
+        finally
+        {
+            _playbackUpdatingUi = false;
+        }
     }
 
 
@@ -7287,6 +7720,7 @@ public partial class MainWindow : Window
         try { SaveSessionMemory(); } catch { /* best-effort */ }
 
         _uiTimer.Stop();
+        _playbackTimer.Stop();
 
 
         // ========================================================

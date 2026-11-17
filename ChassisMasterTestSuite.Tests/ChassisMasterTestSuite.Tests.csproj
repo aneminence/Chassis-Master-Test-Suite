@@ -35,6 +35,7 @@
     <Compile Include="..\Core\PlotXAxisData.cs" Link="Linked\Core\PlotXAxisData.cs" />
     <Compile Include="..\Core\TrackUpdateGate.cs" Link="Linked\Core\TrackUpdateGate.cs" />
     <Compile Include="..\Core\SampleHistoryBuffer.cs" Link="Linked\Core\SampleHistoryBuffer.cs" />
+    <Compile Include="..\Core\PlaybackClock.cs" Link="Linked\Core\PlaybackClock.cs" />
     <Compile Include="..\Core\VehicleSample.cs" Link="Linked\Core\VehicleSample.cs" />
     <Compile Include="..\Core\LiveVehicleRoster.cs" Link="Linked\Core\LiveVehicleRoster.cs" />
     <Compile Include="..\Core\SampleEnricher.cs" Link="Linked\Core\SampleEnricher.cs" />
