@@ -95,6 +95,43 @@ public sealed class SampleHistoryBuffer
     }
 
     /// <summary>
+    /// 按条件删除样本（例如某台设备 stream.reset），保持其余样本从旧到新的顺序。
+    /// </summary>
+    public int RemoveWhere(Func<VehicleSample, bool> match)
+    {
+        ArgumentNullException.ThrowIfNull(match);
+
+        lock (_gate)
+        {
+            if (_count == 0)
+                return 0;
+
+            var kept = new List<VehicleSample>(_count);
+            var start = _count < _buffer.Length ? 0 : _head;
+            var removed = 0;
+            for (var i = 0; i < _count; i++)
+            {
+                var sample = _buffer[(start + i) % _buffer.Length]!;
+                if (match(sample))
+                    removed++;
+                else
+                    kept.Add(sample);
+            }
+
+            if (removed == 0)
+                return 0;
+
+            Array.Clear(_buffer, 0, _buffer.Length);
+            _head = 0;
+            _count = 0;
+            _cachedSnapshot = null;
+            foreach (var sample in kept)
+                AddUnlocked(sample);
+            return removed;
+        }
+    }
+
+    /// <summary>
     /// 返回从最旧到最新的稳定副本，供 UI / Track Map / 曲线使用。
     /// </summary>
     public IReadOnlyList<VehicleSample> Snapshot()

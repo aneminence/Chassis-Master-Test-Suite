@@ -103,4 +103,22 @@ public class SampleHistoryBufferTests
         await producer;
         Assert.Equal(19_999, buffer.Snapshot()[^1].Sequence);
     }
+
+    [Fact]
+    public void RemoveWhere_DropsMatching_KeepsRemainingOrder()
+    {
+        var buffer = new SampleHistoryBuffer(8);
+        buffer.Add(new VehicleSample { Sequence = 1, Timestamp = 10, VehicleId = "a" });
+        buffer.Add(new VehicleSample { Sequence = 2, Timestamp = 20, VehicleId = "b" });
+        buffer.Add(new VehicleSample { Sequence = 3, Timestamp = 30, VehicleId = "a" });
+        buffer.Add(new VehicleSample { Sequence = 4, Timestamp = 40, VehicleId = "b" });
+
+        var removed = buffer.RemoveWhere(s => s.VehicleId == "a");
+
+        Assert.Equal(2, removed);
+        Assert.Equal(2, buffer.Count);
+        Assert.Equal(new long[] { 2, 4 }, buffer.Snapshot().Select(s => s.Sequence));
+        Assert.Equal(0, buffer.RemoveWhere(s => s.VehicleId == "a"));
+        Assert.Equal(2, buffer.Count);
+    }
 }

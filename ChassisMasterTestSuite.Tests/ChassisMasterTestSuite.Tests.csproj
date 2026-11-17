@@ -60,6 +60,7 @@
     <Compile Include="..\Session\OfflineFileSet.cs" Link="Linked\Session\OfflineFileSet.cs" />
     <Compile Include="..\Session\ActiveSampleHistory.cs" Link="Linked\Session\ActiveSampleHistory.cs" />
     <Compile Include="..\Session\RecordingSession.cs" Link="Linked\Session\RecordingSession.cs" />
+    <Compile Include="..\Session\MultiDeviceRecordingSession.cs" Link="Linked\Session\MultiDeviceRecordingSession.cs" />
     <Compile Include="..\Analysis\SampleSource.cs" Link="Linked\Analysis\SampleSource.cs" />
     <Compile Include="..\Analysis\AnnotatedTestRun.cs" Link="Linked\Analysis\AnnotatedTestRun.cs" />
     <Compile Include="..\Analysis\SelectionMeasure.cs" Link="Linked\Analysis\SelectionMeasure.cs" />

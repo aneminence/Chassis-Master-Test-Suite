@@ -8,6 +8,14 @@
 
 ## 最近更新
 
+### 多台局域网设备同时在线采集（2026-11-17）
+- Remote 连接对话框支持 Ctrl 多选，可同时连接多台 Android，已连接设备不会被后连的设备顶掉。
+- 多车样本同时进入历史：曲线和 Track Map 按车辆配色区分，仪表盘汇总多车，状态栏显示连接台数。
+- 线上模式时，曲线区上方 Files 行切换为 Devices：显示已连接设备，点击选中焦点，眼睛按钮显隐曲线和轨迹，可改色；双击或右键可重命名，× 断开该设备。
+- 点击某车只切换焦点，不清空其它车历史。
+- 左侧 Remote Rec● / Rec■ 会对已连接的每台设备同时开始/停止远程录制，并在电脑 `Recordings` 目录按设备各存一份 VBO（`CMTS_yyyyMMdd_HHmmss_{名称}_{设备Id}.vbo`，名称与 Id 相同时省略重复段；重名则加 `_2` 后缀）。
+- 右侧 Start / Stop 的本地 VBO 仍只写入当前焦点车（单文件流）。公网 / 中继仍未做。
+
 ### 离线按真实时间回放（2026-11-17）
 - 曲线工具栏下方、第一个 plot 上方新增播放行：Play/暂停、Stop、倍速、进度条与时间读数；仅离线可回放数据时显示，Online 实时源收起。（`55a1789`）
 - 按样本真实时间戳以墙钟 × 倍速驱动共享光标，Dashboard / Track Map / 曲线同步。
@@ -27,7 +35,7 @@
 ### 局域网 Android 设备直连（0.3.2，2026-11-10）
 - 自动发现同一局域网中的 CMTS Android 设备，设备列表显示商品型号；双击即可连接，无需输入 token。
 - 支持 mDNS/DNS-SD、热点网关候选探测和手动 IP 兜底；断线后按稳定设备 ID 重新发现。
-- 当前 Windows 远程数据源仍一次连接一台 Android；公网和多设备并行采集未实现。
+- Windows 可同时连接多台局域网 Android 并并行采集；公网和中继仍未做。
 
 
 各功能后的日期为合入 `main` 的落地日（`YYYY-MM-DD`，Asia/Shanghai 本地 git 日期）。文首不再单独充当更新记录。
@@ -199,12 +207,13 @@ Chassis Master Test Suite/
 ├─ Communication/
 │   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
 │   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
-│   └─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
+│   ├─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
+│   └─ Remote/  CMTSRemoteDataSource / CMTSRemoteParser
 ├─ Recorder/
 │   ├─ VboRecorder / VboReader / CsvRecorder（未接线）
 │   └─ OxTS/   XcomContainerReader / NcomDecoder / RcomDecoder / XcomImporter
 ├─ Simulator/   VehicleSimulator · SimulatorSceneBuilder · SpaTrackCenterline（Helix 3D）
-├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / SessionMetadata
+├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / MultiDeviceRecordingSession / SessionMetadata
 ├─ Analysis/
 │   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
 │   ├─ GateStore / GateRunEngine / GatePassCondition / VbtsGateImporter
@@ -300,21 +309,42 @@ dotnet test "Chassis Master Test Suite.sln" -c Release
 
 > GSpot 的 Lost/OOO 无 UDP 语义，通常显示为 0。acc/gyro 映射仍待实车标定。
 
-### 4. 录制（顶部栏）
+### 4. Online：局域网 Android 设备（Remote）
+
+1. 顶部切到 **Online**，点 **Remote…**。  
+2. 同一局域网中的 CMTS Android 会自动出现在列表（也可手动填 IP）。**Ctrl 多选**后连接；已连接的设备不会被后连的顶掉。无需 token。  
+3. 连上后状态栏显示 **Online** 或 **Online · N**；曲线区上方 **Files** 行切换为 **Devices**。  
+4. 设备芯片：点击选中焦点，眼睛按钮显隐该车曲线和轨迹，圆点改颜色；双击或右键可重命名；**×** 只断开这一台。自定义名称、颜色和显隐在同一台设备重连后仍保留（本次运行期间）。  
+5. 多车同时进入历史：曲线和 Track Map 按车辆配色，仪表盘汇总多车。点击某车只切换焦点，不清空其它车历史。
+
+### 5. 录制（顶部栏）
+
+顶部有两套互相独立的录制：
 
 | 按钮 | 作用 |
 |---|---|
-| `● Start` | 新建 VBO 并开始写 |
-| `❚❚ Pause` / `▶ Resume` | 暂停 / 续写同一文件 |
-| `■ Stop` | 结束并关闭文件 |
+| 左侧 `Rec●` / `Rec■` | 对所有已连接 Android 同时开始/停止手机端录制，并在电脑 `Recordings` 目录按设备各写一份 VBO |
+| 右侧 `● Start` | 本机新建单个 VBO，只写入当前焦点车 |
+| 右侧 `❚❚ Pause` / `▶ Resume` | 暂停 / 续写同一份焦点车文件 |
+| 右侧 `■ Stop` | 结束并关闭右侧这份文件 |
 
-录制文件默认：
+左侧 Remote Rec 落在电脑上的文件名：
+
+```text
+bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss_{名称}_{设备Id}.vbo
+```
+
+名称与设备 Id 相同时省略重复段；重名则加 `_2` 后缀。录制中新连接的设备会立即新开一份；断开或闪断重连会结束当前文件，恢复后再开新文件，不追加到旧文件。
+
+右侧单文件默认：
 
 ```text
 bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 ```
 
-### 5. Offline / Load：打开 VBO / KML / KMZ / XCOM / NCOM
+两套可以同时开：焦点车会同时出现在左侧对应文件和右侧那份单流文件里。
+
+### 6. Offline / Load：打开 VBO / KML / KMZ / XCOM / NCOM
 
 1. 点顶部 **Load**（或切到 **Offline** 后在离线页打开）。  
 2. 对话框过滤：`*.vbo;*.kml;*.kmz;*.xcom;*.ncom`（也可按类型单选）。  
@@ -324,7 +354,7 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 6. **Clear** 清空已打开文件。  
 7. **注意**：打开文件会替换/合并离线历史；若 Online 源仍在推流，行为以当前 Online/Offline 模式为准。
 
-### 6. 曲线交互
+### 7. 曲线交互
 
 | 操作 | 行为 |
 |---|---|
@@ -338,7 +368,7 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 | Reset View | 恢复自动缩放视野（工具栏左侧：Reset View → Mark Region → Add Gate） |
 | 多 Plot | **Add Plot** 在 **Remove Plot** 左侧；+ Channel 右侧通道芯片；拖分割条改高度；黄色光标跨图联动；**共用 X 缩放/平移**；标记/裁剪编辑按钮靠右；面板最大化箭头在最右侧 |
 
-### 7. Track Map 与 Gate（2D / 3D）
+### 8. Track Map 与 Gate（2D / 3D）
 
 - 实时/离线轨迹同步曲线光标与 Dashboard；**2D / 3D 可切换**（3D 经 Cesium WebView2）。  
 - 工具栏**两行、靠右对齐**：Follow（跟随/居中当前车）、2D·3D、Basemap、瓦片图源等；标题栏最右侧为面板最大化。  
@@ -352,14 +382,14 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 - Compute / 圈速对比：run 段加粗；对比光标与地图点击可互相同步。  
 - Layout 关掉 Test Results 后，Map 与 Dashboard 并排，仍可拖水平分割条。
 
-### 8. Dashboard
+### 9. Dashboard
 
 - **Add Gauge**：添加数字表盘；拖动移动，边角缩放；`×` 删除。  
 - 点标题打开绑定选择器：Live 通道或 Test Results / Pass 值。  
 - 无光标显示最新实时值；有光标（曲线或地图）冻结为选中样本。  
 - 缩小 Dashboard 分区时表盘位置/大小不变，可溢出裁切。
 
-### 9. Test Results
+### 10. Test Results
 
 1. 打开含加减速的 VBO（可多文件），或 Online 积累历史。  
 2. 选 **Accel**（默认 0→100）、**Decel**（100→0）、**Custom** 或 **Gate**。  
@@ -370,7 +400,7 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 
 距离优先用 DistanceTraveled，否则速度积分，再否则起终点 Haversine。
 
-### 10. 通道选择（Channel Registry）
+### 11. 通道选择（Channel Registry）
 
 - 下拉只列当前 `ChannelRegistry.Available` 中的通道。  
 - 实时：`SetLiveCore()` 约 9 个核心通道 + 合成 `Time`。  
@@ -378,7 +408,7 @@ bin\Debug\net10.0-windows\Recordings\CMTS_yyyyMMdd_HHmmss.vbo
 - Maths 通道注册后进入可用列表。  
 - 切回 UDP/GSpot 成功后恢复 `SetLiveCore()`。
 
-### 11. 多 Plot
+### 12. 多 Plot
 
 - `+ Add Plot` 增加图（位于 `Remove Plot` 左侧）；每图可改名、`Auto Y`、`+ Channel`（通道芯片在右侧）、`Remove Plot`。  
 - 各图高度可拖拽调整并记忆；滚轮默认滚动，点击聚焦后再缩放。  
@@ -415,6 +445,7 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 
 日期为合入 `main` 的落地日（可核对对应 commit）；同一能力后续抛光仍以首次落地日为主，重大升级另注。
 
+- [x] 多台局域网设备同时在线采集（多选连接、Devices 行选中/显隐/改色/重命名、分色曲线/轨迹、Remote Rec 手机+电脑按设备各存 VBO）（2026-11-17）
 - [x] 离线按真实时间回放（曲线工具栏下独立播放行，主题强调色，点击进度条绝对定位）（2026-11-17）
 - [x] UDP + DataBus + Simulator（2026-10-07）
 - [x] Simulator Helix 3D：Spa 风格封闭高程赛道、软转向 + 单轨横向、追逐相机；UDP 仍推主窗（2026-11-02）
@@ -466,6 +497,7 @@ Racelogic 文本 VBO，目标可被 **VBOX Test Suite** 打开。固定段：`[h
 与用户确认后的规划一致（不做 / 砍掉的项已从路线图移除）。
 
 **已完成（本分支 / 近期）**
+- [x] 多台局域网设备同时在线采集（Devices 行、Remote Rec 手机+电脑按设备落盘）（2026-11-17）
 - [x] 离线按真实时间回放（曲线工具栏下独立播放行）（2026-11-17）
 - [x] 在线地图底图（开关 + OSM/Esri/Carto/OpenTopo/自定义 XYZ）（2026-10-10）
 - [x] 界面语言中/英；Language/Theme 分体按钮；Light（VI H）/ Icon Gold（2026-10-10 … 2026-10-13）

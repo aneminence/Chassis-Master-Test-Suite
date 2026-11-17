@@ -101,4 +101,45 @@ public class LiveVehicleRosterTests
         Assert.Equal(2, trail[0].Timestamp);
         Assert.Equal(4, trail[^1].Timestamp);
     }
+
+    [Fact]
+    public void Remove_DropsVehicle_AndMovesFocus()
+    {
+        var roster = new LiveVehicleRoster();
+        roster.Upsert(Sample("a", "CarA", 31.1, 121.1, 1));
+        roster.Upsert(Sample("b", "CarB", 31.2, 121.2, 2));
+
+        Assert.Equal("a", roster.FocusId);
+        Assert.True(roster.Remove("a"));
+        Assert.Equal(1, roster.Count);
+        Assert.Equal("b", roster.FocusId);
+        Assert.False(roster.Remove("a"));
+        Assert.Equal("CarB", roster.GetFocusLatest()!.VehicleLabel);
+    }
+
+    [Fact]
+    public void Rename_SurvivesLaterUpsert_AndEnsureCreatesPlaceholder()
+    {
+        var roster = new LiveVehicleRoster();
+        roster.Ensure("phone-1", "mobile-067");
+        Assert.True(roster.TryRename("phone-1", "Front left"));
+        roster.Upsert(Sample("phone-1", "mobile-067", 31.1, 121.1, 1));
+
+        var snap = roster.Snapshot().Single();
+        Assert.Equal("Front left", snap.Label);
+        Assert.True(snap.IsVisible);
+        Assert.True(snap.IsFocus);
+
+        Assert.True(roster.ToggleVisibility("phone-1"));
+        Assert.False(roster.Snapshot().Single().IsVisible);
+        Assert.True(roster.TrySetColor("phone-1", "#E05252"));
+        Assert.Equal("#E05252", roster.Snapshot().Single().ColorHex);
+
+        roster.Clear();
+        roster.Upsert(Sample("phone-1", "mobile-067", 31.1, 121.1, 2));
+        var after = roster.Snapshot().Single();
+        Assert.Equal("Front left", after.Label);
+        Assert.False(after.IsVisible);
+        Assert.Equal("#E05252", after.ColorHex);
+    }
 }
