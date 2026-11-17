@@ -301,6 +301,15 @@ public sealed class VboReader
         var vertAcc = Raw("Z_Accel") * StandardGravity;
         var yawRate = Raw("Yaw_Rate");
 
+        // Preserve missing/invalid source values before the legacy Raw() zero defaults
+        // replace them. These two private flags are not offered as plot channels.
+        if (!channels.TryGetValue(usesShiftedGSpotLayout ? "time" : "heading", out var rawHeading)
+            || !double.IsFinite(rawHeading))
+            channels[VehicleHeadingResolver.MissingHeadingKey] = 1;
+        if (!channels.TryGetValue(usesShiftedGSpotLayout ? "sats" : "velocity", out var rawSpeed)
+            || !double.IsFinite(rawSpeed))
+            channels[VehicleHeadingResolver.MissingSpeedKey] = 1;
+
         // Canonical CMTS channels in internal units (not raw VBO arcmin / g).
         channels[ChannelIds.Velocity] = speed;
         channels[ChannelIds.Longacc] = longAcc;

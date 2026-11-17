@@ -39,6 +39,7 @@ internal sealed class TrackMap3DController
     private IReadOnlyList<GateDto> _gates = Array.Empty<GateDto>();
     private readonly Stopwatch _sendStopwatch = Stopwatch.StartNew();
     private readonly TrackUpdateGate _sceneGate = new();
+    private readonly VehicleHeadingResolver _headingResolver = new();
     private MapTileSource _mapSource = MapTileSources.Resolve(MapTileSources.DefaultId, null);
 
     public TrackMap3DController(WebView2CompositionControl webView)
@@ -160,7 +161,7 @@ internal sealed class TrackMap3DController
         Post(new { type = "clear" });
     }
 
-    public void SetCursor(VehicleSample? sample)
+    public void SetCursor(VehicleSample? sample, bool animateMap = false)
     {
         _cursor = sample;
         _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
@@ -170,6 +171,7 @@ internal sealed class TrackMap3DController
         Post(new
         {
             type = "cursor",
+            transitionMs = animateMap ? 33 : 0,
             payload = ToCursorPoint(sample)
         });
     }
@@ -227,6 +229,12 @@ internal sealed class TrackMap3DController
         _followVehicle = enabled;
         Post(new { type = "followVehicle", enabled });
     }
+    private bool _chaseVehicle;
+    public void SetChaseVehicle(bool enabled)
+    {
+        _chaseVehicle = enabled;
+        Post(new { type = "chaseVehicle", enabled });
+    }
     public void Fit() => Post(new { type = "fit" });
 
     public void SetSelectedTrack(int sourceIndex)
@@ -269,6 +277,11 @@ internal sealed class TrackMap3DController
                     _pageReady = true;
                     _pageLoad?.TrySetResult();
                     SetFollowVehicle(_followVehicle);
+                    SetChaseVehicle(_chaseVehicle);
+#if DEBUG
+                    // F5 acceptance: display actual Cesium frame rate, not the target cap.
+                    Post(new { type = "diagnostics", showFps = true });
+#endif
                     StatusChanged?.Invoke(string.Empty);
                     if (_active)
                     {
@@ -463,45 +476,12 @@ internal sealed class TrackMap3DController
     }
 
     /// <summary>
-    /// Travel heading deg (0=N, clockwise). Prefer sample.Heading; else bearing from nearby track samples.
+    /// Body heading when recorded; otherwise moving course with a stable heading at rest.
     /// </summary>
     private double ResolveCursorHeadingDeg(VehicleSample sample, int trackId, int sampleIndex)
     {
-        if (double.IsFinite(sample.Heading))
-            return sample.Heading;
-
-        if (trackId < 0 || trackId >= _tracks.Count || sampleIndex < 0)
-            return 0.0;
-
-        var samples = _tracks[trackId].Samples;
-        if (samples.Count < 2)
-            return 0.0;
-
-        var i0 = Math.Max(0, sampleIndex - 1);
-        var i1 = Math.Min(samples.Count - 1, sampleIndex + 1);
-        if (i1 <= i0)
-        {
-            i0 = Math.Max(0, sampleIndex - 3);
-            i1 = Math.Min(samples.Count - 1, sampleIndex + 3);
-        }
-        if (i1 <= i0)
-            return 0.0;
-
-        var a = samples[i0];
-        var b = samples[i1];
-        if (!TrackProjection.IsValidGps(a) || !TrackProjection.IsValidGps(b))
-            return 0.0;
-
-        var mPerLon = 111320.0 * Math.Cos(a.Latitude * Math.PI / 180.0);
-        var dx = (b.Longitude - a.Longitude) * mPerLon;
-        var dy = (b.Latitude - a.Latitude) * 111320.0;
-        if (Math.Abs(dx) < 1e-6 && Math.Abs(dy) < 1e-6)
-            return 0.0;
-
-        var deg = Math.Atan2(dx, dy) * 180.0 / Math.PI;
-        if (deg < 0)
-            deg += 360.0;
-        return deg;
+        var samples = trackId >= 0 && trackId < _tracks.Count ? _tracks[trackId].Samples : null;
+        return _headingResolver.Resolve(sample, samples, sampleIndex);
     }
 
     private (int TrackId, int SampleIndex) FindSampleLocation(VehicleSample sample)

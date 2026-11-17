@@ -151,6 +151,10 @@ public static class KmlTrackImporter
                 altitude: alt);
 
             // Keep accuracy as an extra channel for future use (not shown in phase1 UI).
+            // Preserve absence separately: legacy speed=0 must not mean the entire
+            // untimed/no-speed KML track is stationary to the 3D heading resolver.
+            if (p.SpeedKph is not double recordedSpeed || !double.IsFinite(recordedSpeed))
+                channels[VehicleHeadingResolver.MissingSpeedKey] = 1;
             if (p.AccuracyMeters is double acc)
                 channels["kml_accuracy_m"] = acc;
 

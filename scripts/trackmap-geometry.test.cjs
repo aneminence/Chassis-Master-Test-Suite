@@ -25,7 +25,7 @@ function harness() {
       HeadingPitchRoll: class { constructor(h) { this.heading = h; } },
       Transforms: { headingPitchRollQuaternion: (_p, hpr) => hpr.heading }
     };
-    ${['isGroundMode', 'trackUsesGroundHeights', 'displayHeight', 'trackDisplayHeightNear', 'cursorOrientation', 'cursorPitch', 'cursorPosition', 'trackChunks'].map(extract).join('\n')}
+    ${['isGroundMode', 'trackUsesGroundHeights', 'displayHeight', 'trackDisplayHeightNear', 'cursorTrack', 'cursorOrientation', 'cursorPitch', 'cursorPosition', 'trackChunks'].map(extract).join('\n')}
   `, context);
   return code => vm.runInContext(code, context);
 }

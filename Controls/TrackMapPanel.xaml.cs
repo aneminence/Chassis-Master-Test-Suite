@@ -528,6 +528,7 @@ public partial class TrackMapPanel : UserControl
             return;
         }
         FollowVehicleCheck.IsChecked = false;
+        ChaseVehicleCheck.IsChecked = false;
         if (_is3DMode)
         {
             _map3D?.Fit();
@@ -586,36 +587,48 @@ public partial class TrackMapPanel : UserControl
     /// 用曲线光标对应的样本更新车辆位置标记。
     /// sample 为 null 时清除标记，坐标读数回到轨迹最新点。
     /// </summary>
-    public void SetCursorSample(VehicleSample? sample)
+    public void SetCursorSample(VehicleSample? sample, bool animateMap = false)
     {
         // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
         if (ReferenceEquals(_cursorSample, sample) && _compareCursors.Count == 0)
         {
-            CenterCurrentVehicle();
+            CenterCurrentVehicle(send3DCursor: false);
             return;
         }
 
         _cursorSample = sample;
         _compareCursors = Array.Empty<CompareCursor>();
-        UpdateCursorMarker(refresh: true);
+        if (!_is3DMode) UpdateCursorMarker(refresh: true);
         UpdateCoordinateReadout();
-        _map3D?.SetCompareCursors(Array.Empty<CompareCursor>());
-        _map3D?.SetCursor(sample);
-        CenterCurrentVehicle();
+        // SetCursor already clears comparison state in both the controller and JS.
+        _map3D?.SetCursor(sample, animateMap);
+        CenterCurrentVehicle(send3DCursor: false);
     }
+
+    public void Finish3DCursorAnimation() => _map3D?.SetCursor(_cursorSample);
 
     private void FollowVehicleChanged(object sender, RoutedEventArgs e)
     {
+        if (FollowVehicleCheck.IsChecked == true && ChaseVehicleCheck is not null)
+            ChaseVehicleCheck.IsChecked = false;
         _map3D?.SetFollowVehicle(FollowVehicleCheck.IsChecked == true);
         CenterCurrentVehicle();
     }
 
-    private void CenterCurrentVehicle()
+    private void ChaseVehicleChanged(object sender, RoutedEventArgs e)
+    {
+        if (ChaseVehicleCheck.IsChecked == true)
+            FollowVehicleCheck.IsChecked = false;
+        _map3D?.SetChaseVehicle(_is3DMode && ChaseVehicleCheck.IsChecked == true);
+    }
+
+    private void CenterCurrentVehicle(bool send3DCursor = true)
     {
         if (FollowVehicleCheck?.IsChecked != true) return;
         var sample = _cursorSample ?? _samples.LastOrDefault(TrackProjection.IsValidGps);
         if (sample is null || !TrackProjection.IsValidGps(sample) || !IsSampleVisible(sample)) return;
-        _map3D?.SetCursor(sample);
+        if (send3DCursor) _map3D?.SetCursor(sample);
+        if (_is3DMode) return;
         if (_projection is null) return;
         _userHasAdjustedView = true;
         var (x, y) = _projection.ToMeters(sample.Latitude, sample.Longitude);
@@ -656,12 +669,17 @@ public partial class TrackMapPanel : UserControl
         Map3DToolbar.Visibility = use3D ? Visibility.Visible : Visibility.Collapsed;
         Mode2DButton.IsEnabled = use3D;
         Mode3DButton.IsEnabled = !use3D;
+        ChaseVehicleCheck.Visibility = use3D ? Visibility.Visible : Visibility.Collapsed;
+        _map3D?.SetChaseVehicle(use3D && ChaseVehicleCheck.IsChecked == true);
         _map3D?.SetActive(use3D);
         // Gate legend lives above both hosts; keep it in sync when switching.
         RefreshGateColorLegend();
         PushGatesTo3D();
         if (!use3D)
+        {
+            UpdateCursorMarker(refresh: true);
             _tileLayer?.Invalidate(force: true);
+        }
     }
 
     private void AltitudeModeCombo_SelectionChanged(object sender, SelectionChangedEventArgs e) => Apply3DDisplayOptions();
@@ -1780,6 +1798,8 @@ public partial class TrackMapPanel : UserControl
         }
         if (BasemapCheck is not null)
         {
+            ChaseVehicleCheck.Content = Loc.T("Map.ChaseVehicle");
+            ChaseVehicleCheck.ToolTip = Loc.T("Map.ChaseVehicleTip");
             FollowVehicleCheck.Content = Loc.T("Map.FollowVehicle");
             FollowVehicleCheck.ToolTip = Loc.T("Map.FollowVehicleTip");
             BasemapCheck.Content = Loc.T("Map.Basemap");

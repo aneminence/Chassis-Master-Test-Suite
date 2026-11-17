@@ -185,6 +185,7 @@ public sealed class ChannelRegistry
     {
         var ids = columnNames
             .Where(n => !string.IsNullOrWhiteSpace(n))
+            .Where(n => !VehicleHeadingResolver.IsInternalChannel(n))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 

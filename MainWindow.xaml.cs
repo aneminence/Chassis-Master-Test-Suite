@@ -95,6 +95,10 @@ public partial class MainWindow : Window
 
     private bool _playbackApplying;
 
+    // Keep the exact replay sample until a manual cursor/file change. Plot caches
+    // are decimated for drawing and must not overwrite this pose on the 100 ms UI tick.
+    private VehicleSample? _playbackCursorSample;
+
     private bool _playbackSliderDragging;
 
     private bool _playbackUpdatingUi;
@@ -1043,6 +1047,7 @@ public partial class MainWindow : Window
 
     private void ClearPlotCursors()
     {
+        _playbackCursorSample = null;
         _cursorSourcePlot = null;
         foreach (var plot in _plots)
         {
@@ -2635,6 +2640,7 @@ public partial class MainWindow : Window
 
         if (ReferenceEquals(_cursorSourcePlot, plot))
         {
+            _playbackCursorSample = null;
             _cursorSourcePlot = null;
             UpdateNumericDisplay();
         }
@@ -3337,7 +3343,9 @@ public partial class MainWindow : Window
 
 
         scottPlot.Clear();
-
+        // Clear cached overlay handles even when an empty/hidden plot returns early.
+        plot.CursorLine = null;
+        plot.CursorReadout = null;
 
         plot.LastXs = null;
         plot.LastSamples = null;
@@ -3704,6 +3712,8 @@ public partial class MainWindow : Window
         PlotDefinition? source,
         bool refreshOverlays = true)
     {
+        if (!_playbackApplying)
+            _playbackCursorSample = null;
         _cursorSourcePlot = cursorX is null ? null : source;
 
         foreach (var plot in _plots)
@@ -3712,6 +3722,27 @@ public partial class MainWindow : Window
         if (!refreshOverlays)
         {
             SyncPlaybackFromCursor();
+            return;
+        }
+
+        // Playback changes only the cursor. Rebuilding every gate, run annotation
+        // and selection overlay at 30 Hz needlessly blocks the map message producer.
+        if (_playbackApplying && cursorX is double playbackX)
+        {
+            foreach (var plot in _plots)
+            {
+                if (plot.WpfPlot is null)
+                    continue;
+                if (plot.CursorLine is null)
+                    ApplyPlotOverlays(plot);
+                else
+                {
+                    plot.CursorLine.X = playbackX;
+                    if (plot.CursorReadout is not null)
+                        plot.CursorReadout.Text = BuildCursorReadout(plot, playbackX);
+                }
+                plot.WpfPlot.Refresh();
+            }
             return;
         }
 
@@ -4309,6 +4340,7 @@ public partial class MainWindow : Window
 
     private void BindPlaybackToCurrentFile()
     {
+        _playbackCursorSample = null;
         var offline = _isOfflineMode || _historyOfflineMode;
         var file = offline ? (_offlineFiles.Selected ?? _offlineFiles.Primary) : null;
         _playback.SetSamples(file?.Samples, resetPosition: true);
@@ -4319,6 +4351,7 @@ public partial class MainWindow : Window
 
     private void StopPlaybackUi()
     {
+        _playbackCursorSample = null;
         _playback.Pause();
         _playbackTimer.Stop();
         _playback.SetSamples(null);
@@ -4329,6 +4362,7 @@ public partial class MainWindow : Window
     {
         _playback.Pause();
         _playbackTimer.Stop();
+        TrackMapPanelControl.Finish3DCursorAnimation();
         RefreshPlaybackBar();
     }
 
@@ -4400,6 +4434,7 @@ public partial class MainWindow : Window
         {
             _playback.Pause();
             _playbackTimer.Stop();
+            TrackMapPanelControl.Finish3DCursorAnimation();
         }
 
         ApplyPlaybackSliderPoint();
@@ -4485,16 +4520,17 @@ public partial class MainWindow : Window
     private void PlaybackTimer_Tick(object? sender, EventArgs e)
     {
         _playback.Tick(PlaybackWallMs());
-        ApplyPlaybackCursor();
+        ApplyPlaybackCursor(animateMap: _playback.IsPlaying);
         RefreshPlaybackBarPosition();
         if (!_playback.IsPlaying)
         {
             _playbackTimer.Stop();
+            TrackMapPanelControl.Finish3DCursorAnimation();
             RefreshPlaybackBar();
         }
     }
 
-    private void ApplyPlaybackCursor()
+    private void ApplyPlaybackCursor(bool animateMap = false)
     {
         var sample = _playback.CurrentSample;
         if (sample is null)
@@ -4503,13 +4539,18 @@ public partial class MainWindow : Window
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
         var cursorX = GetPlaybackAxisValue(sample, xSignal);
 
+        _playbackCursorSample = sample;
         _playbackApplying = true;
         try
         {
             var source = _plots.Count > 0 ? _plots[0] : null;
             SetSharedCursor(cursorX, source);
-            UpdateNumericDisplay();
-            TrackMapPanelControl.SetCursorSample(sample);
+            // Dashboard resolves the exact replay sample; send the map pose only once.
+            UpdateNumericDisplay(updateMap: false);
+            TrackMapPanelControl.SetCursorSample(
+                (_isOfflineMode || _historyOfflineMode) && _offlineFiles.Primary is { IsVisible: false }
+                    ? null : sample,
+                animateMap: animateMap);
         }
         finally
         {
@@ -5387,6 +5428,7 @@ public partial class MainWindow : Window
 
         // 竖向光标
         plot.CursorLine = null;
+        plot.CursorReadout = null;
         if (plot.CursorX is double cursorX)
         {
             var vLine = scottPlot.Add.VerticalLine(cursorX);
@@ -5402,6 +5444,7 @@ public partial class MainWindow : Window
                 var anno = scottPlot.Add.Annotation(
                     readout,
                     ScottPlot.Alignment.UpperLeft);
+                plot.CursorReadout = anno;
                 anno.LabelFontSize = 18;
                 anno.LabelFontColor =
                     ThemeBrushes.ScottPlot("AccentBrush");
@@ -6025,6 +6068,7 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
+        _playbackCursorSample = null;
         XAxisAutoScaleCheckBox.IsChecked =
             true;
 
@@ -7110,7 +7154,7 @@ public partial class MainWindow : Window
     }
 
 
-    private void UpdateNumericDisplay()
+    private void UpdateNumericDisplay(bool updateMap = true)
     {
         var compareCursors = TryGetCompareCursorSamples();
         var cursorSample = compareCursors.Count > 0
@@ -7126,7 +7170,8 @@ public partial class MainWindow : Window
             DashboardPanelControl.ApplyLiveSample(null);
             DashboardPanelControl.SetMultiVehicleSummary(
                 Array.Empty<(string, string, double)>());
-            TrackMapPanelControl.SetCursorSample(null);
+            if (updateMap)
+                TrackMapPanelControl.SetCursorSample(null);
             return;
         }
 
@@ -7194,6 +7239,10 @@ public partial class MainWindow : Window
             DashboardPanelControl.SetMultiVehicleSummary(
                 Array.Empty<(string, string, double)>());
         }
+
+        // The playback tick sends its map pose separately with animation metadata.
+        if (!updateMap)
+            return;
 
         // Track Map markers: compare runs, live multi-car, or single cursor.
         if (IsCompareModeActive)
@@ -7293,6 +7342,9 @@ public partial class MainWindow : Window
     /// </summary>
     private VehicleSample? TryGetCursorSample()
     {
+        if ((_isOfflineMode || _historyOfflineMode) && _playbackCursorSample is not null)
+            return _playbackCursorSample;
+
         var plot = _cursorSourcePlot;
         if (plot is null ||
             plot.CursorX is not double cursorX ||
@@ -7803,6 +7855,8 @@ public partial class MainWindow : Window
 
         /// <summary>Yellow scrubber line — mutated in place while dragging.</summary>
         public ScottPlot.Plottables.VerticalLine? CursorLine { get; set; }
+
+        public ScottPlot.Plottables.Annotation? CursorReadout { get; set; }
 
         /// <summary>横向选区起止（可空表示无选区）。</summary>
         public double? SelectionX1 { get; set; }

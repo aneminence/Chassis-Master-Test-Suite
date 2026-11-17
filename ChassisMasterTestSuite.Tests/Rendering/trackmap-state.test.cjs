@@ -14,6 +14,7 @@ assert.ok(moveEnd, "Track map camera completion callback is present");
 
 function createScene() {
   return vm.runInNewContext(`(() => {
+    let chaseVehicle = false, followVehicle = false;
     let cameraMoving = true;
     let pendingTrackPayload;
     let sceneState = { tracks: [{ id: 0 }], altitudeMode: "ground" };
@@ -25,6 +26,8 @@ function createScene() {
     let rebuilds = 0, clears = 0, fits = [];
     const viewer = { entities: { removeAll() { clears++; } } };
     const text = { waiting: "waiting" };
+    function releaseFollowCamera() {}
+    function clearVehicleCursor() {}
     function refreshGateLegend() {}
     function setNotice() {}
     function updateTracks() { rebuilds++; }
@@ -91,6 +94,7 @@ function extractFunction(name) {
 
 function fitScene(selectedTrackId) {
   return vm.runInNewContext(`(() => {
+    let chaseVehicle = false, followVehicle = false;
     const sceneState = { selectedTrackId: ${selectedTrackId}, tracks: [
       { id: 3, points: [[1, 2, 0, 0], [2, 3, 0, 1]], isVisible: true },
       { id: 7, points: [[110, 30, 0, 11], [111, 31, 0, 22]], isVisible: false }
@@ -124,6 +128,8 @@ test("an unavailable selected file never falls back to fitting another file", ()
 
 function pickScene(entityId, visible = true) {
   return vm.runInNewContext(`(() => {
+    let chaseVehicle = false, followVehicle = false;
+    let followPanDragged = false;
     let messages = [];
     const sceneState = { sceneRevision: 42, tracks: [
       { id: 7, isVisible: ${visible}, points: [[0, 0, 0, 100], [0.01, 0, 0, 900]] }
@@ -155,6 +161,7 @@ test("3D gate and gate label clicks select the shared gate", () => {
 
 test("visibility removes existing hidden geometry without renumbering other tracks", () => {
   const result = vm.runInNewContext(`(() => {
+    let chaseVehicle = false, followVehicle = false;
     const sceneState = { altitudeMode: "ground", selectedTrackId: 7, tracks: [
       { id: 3, points: [[1, 2, 0, 0], [2, 3, 0, 1]], isVisible: true, hasAltitude: true },
       { id: 7, points: [[110, 30, 0, 0], [111, 31, 0, 1]], isVisible: true, hasAltitude: true }
@@ -195,11 +202,14 @@ test("visibility removes existing hidden geometry without renumbering other trac
 
 test("hiding a source removes its existing cursor even before another cursor message", () => {
   const result = vm.runInNewContext(`(() => {
+    let chaseVehicle = false, followVehicle = false;
     const sceneState = { tracks: [{ id: 7, isVisible: false }] };
-    let cursorPoint, cursorEntity = { id: "cursor" }, removed = 0;
+    let cursorPoint, cursorSolid, cursorOutline, renderedCursorPose, cursorAnimation, cursorEntity = { id: "cursor" }, removed = 0;
     const viewer = { trackedEntity: cursorEntity,
       entities: { remove() { removed++; } }, scene: { requestRender() {} } };
+    function releaseFollowCamera() {}
     function clearCompareCursorEntities() {}
+    ${extractFunction("clearVehicleCursor")}
     ${extractFunction("setCursor")}
     setCursor({ trackId: 7, sampleIndex: 900 });
     return JSON.stringify({ removed, cursorEntity, trackedEntity: viewer.trackedEntity });
@@ -214,7 +224,7 @@ test("map reports ready before a pending terrain request completes", () => {
   const messages = [];
   const event = { addEventListener() {} };
   const scene = {
-    postProcessStages: { fxaa: {} }, globe: { tileLoadProgressEvent: event },
+    preUpdate: event, postProcessStages: { fxaa: {} }, globe: { tileLoadProgressEvent: event },
     skyBox: {}, sun: {}, moon: {}, skyAtmosphere: {}, fog: {},
     screenSpaceCameraController: {}, canvas: { addEventListener() {} }, requestRender() {}
   };
@@ -223,13 +233,16 @@ test("map reports ready before a pending terrain request completes", () => {
     Viewer: class { constructor() { this.scene = scene; this.camera = { moveStart: event, moveEnd: event }; } },
     Color: { fromCssColorString: x => x },
     ScreenSpaceEventHandler: class { setInputAction() {} }, ScreenSpaceEventType: { LEFT_CLICK: 0 },
+    KeyboardEventModifier: { CTRL: 0, SHIFT: 1 },
     ArcGISTiledElevationTerrainProvider: { fromUrl: () => new Promise(() => {}) }
   };
   vm.runInNewContext(`(async () => {
     let viewer, cameraMoving, pendingTrackPayload, sceneState, cursorPoint, followVehicle;
     const compareCursorPoints = [], text = {};
+    let terrainRetry; function setTerrainStatus() {} async function loadTerrain() {}
     function setNotice() {} function refreshGateLegend() {} function handleMessage() {}
     function handleSceneClick() {} function setCursor() {} function setCursors() {} function updateTracks() {}
+    function startFollowPan() {} function moveFollowPan() {} function endFollowPan() {}
     ${source.slice(start, end)}
   })()`, {
     Cesium, window: { Cesium, addEventListener() {}, chrome: { webview: { addEventListener() {} } } },

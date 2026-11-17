@@ -2,22 +2,29 @@
   "use strict";
 
   const notice = document.getElementById("notice");
+  const terrainStatus = document.getElementById("terrainStatus");
+  const terrainStatusText = document.getElementById("terrainStatusText");
+  const terrainRetry = document.getElementById("terrainRetry");
+  let terrainLoading = false;
+  let terrainRetryTimer;
   const gateLegend = document.getElementById("gateLegend");
   const gateLegendItems = document.getElementById("gateLegendItems");
   const isZh = (navigator.language || "").toLowerCase().startsWith("zh");
   const text = isZh ? {
     terrainLoading: "正在加载在线 DEM 地形…",
-    terrainError: "在线 DEM 加载失败，已降级为平面地球。正式发布前请配置 Cesium ion Token。",
+    terrainError: "在线高程暂不可用，当前地面不含地形起伏。可重试连接。",
     waiting: "等待 GPS 数据",
     missing: count => `${count} 条轨迹没有有效高度，已降级为贴地显示。`,
     cesiumError: "无法下载 Cesium，请检查网络连接。",
+    terrainRetry: "重试",
     gatesTitle: "Gates"
   } : {
     terrainLoading: "Loading online DEM terrain…",
-    terrainError: "Online DEM failed to load; using the flat ellipsoid fallback. Configure a Cesium ion token before release.",
+    terrainError: "Terrain is unavailable; ground elevation is temporarily flat. Retry to reconnect.",
     waiting: "Waiting for GPS data",
     missing: count => `${count} track(s) have no usable altitude and are shown on the ground.`,
     cesiumError: "Cesium could not be downloaded. Check the network connection.",
+    terrainRetry: "Retry",
     gatesTitle: "Gates"
   };
   let viewer;
@@ -26,8 +33,19 @@
   let gateState = [];
   let gateEntityIds = new Set();
   let cursorEntity;
+  let cursorSolid;
+  let cursorOutline;
+  let renderedCursorPose;
+  let cursorAnimation;
   let cursorPoint;
   let followVehicle = false;
+  let followCameraActive = false;
+  let followCameraInputs;
+  let followPanStart;
+  let followPanLast;
+  let followPanDragged = false;
+  let chaseVehicle = false;
+  let chasePose;
   let compareCursorPoints = [];
   const compareCursorEntities = new Map();
   let lastDatasetKey = "";
@@ -57,6 +75,45 @@
   function setNotice(message) {
     notice.textContent = message || "";
     notice.style.display = message ? "block" : "none";
+  }
+
+  function setTerrainStatus(message, loading = false) {
+    if (!terrainStatus) return;
+    terrainStatus.hidden = !message;
+    terrainStatus.title = "";
+    terrainStatusText.textContent = message || "";
+    terrainRetry.textContent = text.terrainRetry;
+    terrainRetry.disabled = loading;
+  }
+
+  async function loadTerrain(allowRetry = true) {
+    if (terrainLoading || !viewer) return;
+    clearTimeout(terrainRetryTimer);
+    terrainLoading = true;
+    setTerrainStatus(text.terrainLoading, true);
+    let timeout;
+    try {
+      const provider = await Promise.race([
+        Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
+          "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer"),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Terrain request timed out")), 15000);
+        })
+      ]);
+      viewer.terrainProvider = provider;
+      setTerrainStatus("");
+      viewer.scene.requestRender();
+    } catch (error) {
+      // Preserve the actual error for diagnosis. An ArcGIS/network failure says
+      // nothing about a Cesium ion token, and must not block the middle of the map.
+      console.warn("CMTS terrain initialization failed", error);
+      setTerrainStatus(text.terrainError);
+      if (terrainStatus) terrainStatus.title = error?.message || String(error);
+      if (allowRetry) terrainRetryTimer = setTimeout(() => loadTerrain(false), 3000);
+    } finally {
+      clearTimeout(timeout);
+      terrainLoading = false;
+    }
   }
 
   function isGroundMode() {
@@ -394,6 +451,142 @@
     }
   }
 
+  // Resolve the decimated segment by original index: bounded work per cursor,
+  // and correct altitude at self intersections of the recorded trajectory.
+  function cursorTrack(point, track) {
+    if (!track || !Number.isFinite(point.sampleIndex) || point.sampleIndex < 0) return track;
+    const points = track.points || [];
+    if (!points.length || !Number.isFinite(points[0][3])) return track;
+    let low = 0, high = points.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (points[mid][3] < point.sampleIndex) low = mid + 1;
+      else high = mid;
+    }
+    return { ...track, points: points.slice(Math.max(0, low - 2), Math.min(points.length, low + 3)) };
+  }
+
+  function releaseFollowCamera() {
+    if (followCameraInputs) {
+      Object.assign(viewer.scene.screenSpaceCameraController, followCameraInputs);
+      followCameraInputs = undefined;
+    }
+    followPanStart = followPanLast = undefined;
+    followPanDragged = false;
+    if (followCameraActive) viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    followCameraActive = false;
+  }
+
+  function configureFollowInputs() {
+    if (followCameraInputs) return;
+    const controller = viewer.scene.screenSpaceCameraController;
+    followCameraInputs = {
+      rotateEventTypes: controller.rotateEventTypes,
+      tiltEventTypes: controller.tiltEventTypes,
+      lookEventTypes: controller.lookEventTypes
+    };
+    const event = Cesium.CameraEventType;
+    const modifier = Cesium.KeyboardEventModifier;
+    // Cesium ignores native tilt with a nonidentity camera transform. Route all
+    // rotation gestures through orbit, leaving plain left-drag for screen pan.
+    controller.rotateEventTypes = [event.MIDDLE_DRAG,
+      { eventType: event.LEFT_DRAG, modifier: modifier.CTRL },
+      { eventType: event.RIGHT_DRAG, modifier: modifier.CTRL },
+      { eventType: event.LEFT_DRAG, modifier: modifier.SHIFT }];
+    controller.tiltEventTypes = controller.lookEventTypes = undefined;
+  }
+
+  function startFollowPan(movement) {
+    followPanDragged = false;
+    if (!followCameraActive || !followVehicle || chaseVehicle) return;
+    followPanStart = Cesium.Cartesian2.clone(movement.position);
+    followPanLast = Cesium.Cartesian2.clone(movement.position);
+  }
+
+  function moveFollowPan(movement) {
+    if (!followPanStart || !followCameraActive || !followVehicle || chaseVehicle) return;
+    const point = movement.endPosition;
+    // Keep clicks (including Gate selection) independent from camera panning.
+    if (!followPanDragged && Cesium.Cartesian2.distance(followPanStart, point) < 4) return;
+    const camera = viewer.camera;
+    const depth = -Cesium.Cartesian3.dot(camera.position, camera.direction);
+    const fovy = camera.frustum.fovy;
+    const height = viewer.scene.canvas.clientHeight;
+    if (!(depth > 0) || !Number.isFinite(fovy) || !(height > 0)) return;
+    const pixelScale = 2 * depth * Math.tan(fovy * 0.5) / height;
+    camera.moveRight(-(point.x - followPanLast.x) * pixelScale);
+    camera.moveUp((point.y - followPanLast.y) * pixelScale);
+    Cesium.Cartesian2.clone(point, followPanLast);
+    followPanDragged = true;
+    viewer.scene.requestRender();
+  }
+
+  function endFollowPan() {
+    followPanStart = followPanLast = undefined;
+  }
+
+  function updateFollowCamera(pose) {
+    // Both body and camera use the same rendered pose. Keeping the camera's
+    // local position AND basis preserves user pan/orbit/zoom between updates.
+    viewer.trackedEntity = undefined;
+    const camera = viewer.camera;
+    const frame = Cesium.Transforms.eastNorthUpToFixedFrame(pose.position);
+    if (!followCameraActive) {
+      // No offset: Cesium preserves the current world camera pose on entry.
+      // The new reference-frame origin becomes the orbit pivot (the vehicle).
+      camera.lookAtTransform(frame);
+      configureFollowInputs();
+      followCameraActive = true;
+      return;
+    }
+    const position = Cesium.Cartesian3.clone(camera.position);
+    const direction = Cesium.Cartesian3.clone(camera.direction);
+    const up = Cesium.Cartesian3.clone(camera.up);
+    camera.lookAtTransform(frame);
+    Cesium.Cartesian3.clone(position, camera.position);
+    Cesium.Cartesian3.clone(direction, camera.direction);
+    Cesium.Cartesian3.clone(up, camera.up);
+    Cesium.Cartesian3.cross(camera.direction, camera.up, camera.right);
+  }
+
+  function setFollowVehicle(enabled) {
+    followVehicle = enabled;
+    viewer.trackedEntity = undefined;
+    if (enabled && !chaseVehicle && renderedCursorPose) {
+      viewer.camera.cancelFlight();
+      updateFollowCamera(renderedCursorPose);
+    } else releaseFollowCamera();
+    viewer.scene.requestRender();
+  }
+
+  function releaseChaseCamera() {
+    chasePose = undefined;
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    viewer.scene.screenSpaceCameraController.enableInputs = true;
+  }
+
+  function updateChaseCamera() {
+    if (!chaseVehicle || !chasePose) return;
+    viewer.trackedEntity = undefined;
+    const { point, position } = chasePose;
+    const target = position;
+    // One pose drives car and camera; seeks and speed changes never ease separately.
+    viewer.camera.lookAt(target, new Cesium.HeadingPitchRange(
+      Cesium.Math.toRadians(Number.isFinite(point.heading) ? point.heading : 0),
+      Cesium.Math.toRadians(-25), 24));
+    viewer.scene.screenSpaceCameraController.enableInputs = false;
+  }
+
+  function setChaseVehicle(enabled) {
+    releaseFollowCamera();
+    chaseVehicle = enabled;
+    viewer.camera.cancelFlight();
+    viewer.trackedEntity = undefined;
+    if (enabled && cursorPoint) setCursor(cursorPoint);
+    else releaseChaseCamera();
+    viewer.scene.requestRender();
+  }
+
   function cursorPitch(point, track, useGround) {
     const heading = (Number.isFinite(point.heading) ? point.heading : 0) * Math.PI / 180;
     // Measure a vehicle-length baseline. Ground uses the currently rendered DEM
@@ -414,7 +607,7 @@
   }
 
   function cursorPosition(point) {
-    const track = (sceneState.tracks || []).find(item => item.id === point.trackId);
+    const track = cursorTrack(point, (sceneState.tracks || []).find(item => item.id === point.trackId));
     const useGround = sceneState.altitudeMode === "ground" || (track && !track.hasAltitude);
     // Ground box positions are relative to the very same terrain as the draped
     // track. Recorded boxes use the rendered segment, not a separate altitude.
@@ -466,42 +659,126 @@
     }
   }
 
-  function setCursor(point) {
+  function clearVehicleCursor() {
+    releaseFollowCamera();
+    if (cursorEntity) viewer.entities.remove(cursorEntity);
+    if (cursorSolid) viewer.scene.primitives.remove(cursorSolid);
+    if (cursorOutline) viewer.scene.primitives.remove(cursorOutline);
+    cursorEntity = cursorSolid = cursorOutline = undefined;
+    renderedCursorPose = cursorAnimation = undefined;
+    viewer.trackedEntity = undefined;
+  }
+
+  function absoluteCursorPosition(point, resolved) {
+    // Primitive transforms take the center in world coordinates. Unlike the
+    // Entity BoxGeometryUpdater they do not add terrain or half the box height.
+    const ground = resolved.useGround
+      ? viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(point.longitude, point.latitude)) : 0;
+    const height = resolved.useGround
+      ? (Number.isFinite(ground) ? ground : 0) + resolved.height + cursorBoxHalfHeightM
+      : resolved.height;
+    return Cesium.Cartesian3.fromDegrees(point.longitude, point.latitude, height);
+  }
+
+  function createVehiclePrimitive(outline, modelMatrix) {
+    const dimensions = new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM);
+    return viewer.scene.primitives.add(new Cesium.Primitive({
+      geometryInstances: new Cesium.GeometryInstance({
+        geometry: outline ? Cesium.BoxOutlineGeometry.fromDimensions({ dimensions })
+          : Cesium.BoxGeometry.fromDimensions({ dimensions,
+            vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT }),
+        attributes: { color: Cesium.ColorGeometryInstanceAttribute.fromColor(
+          outline ? Cesium.Color.BLACK : Cesium.Color.GOLD) }
+      }),
+      appearance: new Cesium.PerInstanceColorAppearance({
+        flat: outline, translucent: false, closed: !outline
+      }),
+      modelMatrix,
+      // Twelve triangles, built once. Moving an Entity.box instead invalidates
+      // static geometry batches and repeatedly queues asynchronous worker builds.
+      asynchronous: false,
+      allowPicking: false
+    }));
+  }
+
+  function applyVehiclePose(pose) {
+    const { point, position, orientation } = pose;
+    const modelMatrix = Cesium.Matrix4.fromTranslationQuaternionRotationScale(
+      position, orientation, new Cesium.Cartesian3(1, 1, 1));
+    if (!cursorEntity) {
+      // Retain a lightweight entity anchor for cursor identity/diagnostics.
+      // The visible body and both cameras do not depend on EntityView readiness.
+      cursorEntity = viewer.entities.add({ id: "cmts-cursor", position,
+        viewFrom: new Cesium.Cartesian3(-18, -18, 14),
+        point: { pixelSize: 1, color: Cesium.Color.TRANSPARENT, outlineWidth: 0,
+          heightReference: Cesium.HeightReference.NONE } });
+      cursorSolid = createVehiclePrimitive(false, modelMatrix);
+      cursorOutline = createVehiclePrimitive(true, modelMatrix);
+    } else {
+      cursorEntity.position = position;
+      cursorSolid.modelMatrix = modelMatrix;
+      cursorOutline.modelMatrix = modelMatrix;
+    }
+    renderedCursorPose = pose;
+    if (chaseVehicle) {
+      chasePose = { point, position };
+      updateChaseCamera();
+    } else if (followVehicle) updateFollowCamera(pose);
+  }
+
+  function advanceCursorAnimation(now) {
+    if (!cursorAnimation) return;
+    const samples = cursorAnimation.samples;
+    const renderTime = now - cursorAnimation.delay;
+    while (samples.length > 2 && samples[1].time <= renderTime) samples.shift();
+    const a = samples[0], b = samples[1];
+    const t = Math.min(1, Math.max(0, (renderTime - a.time) / Math.max(1, b.time - a.time)));
+    const from = a.pose, to = b.pose;
+    const headingDelta = ((to.point.heading - from.point.heading + 540) % 360) - 180;
+    applyVehiclePose(t === 1 ? to : {
+      point: { ...to.point, heading: from.point.heading + headingDelta * t },
+      position: Cesium.Cartesian3.lerp(from.position, to.position, t, new Cesium.Cartesian3()),
+      orientation: Cesium.Quaternion.slerp(from.orientation, to.orientation, t, new Cesium.Quaternion())
+    });
+    if (t === 1 && samples.length === 2) cursorAnimation = undefined;
+    viewer.scene.requestRender();
+  }
+
+  function setCursor(point, transitionMs = 0) {
     if (!viewer) return;
     cursorPoint = point;
     clearCompareCursorEntities();
     if (!point || (sceneState.tracks || []).some(track => track.id === point.trackId && track.isVisible === false)) {
-      if (cursorEntity) viewer.entities.remove(cursorEntity);
-      cursorEntity = undefined;
-      viewer.trackedEntity = undefined;
+      clearVehicleCursor();
+      if (chaseVehicle) releaseChaseCamera();
       viewer.scene.requestRender();
       return;
     }
     const resolved = cursorPosition(point);
-    const color = Cesium.Color.GOLD.withAlpha(0.92);
-    if (cursorEntity && cursorEntity.point) {
-      viewer.entities.remove(cursorEntity);
-      cursorEntity = undefined;
-    }
-    if (!cursorEntity) {
-      cursorEntity = viewer.entities.add({
-        id: "cmts-cursor",
-        position: resolved.position,
-        orientation: cursorOrientation(resolved.position, point, resolved.pitch),
-        box: {
-          dimensions: new Cesium.Cartesian3(cursorBoxLengthM, cursorBoxWidthM, cursorBoxHeightM),
-          material: color,
-          outline: true,
-          outlineColor: Cesium.Color.BLACK,
-          heightReference: resolved.useGround
-            ? Cesium.HeightReference.RELATIVE_TO_GROUND
-            : Cesium.HeightReference.NONE
-        }
-      });
+    const position = absoluteCursorPosition(point, resolved);
+    const pose = { point: { ...point, heading: Number.isFinite(point.heading) ? point.heading : 0 },
+      position, orientation: cursorOrientation(position, point, resolved.pitch) };
+    // Only playback ticks opt in. Seeks, file changes and terrain refresh
+    // snap immediately. Never animate across a discontinuity or a different file.
+    if (transitionMs > 0 && renderedCursorPose && renderedCursorPose.point.trackId === point.trackId
+      && Cesium.Cartesian3.distance(renderedCursorPose.position, position) < 100) {
+      const now = performance.now();
+      // Render a small timestamped buffer instead of restarting a 33ms tween on
+      // every message. This absorbs ordinary dispatcher/IPC jitter without the
+      // repeated stop-at-target / accelerate cycle. Seeks bypass the buffer.
+      if (!cursorAnimation) {
+        const delay = Math.min(100, Math.max(50, transitionMs * 2));
+        cursorAnimation = { delay, samples: [
+          { time: now - delay, pose: renderedCursorPose }, { time: now, pose }
+        ] };
+      } else {
+        cursorAnimation.samples.push({ time: now, pose });
+        if (cursorAnimation.samples.length > 8) cursorAnimation.samples.shift();
+      }
     } else {
-      applyCursorBox(cursorEntity, point, resolved, color);
+      cursorAnimation = undefined;
+      applyVehiclePose(pose);
     }
-    if (followVehicle) viewer.trackedEntity = cursorEntity;
     viewer.scene.requestRender();
   }
 
@@ -514,12 +791,10 @@
 
   function setCursors(points) {
     if (!viewer) return;
+    if (chaseVehicle) releaseChaseCamera();
     compareCursorPoints = Array.isArray(points) ? points : [];
     cursorPoint = undefined;
-    if (cursorEntity) {
-      viewer.entities.remove(cursorEntity);
-      cursorEntity = undefined;
-    }
+    clearVehicleCursor();
     const keep = new Set();
     compareCursorPoints.forEach((point, index) => {
       if ((sceneState.tracks || []).some(track => track.id === point.trackId && track.isVisible === false)) return;
@@ -563,6 +838,8 @@
 
   function fit() {
     if (!viewer) return;
+    if (chaseVehicle && chasePose) { updateChaseCamera(); return; }
+    if (followVehicle && renderedCursorPose) { updateFollowCamera(renderedCursorPose); return; }
     const tracks = sceneState.tracks || [];
     const track = sceneState.selectedTrackId === undefined
       ? tracks[0] : tracks.find(item => item.id === sceneState.selectedTrackId);
@@ -595,7 +872,7 @@
         return previous && previous.isVisible !== track.isVisible;
       });
       // Hiding a file must also stop picking its old geometry during camera motion.
-      if (cameraMoving && !modeChanged && !visibilityChanged) {
+      if (cameraMoving && !chaseVehicle && !followVehicle && !modeChanged && !visibilityChanged) {
         pendingTrackPayload = next;
       } else {
         sceneState = next;
@@ -605,11 +882,14 @@
     } else if (data.type === "imagery") {
       setImagery(data.payload);
     } else if (data.type === "followVehicle") {
-      followVehicle = !!data.enabled;
-      viewer.trackedEntity = followVehicle ? cursorEntity : undefined;
+      setFollowVehicle(!!data.enabled);
+    } else if (data.type === "diagnostics") {
+      viewer.scene.debugShowFramesPerSecond = !!data.showFps;
       viewer.scene.requestRender();
+    } else if (data.type === "chaseVehicle") {
+      setChaseVehicle(!!data.enabled);
     } else if (data.type === "cursor") {
-      setCursor(data.payload);
+      setCursor(data.payload, data.transitionMs);
     } else if (data.type === "cursors") {
       setCursors(data.payload);
     } else if (data.type === "gates") {
@@ -628,6 +908,7 @@
     } else if (data.type === "clear") {
       // A scene deferred during camera motion must not reappear on moveEnd.
       pendingTrackPayload = undefined;
+      if (chaseVehicle) releaseChaseCamera();
       sceneState.tracks = [];
       gateState = [];
       lastDatasetKey = "";
@@ -636,6 +917,7 @@
       lastGateRenderKey = "";
       trackEntityIds.clear();
       gateEntityIds.clear();
+      clearVehicleCursor();
       viewer.entities.removeAll();
       cursorEntity = undefined;
       cursorPoint = undefined;
@@ -648,7 +930,7 @@
 
   try {
     if (!window.Cesium) throw new Error(text.cesiumError);
-    setNotice(text.terrainLoading);
+    setTerrainStatus(text.terrainLoading, true);
     viewer = new Cesium.Viewer("cesiumContainer", {
       // Show the map immediately; a slow DEM service must not block readiness.
       terrainProvider: new Cesium.EllipsoidTerrainProvider(),
@@ -657,12 +939,13 @@
       sceneModePicker: false, baseLayerPicker: false, geocoder: false,
       navigationHelpButton: false, infoBox: false, selectionIndicator: false,
       // Limit redraw work while moving; idle scenes still render only on demand.
-      targetFrameRate: 30,
+      targetFrameRate: 60,
       useBrowserRecommendedResolution: true,
       msaaSamples: 1,
       requestRenderMode: true,
       maximumRenderTimeChange: Number.POSITIVE_INFINITY
     });
+    viewer.scene.preUpdate.addEventListener(() => advanceCursorAnimation(performance.now()));
     // FXAA avoids the GPU bandwidth cost of multisample rendering.
     viewer.scene.postProcessStages.fxaa.enabled = true;
     // Ground tracks/gates are draped; recorded tracks keep their absolute altitude.
@@ -677,8 +960,10 @@
     // Re-evaluate slope when terrain tiles finish loading under a stationary cursor.
     viewer.scene.globe.tileLoadProgressEvent.addEventListener(pending => {
       if (pending !== 0) return;
-      if (cursorPoint) setCursor(cursorPoint);
-      else if (compareCursorPoints.length) setCursors(compareCursorPoints);
+      // Tile completion may fire repeatedly while moving. Do not snap to the
+      // latest target or cancel an in-flight playback interpolation on each event.
+      if (cursorPoint && !cursorAnimation) setCursor(cursorPoint);
+      else if (!cursorPoint && compareCursorPoints.length) setCursors(compareCursorPoints);
     });
     const cameraController = viewer.scene.screenSpaceCameraController;
     cameraController.enableCollisionDetection = true;
@@ -694,42 +979,22 @@
       }
     });
     const clickHandler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-    let dragStart;
-    const canvas = viewer.scene.canvas;
-    canvas.addEventListener("pointerdown", event => {
-      dragStart = { x: event.clientX, y: event.clientY };
-    });
-    canvas.addEventListener("pointermove", event => {
-      if (!event.buttons || !dragStart || !followVehicle) return;
-      if (Math.hypot(event.clientX - dragStart.x, event.clientY - dragStart.y) < 4) return;
-      followVehicle = false;
-      viewer.trackedEntity = undefined;
-      window.chrome.webview.postMessage({ type: "manualDrag" });
-      viewer.scene.requestRender();
-    });
-    window.addEventListener("pointerup", () => { dragStart = undefined; });
-    canvas.addEventListener("pointercancel", () => { dragStart = undefined; });
+    // Follow uses screen pan plus vehicle-centred orbit. Free mode keeps its
+    // original Cesium gestures, and ordinary Gate clicks keep their behavior.
+    clickHandler.setInputAction(startFollowPan, Cesium.ScreenSpaceEventType.LEFT_DOWN);
+    clickHandler.setInputAction(moveFollowPan, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+    clickHandler.setInputAction(endFollowPan, Cesium.ScreenSpaceEventType.LEFT_UP);
+    clickHandler.setInputAction(endFollowPan, Cesium.ScreenSpaceEventType.LEFT_UP, Cesium.KeyboardEventModifier.CTRL);
+    clickHandler.setInputAction(endFollowPan, Cesium.ScreenSpaceEventType.LEFT_UP, Cesium.KeyboardEventModifier.SHIFT);
+    window.addEventListener("blur", endFollowPan);
     clickHandler.setInputAction(handleSceneClick, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-    setNotice(text.terrainLoading);
+    setTerrainStatus(text.terrainLoading, true);
     refreshGateLegend();
     window.chrome.webview.addEventListener("message", handleMessage);
     post("ready", "");
-    let terrainTimeout;
-    try {
-      viewer.terrainProvider = await Promise.race([
-        Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(
-          "https://elevation3d.arcgis.com/arcgis/rest/services/WorldElevation3D/Terrain3D/ImageServer"),
-        new Promise((_, reject) => {
-          terrainTimeout = setTimeout(() => reject(new Error("Terrain request timed out")), 15000);
-        })
-      ]);
-      setNotice("");
-      viewer.scene.requestRender();
-    } catch (terrainError) {
-      setNotice(text.terrainError);
-    } finally {
-      clearTimeout(terrainTimeout);
-    }
+    setNotice("");
+    terrainRetry?.addEventListener("click", () => loadTerrain());
+    void loadTerrain();
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     setNotice(message);
@@ -737,6 +1002,7 @@
   }
 
   function handleSceneClick(movement) {
+      if (followPanDragged) { followPanDragged = false; return; }
       const picked = viewer.scene.pick(movement.position);
       const entityId = picked && picked.id && picked.id.id;
       if (typeof entityId === "string" && entityId.startsWith("gate-")) {

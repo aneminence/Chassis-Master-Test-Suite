@@ -65,7 +65,10 @@
                             <CheckBox x:Name="FollowVehicleCheck" Content="Follow vehicle" Margin="0,0,10,0"
                                       Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
                                       Checked="FollowVehicleChanged" Unchecked="FollowVehicleChanged"
-                                      ToolTip="Keep the current vehicle centered. Drag to stop following."/>
+                                      ToolTip="3D: follow from the current view; pan, orbit and zoom without unlocking."/>
+                            <CheckBox x:Name="ChaseVehicleCheck" Content="Lock rear chase camera" Margin="0,0,10,0"
+                                      Visibility="Collapsed" Foreground="{DynamicResource TextPrimary}" VerticalAlignment="Center"
+                                      Checked="ChaseVehicleChanged" Unchecked="ChaseVehicleChanged"/>
                             <Button x:Name="Mode2DButton" Content="2D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,4,0"
                                     Click="Mode2DButton_Click" ToolTip="Use the classic 2D track map"/>
                             <Button x:Name="Mode3DButton" Content="3D" Style="{StaticResource HeaderButtonStyle}" Margin="0,0,10,0"
