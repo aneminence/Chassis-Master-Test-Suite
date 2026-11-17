@@ -56,7 +56,7 @@ public partial class MainWindow : Window
     /// 当前活动数据源（UDP / GSpot）所有权；Settings 完善前用顶部按钮切换。
     /// </summary>
     private readonly DataSourceSession _dataSourceSession;
-    private CMTSRemoteDataSource? _remoteLiveResetSource;
+    private readonly List<CMTSRemoteDataSource> _remoteLiveResetSources = new();
 
 
     private UdpSender? _udpSender;
@@ -1135,7 +1135,6 @@ public partial class MainWindow : Window
         if (!_liveRoster.TrySetFocusByLabel(displayName))
             return;
 
-        _sampleHistory.Clear();
         _latestSample = _liveRoster.GetFocusLatest();
         _forcePlotRebuild = true;
         UpdateNumericDisplay();
@@ -1321,9 +1320,7 @@ public partial class MainWindow : Window
         StopPlaybackUi();
 
         // 若当前无连接，尝试拉起默认 UDP
-        if (_dataSourceSession.Current is null ||
-            _dataSourceSession.Current.State is DataSourceState.Disconnected
-                or DataSourceState.Faulted)
+        if (!_dataSourceSession.HasUsableSource)
         {
             try
             {
@@ -1398,20 +1395,7 @@ public partial class MainWindow : Window
         if (RemoteDeviceButton is not null)
             RemoteDeviceButton.Content = "Remote…";
         RefreshRemoteRecordButtons();
-        var old = _dataSourceSession.Current;
-        _dataSourceSession.SetCurrent(null);
-
-        if (old is not null)
-        {
-            try
-            {
-                await old.StopAsync();
-            }
-            catch
-            {
-                try { old.Dispose(); } catch { /* ignore */ }
-            }
-        }
+        await _dataSourceSession.StopAllAsync();
 
         if (_simulatorWindow is not null)
         {
@@ -2125,7 +2109,7 @@ public partial class MainWindow : Window
             return;
 
         var fallback = ChannelRegistry.Instance.DefaultPlotChannelId;
-        var remoteLive = _dataSourceSession.Current is CMTSRemoteDataSource;
+        var remoteLive = _dataSourceSession.Remotes.Count > 0;
 
         foreach (var plot in _plots)
         {
@@ -3288,8 +3272,26 @@ public partial class MainWindow : Window
             return;
         }
 
-        TrackMapPanelControl.SetTrack(
-            liveSnapshot ?? GetHistorySnapshot());
+        var snapshot = liveSnapshot ?? GetHistorySnapshot();
+        var liveLayers = GetLiveVehicleLayers(snapshot);
+        if (liveLayers.Count > 1)
+        {
+            var layers = liveLayers
+                .Select((layer, index) => new Controls.TrackMapPanel.TrackLayer(
+                    layer.Label,
+                    layer.ColorHex,
+                    layer.Samples,
+                    IsVisible: true,
+                    SourceIndex: index))
+                .ToList();
+            TrackMapPanelControl.SetTracks(layers);
+            TrackMapPanelControl.SetRunHighlights(
+                _annotatedRuns,
+                _selectedAnnotatedRun);
+            return;
+        }
+
+        TrackMapPanelControl.SetTrack(snapshot);
         TrackMapPanelControl.SetRunHighlights(
             _annotatedRuns,
             _selectedAnnotatedRun);
@@ -3371,6 +3373,22 @@ public partial class MainWindow : Window
 
         // Leaving / not in compare: drop any edge legend panels from a prior compare view.
         ClearCompareEdgeLegend(scottPlot);
+
+        if (!(_isOfflineMode || _historyOfflineMode))
+        {
+            var liveLayers = GetLiveVehicleLayers(history);
+            if (liveLayers.Count > 1)
+            {
+                DrawLiveVehicleOverlay(
+                    plot,
+                    scottPlot,
+                    selectedChannels,
+                    selectedXSignal,
+                    previousLimits,
+                    liveLayers);
+                return;
+            }
+        }
 
         if (history.Count < 2)
         {
@@ -5925,6 +5943,191 @@ public partial class MainWindow : Window
             _historyOfflineMode || _isOfflineMode, _offlineFiles, _sampleHistory);
     }
 
+    private readonly record struct LivePlotLayer(
+        string Id,
+        string Label,
+        string ColorHex,
+        IReadOnlyList<VehicleSample> Samples,
+        bool IsFocus);
+
+    private IReadOnlyList<LivePlotLayer> GetLiveVehicleLayers(
+        IReadOnlyList<VehicleSample> history)
+    {
+        if (_isOfflineMode || _historyOfflineMode || history.Count == 0)
+            return Array.Empty<LivePlotLayer>();
+
+        var groups = new Dictionary<string, List<VehicleSample>>(StringComparer.Ordinal);
+        foreach (var sample in history)
+        {
+            var id = string.IsNullOrWhiteSpace(sample.VehicleId)
+                ? "_default"
+                : sample.VehicleId.Trim();
+            if (!groups.TryGetValue(id, out var list))
+            {
+                list = new List<VehicleSample>();
+                groups[id] = list;
+            }
+            list.Add(sample);
+        }
+
+        if (groups.Count <= 1)
+            return Array.Empty<LivePlotLayer>();
+
+        var roster = _liveRoster.Snapshot();
+        var layers = new List<LivePlotLayer>(groups.Count);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var vehicle in roster)
+        {
+            if (!groups.TryGetValue(vehicle.Id, out var samples) || samples.Count < 2)
+                continue;
+            seen.Add(vehicle.Id);
+            layers.Add(new LivePlotLayer(
+                vehicle.Id,
+                vehicle.Label,
+                vehicle.ColorHex,
+                samples,
+                vehicle.IsFocus));
+        }
+
+        foreach (var kv in groups)
+        {
+            if (seen.Contains(kv.Key) || kv.Value.Count < 2)
+                continue;
+            layers.Add(new LivePlotLayer(kv.Key, kv.Key, "#C8A34A", kv.Value, false));
+        }
+
+        return layers;
+    }
+
+    private void DrawLiveVehicleOverlay(
+        PlotDefinition plot,
+        ScottPlot.Plot scottPlot,
+        IReadOnlyList<ChannelDefinition> selectedChannels,
+        string selectedXSignal,
+        ScottPlot.AxisLimits previousLimits,
+        IReadOnlyList<LivePlotLayer> layers)
+    {
+        if (selectedChannels.Count == 0)
+        {
+            scottPlot.Title($"{plot.Name} - No Channel");
+            scottPlot.XLabel(GetAxisLabel(selectedXSignal));
+            scottPlot.YLabel("Value");
+            ApplyDarkPlotStyle(plot.WpfPlot);
+            ApplyDateTimeAxisIfNeeded(plot, selectedXSignal);
+            ApplyPlotOverlays(plot);
+            plot.WpfPlot.Refresh();
+            return;
+        }
+
+        var autoX = XAxisAutoScaleCheckBox.IsChecked == true;
+        double minY = double.MaxValue, maxY = double.MinValue;
+        double minX = double.MaxValue, maxX = double.MinValue;
+        var focus = layers.FirstOrDefault(layer => layer.IsFocus);
+        if (focus.Samples is null || focus.Samples.Count == 0)
+            focus = layers[0];
+
+        foreach (var layer in layers)
+        {
+            if (layer.Samples.Count < 2)
+                continue;
+            var axis = new PlotXAxisData(
+                layer.Samples,
+                sample => GetAxisValue(sample, selectedXSignal));
+            minX = Math.Min(minX, axis.Min);
+            maxX = Math.Max(maxX, axis.Max);
+            foreach (var channel in selectedChannels)
+            {
+                var (xs, ys) = axis.BuildSeries(
+                    sample => GetSignalValue(sample, channel.ChannelId),
+                    previousLimits.Left,
+                    previousLimits.Right,
+                    autoX);
+                foreach (var value in ys)
+                {
+                    if (!double.IsFinite(value))
+                        continue;
+                    minY = Math.Min(minY, value);
+                    maxY = Math.Max(maxY, value);
+                }
+
+                var scatter = scottPlot.Add.Scatter(xs, ys);
+                var color = ScottPlot.Color.FromHex(layer.ColorHex);
+                scatter.Color = layer.IsFocus ? color : color.WithAlpha(0.55);
+                scatter.LegendText =
+                    $"{GetSignalDisplayName(channel.ChannelId)} · {layer.Label}";
+                scatter.LineWidth = layer.IsFocus ? 2.8f : 1.2f;
+                scatter.MarkerSize = 0;
+            }
+        }
+
+        var focusHistory = focus.Samples;
+        plot.LastChannelSeries.Clear();
+        if (focusHistory.Count >= 2)
+        {
+            double GetXAt(int index) => GetAxisValue(focusHistory[index], selectedXSignal);
+            var (visStart, visEnd) = PlotDownsampler.FindVisibleIndexRange(
+                focusHistory.Count,
+                GetXAt,
+                previousLimits.Left,
+                previousLimits.Right,
+                useFullRange: autoX);
+            if (visEnd - visStart < 2)
+            {
+                visStart = 0;
+                visEnd = focusHistory.Count;
+            }
+
+            var primaryChannelId = selectedChannels[0].ChannelId;
+            double GetPrimaryY(int index) =>
+                GetSignalValue(focusHistory[index], primaryChannelId);
+            var indices = PlotDownsampler.BuildDownsampleIndices(
+                visStart,
+                visEnd,
+                GetPrimaryY,
+                PlotDownsampler.MaxPlotPoints);
+            if (indices.Length >= 2)
+            {
+                plot.LastXs = PlotDownsampler.ExtractXs(
+                    focusHistory,
+                    indices,
+                    sample => GetAxisValue(sample, selectedXSignal));
+                plot.LastSamples = PlotDownsampler.ExtractSamples(focusHistory, indices);
+                foreach (var channel in selectedChannels)
+                {
+                    plot.LastChannelSeries.Add((
+                        channel.ChannelId,
+                        PlotDownsampler.ExtractYs(
+                            focusHistory,
+                            indices,
+                            sample => GetSignalValue(sample, channel.ChannelId))));
+                }
+            }
+            else
+            {
+                plot.LastXs = null;
+                plot.LastSamples = null;
+            }
+        }
+        else
+        {
+            plot.LastXs = null;
+            plot.LastSamples = null;
+        }
+
+        scottPlot.Title(plot.Name);
+        scottPlot.XLabel(GetAxisLabel(selectedXSignal));
+        scottPlot.YLabel("Value");
+        scottPlot.Legend.IsVisible = true;
+        ApplyDarkPlotStyle(plot.WpfPlot);
+        ApplyDateTimeAxisIfNeeded(plot, selectedXSignal);
+        var limitXs = double.IsFinite(minX) && double.IsFinite(maxX)
+            ? new[] { minX, maxX }
+            : plot.LastXs ?? Array.Empty<double>();
+        ApplyAxisLimitsAfterRebuild(plot, scottPlot, limitXs, minY, maxY, previousLimits);
+        ApplyPlotOverlays(plot);
+        plot.WpfPlot.Refresh();
+    }
+
     private IReadOnlyList<SampleSource> GetTestSampleSources()
     {
         if (_isOfflineMode && _offlineFiles.Count > 0)
@@ -5944,6 +6147,19 @@ public partial class MainWindow : Window
         var live = GetHistorySnapshot();
         if (live.Count == 0)
             return Array.Empty<SampleSource>();
+
+        var liveLayers = GetLiveVehicleLayers(live);
+        if (liveLayers.Count > 1)
+        {
+            return liveLayers
+                .Select(layer => new SampleSource
+                {
+                    Label = layer.Label,
+                    ColorHex = layer.ColorHex,
+                    Samples = MathsEnricher.Apply(layer.Samples, MathsChannelStore.Instance.Definitions)
+                })
+                .ToList();
+        }
 
         return new[]
         {
@@ -6200,14 +6416,12 @@ public partial class MainWindow : Window
                 pathDefault,
                 tokenDefault,
                 maxHz,
-                out var options) ||
-            options is null)
+                out var optionList) ||
+            optionList.Count == 0)
         {
             return;
         }
 
-        var previous = _dataSourceSession.Current;
-        var next = _dataSourceSession.CreateRemote(options);
         if (RemoteDeviceButton is not null)
             RemoteDeviceButton.IsEnabled = false;
         if (GSpotButton is not null)
@@ -6215,70 +6429,104 @@ public partial class MainWindow : Window
         if (UdpSourceButton is not null)
             UdpSourceButton.IsEnabled = false;
 
+        var hadRemotes = _dataSourceSession.Remotes.Count > 0;
+        var connected = new List<CMTSRemoteDataSource>();
+        var failures = new List<string>();
+
         try
         {
-            await next.StartAsync();
-            var connected = await DataSourceSession.WaitForConnectedAsync(
-                next,
-                TimeSpan.FromSeconds(20));
-
-            if (!connected)
+            foreach (var options in optionList)
             {
-                var err = next.LastError
-                          ?? "Timeout: not Connected (check Android WS server).";
-                try { await next.StopAsync(); }
-                catch
+                if (_dataSourceSession.IsRemoteEndpointAttached(options))
                 {
-                    try { next.Dispose(); } catch { /* ignore */ }
+                    failures.Add($"{options.BuildWebSocketUrl()}: already connected");
+                    continue;
                 }
+
+                var next = _dataSourceSession.CreateRemote(options);
+                try
+                {
+                    await next.StartAsync();
+                    var ok = await DataSourceSession.WaitForConnectedAsync(
+                        next,
+                        TimeSpan.FromSeconds(20));
+                    if (!ok)
+                    {
+                        var err = next.LastError
+                                  ?? "Timeout: not Connected (check Android WS server).";
+                        try { await next.StopAsync(); }
+                        catch
+                        {
+                            try { next.Dispose(); } catch { /* ignore */ }
+                        }
+
+                        failures.Add($"{options.BuildWebSocketUrl()}: {err}");
+                        continue;
+                    }
+
+                    await _dataSourceSession.AttachConnectedRemoteAsync(next);
+                    SaveLastSuccessfulRemoteConnection(options, next.DeviceId, next.DeviceLabel);
+                    connected.Add(next);
+                }
+                catch (Exception ex)
+                {
+                    try { await next.StopAsync(); }
+                    catch
+                    {
+                        try { next.Dispose(); } catch { /* ignore */ }
+                    }
+
+                    failures.Add($"{options.BuildWebSocketUrl()}: {ex.Message}");
+                }
+            }
+
+            if (connected.Count > 0)
+            {
+                if (!hadRemotes)
+                {
+                    EnterLiveSourceMode();
+                }
+                else
+                {
+                    HookAllRemoteLiveCurveResets();
+                    foreach (var remote in _dataSourceSession.Remotes)
+                        ChannelRegistry.Instance.MergeRemoteKeys(remote.SnapshotSeenChannelIds());
+                    RefreshChannelSelectorsFromRegistry();
+                    RefreshRemoteRecordButtons();
+                    UpdateRemoteButtonContent();
+                }
+
+                if (GSpotButton is not null)
+                    GSpotButton.Content = "GSpot…";
+
+                var lines = connected
+                    .Select(r => $"{r.DeviceLabel ?? r.DeviceId ?? "(pending)"}  {r.Endpoint}")
+                    .ToList();
+                var message =
+                    $"Connected {connected.Count} device(s).\n" +
+                    string.Join("\n", lines);
+                if (failures.Count > 0)
+                    message += "\n\nFailed:\n" + string.Join("\n", failures);
+                message += "\n\nUse Rec● / Rec■ for remote record.start / record.stop.";
 
                 MessageBox.Show(
                     this,
+                    message,
+                    "CMTS Remote",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show(
+                    this,
                     "CMTS Remote connect failed; previous source kept.\n\n" +
-                    $"Endpoint: {options.BuildWebSocketUrl()}\n" +
-                    $"Reason: {err}\n\n" +
-                    "Android must serve ws://IP:8787/cmts/v1 (protocol v0.1).",
+                    string.Join("\n", failures) +
+                    "\n\nAndroid must serve ws://IP:8787/cmts/v1 (protocol v0.1).",
                     "CMTS Remote",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
-                return;
             }
-
-            await _dataSourceSession.CommitConnectedAsync(previous, next);
-            EnterLiveSourceMode();
-            if (RemoteDeviceButton is not null)
-                RemoteDeviceButton.Content = "Remote●";
-            if (GSpotButton is not null)
-                GSpotButton.Content = "GSpot…";
-
-            SaveLastSuccessfulRemoteConnection(options, next.DeviceId, next.DeviceLabel);
-
-            MessageBox.Show(
-                this,
-                "CMTS Remote connected.\n" +
-                $"Endpoint: {options.BuildWebSocketUrl()}\n" +
-                $"Device: {next.DeviceLabel ?? next.DeviceId ?? "(pending)"}\n" +
-                $"RecordState: {next.RecordState}\n\n" +
-                "Use Rec● / Rec■ for remote record.start / record.stop.",
-                "CMTS Remote",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
-        }
-        catch (Exception ex)
-        {
-            try { await next.StopAsync(); }
-            catch
-            {
-                try { next.Dispose(); } catch { /* ignore */ }
-            }
-
-            MessageBox.Show(
-                this,
-                "CMTS Remote connect failed; previous source kept.\n\n" +
-                ex.Message,
-                "CMTS Remote",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
         }
         finally
         {
@@ -6289,6 +6537,7 @@ public partial class MainWindow : Window
             if (UdpSourceButton is not null)
                 UdpSourceButton.IsEnabled = true;
             RefreshRemoteRecordButtons();
+            UpdateRemoteButtonContent();
         }
     }
 
@@ -6296,8 +6545,10 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
-        if (_dataSourceSession.Current is not CMTSRemoteDataSource remote ||
-            remote.State != DataSourceState.Connected)
+        var remotes = _dataSourceSession.Remotes
+            .Where(r => r.State == DataSourceState.Connected)
+            .ToList();
+        if (remotes.Count == 0)
         {
             MessageBox.Show(
                 this,
@@ -6310,11 +6561,16 @@ public partial class MainWindow : Window
 
         try
         {
-            var status = await remote.StartRecordingAsync();
+            var lines = new List<string>();
+            foreach (var remote in remotes)
+            {
+                var status = await remote.StartRecordingAsync();
+                var name = remote.DeviceLabel ?? remote.DeviceId ?? remote.Endpoint;
+                lines.Add($"{name}: record.start → {status.State} ok={status.Ok} fileId={status.FileId ?? "-"}");
+            }
             MessageBox.Show(
                 this,
-                $"record.start → {status.State}\n" +
-                $"ok={status.Ok} fileId={status.FileId ?? "-"}",
+                string.Join("\n", lines),
                 "CMTS Remote",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -6334,8 +6590,10 @@ public partial class MainWindow : Window
         object sender,
         RoutedEventArgs e)
     {
-        if (_dataSourceSession.Current is not CMTSRemoteDataSource remote ||
-            remote.State != DataSourceState.Connected)
+        var remotes = _dataSourceSession.Remotes
+            .Where(r => r.State == DataSourceState.Connected)
+            .ToList();
+        if (remotes.Count == 0)
         {
             MessageBox.Show(
                 this,
@@ -6348,11 +6606,16 @@ public partial class MainWindow : Window
 
         try
         {
-            var status = await remote.StopRecordingAsync();
+            var lines = new List<string>();
+            foreach (var remote in remotes)
+            {
+                var status = await remote.StopRecordingAsync();
+                var name = remote.DeviceLabel ?? remote.DeviceId ?? remote.Endpoint;
+                lines.Add($"{name}: record.stop → {status.State} ok={status.Ok} reason={status.Reason ?? "-"}");
+            }
             MessageBox.Show(
                 this,
-                $"record.stop → {status.State}\n" +
-                $"ok={status.Ok} reason={status.Reason ?? "-"}",
+                string.Join("\n", lines),
                 "CMTS Remote",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
@@ -6400,9 +6663,9 @@ public partial class MainWindow : Window
         string pathDefault,
         string tokenDefault,
         int maxHz,
-        out CMTSRemoteOptions? options)
+        out IReadOnlyList<CMTSRemoteOptions> optionList)
     {
-        options = null;
+        optionList = Array.Empty<CMTSRemoteOptions>();
 
         var dialog = new Window
         {
@@ -6570,7 +6833,9 @@ public partial class MainWindow : Window
         using var discoveryCts = new CancellationTokenSource();
         var advanced = new Expander { Header = "高级：手动连接", IsExpanded = false, Foreground = (Brush)FindResource("TextPrimary") };
         CMTSDiscoveredDevice? selectedDevice = null;
-        CMTSRemoteOptions? chosen = null;
+        var chosen = new List<CMTSRemoteOptions>();
+        var history = AppPreferencesStore.Load().RemoteHistory ?? new();
+        var devices = new ListBox { Height = 160, Margin = new Thickness(0, 6, 0, 6), SelectionMode = SelectionMode.Extended, Background = (Brush)FindResource("AppBackground"), Foreground = (Brush)FindResource("TextPrimary") };
         applyPasteBtn.Click += (_, _) => ApplyPaste(pasteBox.Text, warnIfInvalid: true);
         ok.Click += (_, _) =>
         {
@@ -6617,6 +6882,36 @@ public partial class MainWindow : Window
             if (!pathVal.StartsWith('/'))
                 pathVal = "/" + pathVal;
 
+            var selected = devices.SelectedItems.OfType<CMTSDiscoveredDevice>().ToList();
+            if (selected.Count > 1)
+            {
+                chosen.Clear();
+                foreach (var device in selected)
+                {
+                    var savedToken = history.FirstOrDefault(h => h.DeviceId == device.DeviceId)?.Token ?? "";
+                    if (device.AuthRequired && string.IsNullOrWhiteSpace(savedToken))
+                    {
+                        connectionStatus.Text = $"{device.DisplayName} 需要手动配对，已跳过；请单独连接。";
+                        continue;
+                    }
+
+                    chosen.Add(new CMTSRemoteOptions
+                    {
+                        ExpectedDeviceId = device.DeviceId,
+                        Host = device.Host,
+                        Port = device.Port,
+                        Token = savedToken,
+                        Path = device.Path,
+                        MaxHz = maxHz
+                    });
+                }
+
+                if (chosen.Count == 0)
+                    return;
+                dialog.DialogResult = true;
+                return;
+            }
+
             if (selectedDevice?.AuthRequired == true && string.IsNullOrWhiteSpace(tokenBox.Text))
             {
                 connectionStatus.Text = "此旧版设备需要手动配对，请在高级连接中粘贴手机连接串。";
@@ -6625,7 +6920,8 @@ public partial class MainWindow : Window
                 tokenBox.Focus();
                 return;
             }
-            chosen = new CMTSRemoteOptions
+            chosen.Clear();
+            chosen.Add(new CMTSRemoteOptions
             {
                 ExpectedDeviceId = selectedDevice?.Host == host && selectedDevice.Port == port && selectedDevice.Path == pathVal ? selectedDevice.DeviceId : null,
                 Host = host,
@@ -6633,7 +6929,7 @@ public partial class MainWindow : Window
                 Token = (tokenBox.Text ?? "").Trim(),
                 Path = pathVal,
                 MaxHz = maxHz
-            };
+            });
             dialog.DialogResult = true;
         };
         applyPasteBtn.Visibility = Visibility.Collapsed;
@@ -6643,8 +6939,7 @@ public partial class MainWindow : Window
 
         var discoveryPanel = new StackPanel { Margin = new Thickness(0, 12, 0, 0) };
         var search = new Button { Content = "自动搜索局域网设备 / 刷新", Height = 32, Style = TryFindResource("ToolButtonStyle") as Style };
-        var devices = new ListBox { Height = 160, Margin = new Thickness(0, 6, 0, 6), Background = (Brush)FindResource("AppBackground"), Foreground = (Brush)FindResource("TextPrimary") };
-        var discoveryStatus = new TextBlock { Text = "双击设备即可连接。", Foreground = (Brush)FindResource("TextSecondary"), TextWrapping = TextWrapping.Wrap };
+        var discoveryStatus = new TextBlock { Text = "可按住 Ctrl 多选后点击连接；双击仍连接单台。", Foreground = (Brush)FindResource("TextSecondary"), TextWrapping = TextWrapping.Wrap };
         discoveryPanel.Children.Add(search);
         discoveryPanel.Children.Add(devices);
         discoveryPanel.Children.Add(discoveryStatus);
@@ -6657,7 +6952,6 @@ public partial class MainWindow : Window
         Grid.SetRow(advanced, 1);
         root.Children.Add(discoveryPanel);
         root.Children.Add(advanced);
-        var history = AppPreferencesStore.Load().RemoteHistory ?? new();
         devices.SelectionChanged += (_, _) =>
         {
             if (devices.SelectedItem is not CMTSDiscoveredDevice d) return;
@@ -6686,7 +6980,7 @@ public partial class MainWindow : Window
             {
                 var found = await CMTSLanDiscovery.SearchAsync(history.Select(h => h.Host ?? "").Append(hostDefault), discoveryCts.Token);
                 devices.ItemsSource = found.OrderByDescending(d => history.Any(h => h.DeviceId == d.DeviceId)).ToArray();
-                discoveryStatus.Text = found.Count == 0 ? "未发现设备；可输入 IP 与 token 手动连接。" : $"发现 {found.Count} 台设备；选择后点击连接。";
+                discoveryStatus.Text = found.Count == 0 ? "未发现设备；可输入 IP 与 token 手动连接。" : $"发现 {found.Count} 台设备；可按住 Ctrl 多选后点击连接。";
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { discoveryStatus.Text = "搜索失败：" + ex.Message; }
@@ -6705,8 +6999,8 @@ public partial class MainWindow : Window
         dialog.Content = layout;
         devices.Focus();
         var okResult = dialog.ShowDialog() == true;
-        options = chosen;
-        return okResult && options is not null;
+        optionList = chosen;
+        return okResult && chosen.Count > 0;
     }
 
     private async void UdpSourceButton_Click(
@@ -6802,44 +7096,47 @@ public partial class MainWindow : Window
         // Remote connect waits for Connected first; samples may already have called
         // MergeRemoteKeys. SetLiveCore above would wipe them — restore vehicle-facing
         // extras (phone.* filtered out of Snapshot / Merge).
-        var remote = _dataSourceSession.Current as CMTSRemoteDataSource;
-        HookRemoteLiveCurveReset(remote);
-        if (remote is not null)
+        HookAllRemoteLiveCurveResets();
+        foreach (var remote in _dataSourceSession.Remotes)
             ChannelRegistry.Instance.MergeRemoteKeys(remote.SnapshotSeenChannelIds());
 
         RefreshChannelSelectorsFromRegistry();
         RefreshRemoteRecordButtons();
+        UpdateRemoteButtonContent();
     }
 
-    private void HookRemoteLiveCurveReset(CMTSRemoteDataSource? remote)
+    private void HookAllRemoteLiveCurveResets()
     {
-        if (ReferenceEquals(_remoteLiveResetSource, remote))
-            return;
-
-        if (_remoteLiveResetSource is not null)
+        var remotes = _dataSourceSession.Remotes;
+        for (var i = _remoteLiveResetSources.Count - 1; i >= 0; i--)
         {
-            _remoteLiveResetSource.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
-            _remoteLiveResetSource = null;
+            var old = _remoteLiveResetSources[i];
+            if (remotes.Contains(old))
+                continue;
+            old.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+            _remoteLiveResetSources.RemoveAt(i);
         }
 
-        if (remote is null)
-            return;
-
-        _remoteLiveResetSource = remote;
-        remote.LiveCurveResetRequested += OnRemoteLiveCurveResetRequested;
+        foreach (var remote in remotes)
+        {
+            if (_remoteLiveResetSources.Contains(remote))
+                continue;
+            remote.LiveCurveResetRequested += OnRemoteLiveCurveResetRequested;
+            _remoteLiveResetSources.Add(remote);
+        }
     }
 
     private void OnRemoteLiveCurveResetRequested(object? sender, EventArgs e)
     {
-        // WS receive thread → UI clear of live curve buffers.
-        Dispatcher.BeginInvoke(ClearLiveCurveBuffersForRemoteZero);
+        var deviceId = (sender as CMTSRemoteDataSource)?.DeviceId;
+        Dispatcher.BeginInvoke(() => ClearLiveCurveBuffersForRemoteZero(deviceId));
     }
 
     /// <summary>
     /// Android explicit zero (<c>stream.reset</c> / <c>device.zero</c>): wipe live history
     /// so Curves restart from the tare point. Waiting for ~0 samples alone leaves old points.
     /// </summary>
-    private void ClearLiveCurveBuffersForRemoteZero()
+    private void ClearLiveCurveBuffersForRemoteZero(string? deviceId = null)
     {
         if (_historyOfflineMode || _isOfflineMode)
             return;
@@ -6847,17 +7144,39 @@ public partial class MainWindow : Window
         // Must clear plot cursors: otherwise TryGetCursorSample freezes Dashboard on a
         // pre-zero (or first post-zero) point while curves keep appending live samples.
         ClearPlotCursors();
-        _sampleHistory.Clear();
-        _latestSample = null;
-        _liveSessionOriginMs = null;
-        _liveDistanceM = 0;
-        _livePreviousSample = null;
-        _liveRoster.Clear();
-        _liveVehicleEnrich.Clear();
+
+        var clearAll = string.IsNullOrWhiteSpace(deviceId) || _liveRoster.Count <= 1;
+        if (clearAll)
+        {
+            _sampleHistory.Clear();
+            _latestSample = null;
+            _liveSessionOriginMs = null;
+            _liveDistanceM = 0;
+            _livePreviousSample = null;
+            _liveRoster.Clear();
+            _liveVehicleEnrich.Clear();
+        }
+        else
+        {
+            var id = deviceId!;
+            _sampleHistory.RemoveWhere(s =>
+                string.Equals(s.VehicleId, id, StringComparison.Ordinal));
+            _liveRoster.Remove(id);
+            _liveVehicleEnrich.Remove(id);
+            if (string.Equals(_latestSample?.VehicleId, id, StringComparison.Ordinal))
+            {
+                _latestSample = _liveRoster.GetFocusLatest();
+                var focus = _liveRoster.GetFocusLatest();
+                _livePreviousSample = focus;
+                _liveSessionOriginMs = focus?.Timestamp;
+                _liveDistanceM = 0;
+            }
+        }
+
         _forcePlotRebuild = true;
         RefreshAllPlots(force: true);
         // Force gauges to "--" immediately; do not leave stale pre-zero numbers.
-        DashboardPanelControl.ApplyLiveSample(null);
+        DashboardPanelControl.ApplyLiveSample(_latestSample);
         UpdateNumericDisplay();
     }
 
@@ -6868,12 +7187,24 @@ public partial class MainWindow : Window
 
     private void RefreshRemoteRecordButtons()
     {
-        var remote = _dataSourceSession.Current as CMTSRemoteDataSource;
-        var on = remote is not null && remote.State == DataSourceState.Connected;
+        var on = _dataSourceSession.Remotes.Any(r => r.State == DataSourceState.Connected);
         if (RemoteRecordStartButton is not null)
             RemoteRecordStartButton.IsEnabled = on;
         if (RemoteRecordStopButton is not null)
             RemoteRecordStopButton.IsEnabled = on;
+    }
+
+    private void UpdateRemoteButtonContent()
+    {
+        if (RemoteDeviceButton is null)
+            return;
+        var count = _dataSourceSession.Remotes.Count;
+        RemoteDeviceButton.Content = count switch
+        {
+            0 => "Remote…",
+            1 => "Remote●",
+            _ => $"Remote●{count}"
+        };
     }
     private bool TryPromptGSpotOptions(
         string roomDefault,
@@ -7314,6 +7645,33 @@ public partial class MainWindow : Window
 
     private void UpdateNetworkDisplay()
     {
+        var remotes = _dataSourceSession.Remotes;
+        if (remotes.Count > 1)
+        {
+            var received = remotes.Sum(r => r.Stats.Received);
+            var valid = remotes.Sum(r => r.Stats.Valid);
+            var lost = remotes.Sum(r => r.Stats.Lost);
+            var ooo = remotes.Sum(r => r.Stats.OutOfOrder);
+            if (ReceivedPacketsText is not null)
+                ReceivedPacketsText.Text = received.ToString();
+            if (ValidPacketsText is not null)
+                ValidPacketsText.Text = valid.ToString();
+            if (LostPacketsText is not null)
+            {
+                var multiRecordDrops = _recordingSession.DroppedSamples;
+                var multiBusDrops = _dataBus.DroppedPublishCount;
+                LostPacketsText.Text = multiRecordDrops > 0 ? $"{lost}+R{multiRecordDrops}" : lost.ToString();
+                LostPacketsText.ToolTip = multiRecordDrops > 0
+                    ? $"网络丢包 {lost}；录制队列丢样 {multiRecordDrops}" +
+                      (multiBusDrops > 0 ? $"；总线 TryPublish 失败 {multiBusDrops}" : "")
+                    : (multiBusDrops > 0 ? $"总线 TryPublish 失败 {multiBusDrops}" : null);
+            }
+            if (OutOfOrderPacketsText is not null)
+                OutOfOrderPacketsText.Text = ooo.ToString();
+            UpdateConnectionStatusUi(remotes[0]);
+            return;
+        }
+
         var source =
             _dataSourceSession.Current;
 
@@ -7446,8 +7804,24 @@ public partial class MainWindow : Window
             }
         }
 
+        var remoteCount = _dataSourceSession.Remotes.Count;
+        if (remoteCount > 1 &&
+            source.State is DataSourceState.Connected
+                or DataSourceState.Connecting
+                or DataSourceState.Reconnecting)
+        {
+            label = $"{Loc.T("Status.Online")} · {remoteCount}";
+        }
+
         ConnectionStatusText.Text = label;
-        if (source is GSpotDataSource gspot &&
+        if (remoteCount > 1)
+        {
+            ConnectionStatusText.ToolTip = string.Join(
+                Environment.NewLine,
+                _dataSourceSession.Remotes.Select(r =>
+                    $"{r.DeviceLabel ?? r.DeviceId ?? r.Endpoint} · {r.State}"));
+        }
+        else if (source is GSpotDataSource gspot &&
             !string.IsNullOrWhiteSpace(gspot.LastError) &&
             source.State is DataSourceState.Reconnecting
                 or DataSourceState.Faulted)
@@ -7546,12 +7920,15 @@ public partial class MainWindow : Window
                     _liveDistanceM = enrich.DistanceM;
                     _livePreviousSample = enrich.Previous;
                     _latestSample = sample;
-
-                    if (!_historyOfflineMode)
-                        _sampleHistory.Add(sample);
-
-                    _recordingSession.TryWriteIfRecording(sample);
                 }
+
+                if (!_historyOfflineMode)
+                    _sampleHistory.Add(sample);
+
+                // Local VBO is a single stream; keep writing the focus vehicle only.
+                // Remote Rec starts recording on every connected device.
+                if (isFocus)
+                    _recordingSession.TryWriteIfRecording(sample);
 
                 Interlocked.Increment(ref _sampleCount);
             }
@@ -7749,7 +8126,9 @@ public partial class MainWindow : Window
 
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
-        HookRemoteLiveCurveReset(null);
+        foreach (var remote in _remoteLiveResetSources.ToArray())
+            remote.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+        _remoteLiveResetSources.Clear();
         _dataSourceSession.Dispose();
 
 

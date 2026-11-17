@@ -84,6 +84,8 @@ public sealed class CMTSRemoteDataSource : IDataSource
         ? new UriBuilder("ws", endpoint.Host, endpoint.Port, endpoint.Path).Uri.ToString()
         : _options.BuildWebSocketUrl();
 
+    public CMTSRemoteOptions Options => _options;
+
     /// <summary>
     /// Channel ids observed on stream.sample / device.status so far.
     /// Used to re-apply Available after UI SetLiveCore (connect race).

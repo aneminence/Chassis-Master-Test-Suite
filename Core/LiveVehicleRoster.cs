@@ -39,6 +39,29 @@ public sealed class LiveVehicleRoster
         Interlocked.Exchange(ref _colorCursor, 0);
     }
 
+    public bool Remove(string vehicleId)
+    {
+        if (string.IsNullOrWhiteSpace(vehicleId))
+            return false;
+        if (!_entries.TryRemove(vehicleId, out _))
+            return false;
+
+        lock (_focusGate)
+        {
+            if (string.Equals(_focusId, vehicleId, StringComparison.Ordinal))
+            {
+                _focusId = null;
+                foreach (var key in _entries.Keys)
+                {
+                    _focusId = key;
+                    break;
+                }
+            }
+        }
+
+        return true;
+    }
+
     /// <summary>
     /// Upsert a sample. Returns the resolved vehicle key.
     /// First vehicle becomes focus when none is set.

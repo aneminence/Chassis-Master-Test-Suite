@@ -101,4 +101,19 @@ public class LiveVehicleRosterTests
         Assert.Equal(2, trail[0].Timestamp);
         Assert.Equal(4, trail[^1].Timestamp);
     }
+
+    [Fact]
+    public void Remove_DropsVehicle_AndMovesFocus()
+    {
+        var roster = new LiveVehicleRoster();
+        roster.Upsert(Sample("a", "CarA", 31.1, 121.1, 1));
+        roster.Upsert(Sample("b", "CarB", 31.2, 121.2, 2));
+
+        Assert.Equal("a", roster.FocusId);
+        Assert.True(roster.Remove("a"));
+        Assert.Equal(1, roster.Count);
+        Assert.Equal("b", roster.FocusId);
+        Assert.False(roster.Remove("a"));
+        Assert.Equal("CarB", roster.GetFocusLatest()!.VehicleLabel);
+    }
 }
