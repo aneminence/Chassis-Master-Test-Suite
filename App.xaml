@@ -202,16 +202,19 @@
                                     CornerRadius="2"
                                     VerticalAlignment="Center"
                                     Background="{DynamicResource ToolButtonBorder}"/>
-                            <Track x:Name="PART_Track">
+                            <Track x:Name="PART_Track"
+                                   Orientation="{TemplateBinding Orientation}">
                                 <Track.DecreaseRepeatButton>
                                     <RepeatButton Style="{StaticResource PlaybackSliderRepeatStyle}"
                                                   Command="Slider.DecreaseLarge">
                                         <RepeatButton.Template>
                                             <ControlTemplate TargetType="RepeatButton">
-                                                <Border Height="4"
-                                                        CornerRadius="2,0,0,2"
-                                                        VerticalAlignment="Center"
-                                                        Background="{DynamicResource AccentBrush}"/>
+                                                <Grid Background="Transparent">
+                                                    <Border Height="4"
+                                                            CornerRadius="2,0,0,2"
+                                                            VerticalAlignment="Center"
+                                                            Background="{DynamicResource AccentBrush}"/>
+                                                </Grid>
                                             </ControlTemplate>
                                         </RepeatButton.Template>
                                     </RepeatButton>

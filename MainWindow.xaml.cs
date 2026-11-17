@@ -2,6 +2,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
@@ -350,6 +351,7 @@ public partial class MainWindow : Window
         };
         _playbackTimer.Tick += PlaybackTimer_Tick;
         InitializePlaybackSpeedCombo();
+        HookPlaybackSliderInput();
 
         StartClock();
 
@@ -4369,8 +4371,29 @@ public partial class MainWindow : Window
         _playback.SetSpeed(speed, PlaybackWallMs());
     }
 
+    private void HookPlaybackSliderInput()
+    {
+        if (PlaybackSlider is null)
+            return;
+
+        // IsMoveToPointEnabled marks the preview click handled, so the XAML
+        // instance handlers would miss it. Listen with HandledEventsToo.
+        PlaybackSlider.AddHandler(
+            PreviewMouseLeftButtonDownEvent,
+            new MouseButtonEventHandler(PlaybackSlider_PreviewMouseDown),
+            handledEventsToo: true);
+        PlaybackSlider.AddHandler(
+            PreviewMouseLeftButtonUpEvent,
+            new MouseButtonEventHandler(PlaybackSlider_PreviewMouseUp),
+            handledEventsToo: true);
+        PlaybackSlider.MouseMove += PlaybackSlider_MouseMove;
+    }
+
     private void PlaybackSlider_PreviewMouseDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.ChangedButton != MouseButton.Left || PlaybackSlider is null)
+            return;
+
         _playbackSliderDragging = true;
         _playbackResumeAfterScrub = _playback.IsPlaying;
         if (_playback.IsPlaying)
@@ -4378,6 +4401,18 @@ public partial class MainWindow : Window
             _playback.Pause();
             _playbackTimer.Stop();
         }
+
+        ApplyPlaybackSliderPoint();
+        if (!PlaybackSlider.IsMouseCaptured)
+            PlaybackSlider.CaptureMouse();
+    }
+
+    private void PlaybackSlider_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_playbackSliderDragging || PlaybackSlider is null || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        ApplyPlaybackSliderPoint();
     }
 
     private void PlaybackSlider_PreviewMouseUp(object sender, MouseButtonEventArgs e) =>
@@ -4392,6 +4427,9 @@ public partial class MainWindow : Window
             return;
 
         _playbackSliderDragging = false;
+        if (PlaybackSlider is not null && PlaybackSlider.IsMouseCaptured)
+            PlaybackSlider.ReleaseMouseCapture();
+
         SeekPlaybackFromSlider();
         ApplyPlaybackCursor();
         if (_playbackResumeAfterScrub && _playback.CanPlay)
@@ -4406,12 +4444,24 @@ public partial class MainWindow : Window
 
     private void PlaybackSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_playbackUpdatingUi || !_playbackSliderDragging)
+        if (_playbackUpdatingUi)
             return;
 
         SeekPlaybackFromSlider();
         ApplyPlaybackCursor();
         RefreshPlaybackBarPosition();
+    }
+
+    private void ApplyPlaybackSliderPoint()
+    {
+        if (PlaybackSlider?.Template?.FindName("PART_Track", PlaybackSlider) is not Track track)
+            return;
+
+        var raw = track.ValueFromPoint(Mouse.GetPosition(track));
+        if (double.IsNaN(raw) || double.IsInfinity(raw))
+            return;
+
+        PlaybackSlider.Value = Math.Clamp(raw, PlaybackSlider.Minimum, PlaybackSlider.Maximum);
     }
 
     private void SeekPlaybackFromSlider()

@@ -934,8 +934,6 @@
                             LargeChange="0.05"
                             IsMoveToPointEnabled="True"
                             VerticalAlignment="Center"
-                            PreviewMouseLeftButtonDown="PlaybackSlider_PreviewMouseDown"
-                            PreviewMouseLeftButtonUp="PlaybackSlider_PreviewMouseUp"
                             LostMouseCapture="PlaybackSlider_LostMouseCapture"
                             ValueChanged="PlaybackSlider_ValueChanged"/>
 
