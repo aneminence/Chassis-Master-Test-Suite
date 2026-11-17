@@ -171,3 +171,19 @@ test('Follow separates click from pan, retains the lock and restores free camera
   run('setFollowVehicle(true);setCursor(null)');
   assert.equal(run('viewer.scene.screenSpaceCameraController.rotateEventTypes'),'freeRotate');
 });
+
+
+test('sparse playback interpolates position and shortest heading without modifying samples', () => {
+  const interpolate = vm.runInNewContext('(' + extract('interpolatePlaybackPoint') + ')');
+  const a = {trackId:1,sampleIndex:0,longitude:179,latitude:30,altitude:10,heading:359};
+  const b = {trackId:1,sampleIndex:1,longitude:-179,latitude:32,altitude:20,heading:1};
+  const middle = interpolate(a,b,.5);
+  assert.equal(middle.longitude,-180);
+  assert.equal(middle.latitude,31);
+  assert.equal(middle.altitude,15);
+  assert.equal(middle.heading,360);
+  assert.equal(middle.sampleIndex,.5);
+  assert.equal(a.heading,359);
+  assert.equal(interpolate(a,{...b,trackId:2},.5),a);
+  assert.equal(interpolate(a,null,.5),a);
+});

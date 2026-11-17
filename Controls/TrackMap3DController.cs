@@ -161,7 +161,7 @@ internal sealed class TrackMap3DController
         Post(new { type = "clear" });
     }
 
-    public void SetCursor(VehicleSample? sample, bool animateMap = false)
+    public void SetCursor(VehicleSample? sample, bool animateMap = false, VehicleSample? nextSample = null, double fraction = 0)
     {
         _cursor = sample;
         _compareCursors = Array.Empty<TrackMapPanel.CompareCursor>();
@@ -172,9 +172,14 @@ internal sealed class TrackMap3DController
         {
             type = "cursor",
             transitionMs = animateMap ? 33 : 0,
-            payload = ToCursorPoint(sample)
+            payload = ToCursorPoint(sample),
+            next = nextSample is not null && sample is not null && nextSample.Timestamp > sample.Timestamp
+                && nextSample.Timestamp - sample.Timestamp <= 10000 ? ToCursorPoint(nextSample) : null,
+            fraction
         });
     }
+
+    public void FinishCursorAnimation() => Post(new { type = "finishCursor" });
 
     public void SetCompareCursors(IReadOnlyList<TrackMapPanel.CompareCursor> cursors)
     {

@@ -5035,7 +5035,7 @@ public partial class MainWindow : Window
             TrackMapPanelControl.SetCursorSample(
                 (_isOfflineMode || _historyOfflineMode) && _offlineFiles.Primary is { IsVisible: false }
                     ? null : sample,
-                animateMap: animateMap);
+                animateMap: animateMap, nextSample: _playback.NextSample, fraction: _playback.SampleFraction);
         }
         finally
         {

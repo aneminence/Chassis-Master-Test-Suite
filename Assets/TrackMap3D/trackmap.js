@@ -744,6 +744,19 @@
     viewer.scene.requestRender();
   }
 
+  // Display-only interpolation between original samples; never changes recorded data.
+  function interpolatePlaybackPoint(point, next, fraction) {
+    if (!point || !next || point.trackId !== next.trackId || !Number.isFinite(fraction)) return point;
+    const t = Math.max(0, Math.min(1, fraction));
+    const angle = (a, b) => a + (((b - a + 540) % 360) - 180) * t;
+    return { ...point,
+      longitude: ((angle(point.longitude, next.longitude) + 540) % 360) - 180,
+      latitude: point.latitude + (next.latitude - point.latitude) * t,
+      altitude: point.altitude + (next.altitude - point.altitude) * t,
+      heading: angle(point.heading, next.heading),
+      sampleIndex: point.sampleIndex + (next.sampleIndex - point.sampleIndex) * t };
+  }
+
   function setCursor(point, transitionMs = 0) {
     if (!viewer) return;
     cursorPoint = point;
@@ -889,7 +902,9 @@
     } else if (data.type === "chaseVehicle") {
       setChaseVehicle(!!data.enabled);
     } else if (data.type === "cursor") {
-      setCursor(data.payload, data.transitionMs);
+      setCursor(interpolatePlaybackPoint(data.payload, data.next, data.fraction), data.transitionMs);
+    } else if (data.type === "finishCursor") {
+      if (cursorPoint) setCursor(cursorPoint);
     } else if (data.type === "cursors") {
       setCursors(data.payload);
     } else if (data.type === "gates") {

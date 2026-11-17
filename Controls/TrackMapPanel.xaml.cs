@@ -587,10 +587,10 @@ public partial class TrackMapPanel : UserControl
     /// 用曲线光标对应的样本更新车辆位置标记。
     /// sample 为 null 时清除标记，坐标读数回到轨迹最新点。
     /// </summary>
-    public void SetCursorSample(VehicleSample? sample, bool animateMap = false)
+    public void SetCursorSample(VehicleSample? sample, bool animateMap = false, VehicleSample? nextSample = null, double fraction = 0)
     {
         // 同一条样本就别重画，避免 UI 定时器 10 Hz 刷闪
-        if (ReferenceEquals(_cursorSample, sample) && _compareCursors.Count == 0)
+        if (ReferenceEquals(_cursorSample, sample) && _compareCursors.Count == 0 && (nextSample is null || !_is3DMode))
         {
             CenterCurrentVehicle(send3DCursor: false);
             return;
@@ -601,11 +601,11 @@ public partial class TrackMapPanel : UserControl
         if (!_is3DMode) UpdateCursorMarker(refresh: true);
         UpdateCoordinateReadout();
         // SetCursor already clears comparison state in both the controller and JS.
-        _map3D?.SetCursor(sample, animateMap);
+        _map3D?.SetCursor(sample, animateMap, nextSample, fraction);
         CenterCurrentVehicle(send3DCursor: false);
     }
 
-    public void Finish3DCursorAnimation() => _map3D?.SetCursor(_cursorSample);
+    public void Finish3DCursorAnimation() => _map3D?.FinishCursorAnimation();
 
     private void FollowVehicleChanged(object sender, RoutedEventArgs e)
     {

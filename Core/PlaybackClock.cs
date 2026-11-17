@@ -32,6 +32,10 @@ public sealed class PlaybackClock
     public VehicleSample? CurrentSample =>
         _index >= 0 && _index < _samples.Count ? _samples[_index] : null;
 
+    public VehicleSample? NextSample => _index >= 0 && _index + 1 < _samples.Count ? _samples[_index + 1] : null;
+    public double SampleFraction => CurrentSample is { } a && NextSample is { } b && b.Timestamp > a.Timestamp
+        ? Math.Clamp((_currentMs - a.Timestamp) / (double)(b.Timestamp - a.Timestamp), 0, 1) : 0;
+
     public double Progress =>
         DurationMs <= 0
             ? 0

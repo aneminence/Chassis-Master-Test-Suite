@@ -1,5 +1,7 @@
 # CMTS 版本规范（VERSIONING）
 
+> 2026-11-17 更新：用户明确指定发布 **0.3.4**，汇总 v0.3.3 之后全部新增功能；项目 Version 与 tag v0.3.4 对齐，继续使用 prerelease。下方 0.3.1 账本为历史记录；本次确切版本指示优先于自动功能档递增规则。发布说明见 docs/releases/v0.3.4.md。
+
 本文件是 **Chassis Master Test Suite（CMTS）** 的唯一版本策略说明。  
 **所有人类维护者与 AI Agent** 在改版本号、打 tag、发 GitHub Release、本地打包，或改 `.csproj` 的 `Version` / `AssemblyVersion` / `FileVersion` 之前，**必须先 Read 本文件并遵守**。禁止凭感觉编造版本号。
 
