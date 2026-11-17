@@ -153,35 +153,48 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ## 当前架构
 
-```text
-                    ┌─ UdpReceiver (127.0.0.1:50000) ◄── Simulator / UdpSender
-  IDataSource ──────┤
-                    └─ GSpotDataSource (WebSocket 房间)
-                              │
-                              ▼
-                       VehicleSample
-                              │
-                         DataBus (BoundedChannel)
-                              │
-                     ConsumeDataAsync + 历史缓冲
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-     VboRecorder        ScottPlot 曲线      Dashboard / Track Map 2D·3D
-     (可选录制)         + 光标 / Measure     + Test Results / Gate
+以下按 Windows 0.3.4、本地代码 `937ccdc` 核对（2026-11-17）。
 
-离线：VboReader / KmlTrackImporter / OxTS XcomImporter ──► OfflineFileSet / _sampleHistory ──► 同一条曲线 / 轨迹 / Dashboard 管线
-地图：TrackMapPanel（2D 瓦片）+ TrackMap3DController（Cesium WebView2，可选 3D）
-分析：Analysis（SpeedToSpeed / GateRun / Maths / Lap·Sector）──► Test Results 表 + 区间标注
+```text
+在线采集（DataSourceSession 管理源生命周期）
+  UDP ◄─ Simulator / UdpSender
+  GSpot（WebSocket 多车房间）
+  Remote × N（局域网 Android；mDNS / 候选探测 / 手动 IP）
+      │ IDataSource → VehicleSample → DataBus
+      ▼
+  MainWindow.ConsumeDataAsync
+      ├─ LiveVehicleRoster：设备身份 / 焦点 / 颜色 / 显隐
+      ├─ 按车 SampleEnricher：时间与距离状态独立
+      ├─ SampleHistoryBuffer：在线有界历史 → 多车曲线 / 地图 / 仪表盘
+      ├─ RecordingSession → VboRecorder（右侧 Start：焦点车）
+      └─ MultiDeviceRecordingSession → 每设备 VBO（左侧 Remote Rec）
+
+离线导入（不经 DataBus）
+  VboReader / KmlTrackImporter / OxTS XcomImporter
+      ▼
+  OfflineFileSet：各文件完整样本，XCOM 按流拆分
+      ├─ ActiveSampleHistory：当前主文件 / 在线历史选择
+      ├─ 多文件曲线、轨迹与分析
+      └─ PlaybackClock：真实时间 × 倍速 / 暂停 / 跳转
+            ▼
+         共享光标 → 曲线 / Dashboard / Track Map
+
+显示与分析（MainWindow 编排）
+  ScottPlot：抽稀曲线 / Measure / 多文件与试验对比
+  TrackMapPanel：2D 瓦片与轨迹
+      └─ TrackMap3DController → WebView2 → Cesium 静态资源
+         航向解析 / 插值显示 / Follow 与 Chase / DEM 重试
+  Analysis：SpeedToSpeed / GateRun / Maths / Lap·Sector
+      └─ Test Results / CSV / 区间标注；GateStore 跨视图共享
 ```
 
-要点（与代码一致）：
-
-- 生产者实现 `IDataSource`，经构造注入的 `DataBus.TryPublish` 写入；UI / Recorder 只读总线与历史缓冲。  
-- `DataBus`：`BoundedChannel` 容量 2000，`DropOldest`，允许多写多读。  
-- `VehicleSample`：typed 核心物理量 + `Channels` 字典；`GetChannel` 优先字典、核心 Id 有 typed 回退。  
-- GSpot：HTTP token → properties（按 `pos`）→ subscribe → WebSocket；多车过滤 / 断线指数退避；Lost/OOO 恒为 0。  
-- `SessionMemoryStore`：本地 JSON 持久化打开文件、门、试验条件、Maths。
+- `DataSourceSession` 支持多个 Remote 并行；UDP / GSpot 仍为独占源，切换会停止 Remote。
+- `DataBus` 容量 2000、`DropOldest`。虽然配置允许多读，当前由 `ConsumeDataAsync` 消费后分发，**不是广播总线**；Recorder 不独立抢读总线。
+- 在线保留所有车辆历史；焦点控制单流录制，不清空其他车。左侧 Remote Rec 同时控制手机端录制与电脑端分设备落盘。
+- 离线保留文件完整样本；`ActiveSampleHistory` 离线取主文件，在线取有界缓冲快照。多文件叠加另从文件集读取，不能画成所有离线数据都只经过实时环形缓冲。
+- `PlaybackClock` 提供相邻样本与时间比例，3D 仅对显示插值；超过 10 秒缺口不跨越，不修改原始记录。`VehicleHeadingResolver` 处理有效航向优先级与低速保持。
+- `VehicleSample` 保留 typed 核心物理量与 `Channels`；`ChannelRegistry` 管理可用通道。`SessionMemoryStore` / `AppPreferencesStore` 保存会话与偏好。
+- 当前仍由 `MainWindow.xaml.cs` 承担 UI、光标、采集与分析编排；上述模块划分不代表已完成独立应用服务层拆分。
 
 ---
 
@@ -211,6 +224,8 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ## 项目结构
 
+以下为关键模块导航（非完整文件清单），与上方架构同次核对。
+
 ```text
 Chassis Master Test Suite/
 ├─ Core/
@@ -218,7 +233,9 @@ Chassis Master Test Suite/
 │   ├─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
 │   ├─ DashboardGaugeModels.cs / SessionMemoryStore.cs / AppPreferencesStore.cs
 │   ├─ WorkspaceMaximizeState.cs（四面板最大化）
-│   └─ PlotDownsampler.cs / SampleEnricher.cs
+│   ├─ PlotDownsampler / PlotXAxisData / ElapsedTimeAxisFormat
+│   ├─ SampleEnricher / SlopeEnricher / TrackUpdateGate
+│   └─ LiveVehicleRoster / PlaybackClock / VehicleHeadingResolver
 ├─ Localization/   Loc.cs（中/英）
 ├─ Themes/         Theme.Dark/Light.xaml · ThemeManager · AppearanceService
 ├─ Map/            MapTileMath · MapTileSource · MapTileCache · MapTileLayerController
@@ -226,12 +243,16 @@ Chassis Master Test Suite/
 │   ├─ IDataSource.cs / DataSourceState.cs / DataSourceStats.cs
 │   ├─ UdpPacket*.cs / UdpReceiver.cs / UdpSender.cs
 │   ├─ GSpot/   GSpotDataSource / GSpotParser / GSpotOptions
-│   └─ Remote/  CMTSRemoteDataSource / CMTSRemoteParser
+│   └─ Remote/
+│       ├─ CMTSRemoteDataSource / CMTSRemoteParser / CMTSRemoteOptions
+│       └─ CMTSLanDiscovery / CMTSMdnsDiscovery / CMTSRemoteConnectionUri
 ├─ Recorder/
 │   ├─ VboRecorder / VboReader / CsvRecorder（未接线）
 │   └─ OxTS/   XcomContainerReader / NcomDecoder / RcomDecoder / XcomImporter
 ├─ Simulator/   VehicleSimulator · SimulatorSceneBuilder · SpaTrackCenterline（Helix 3D）
-├─ Session/     DataSourceSession / OfflineFileSet / RecordingSession / MultiDeviceRecordingSession / SessionMetadata
+├─ Session/
+│   ├─ DataSourceSession / OfflineFileSet / ActiveSampleHistory
+│   └─ RecordingSession / MultiDeviceRecordingSession / SessionMetadata
 ├─ Analysis/
 │   ├─ SpeedToSpeedEngine / TestDefinition / TestRunResult / CSV 导出
 │   ├─ GateStore / GateRunEngine / GatePassCondition / VbtsGateImporter
@@ -241,12 +262,14 @@ Chassis Master Test Suite/
 │   └─ SelectionMeasure / SampleSource / AnnotatedTestRun
 ├─ Controls/    DashboardPanel / TestResultsPanel / TrackMapPanel / TrackMap3DController
 │               WorkspaceMaximizeIcons / MathsChannelsDialog / GaugeBindingPickerDialog / SessionEditDialog
-├─ Assets/      Splash/ · TrackMap3D/（Cesium 静态资源）
+├─ Assets/      Splash/ · TrackMap3D/（Cesium 与回放/相机/地形逻辑）
+├─ scripts/     trackmap-geometry / playback / terrain.test.cjs
 ├─ docs/        xcom-*.md · architecture/ · hardware/ · product/
 ├─ tools/       OxTSSmoke（XCOM/NCOM 冒烟）
 ├─ samples/     oxts-xcom/（示例 .xcom）
 ├─ AGENTS.md · .ai-workflows/ · VERSIONING.md
-├─ ChassisMasterTestSuite.Tests/   xUnit（纯逻辑，无 WPF）
+├─ ChassisMasterTestSuite.Tests/   xUnit 纯逻辑测试
+│   └─ Rendering/                 独立渲染测试项目与 JS 状态测试
 ├─ MainWindow.* 外壳、Layout、录制、多文件曲线、光标联动、文件着色
 ├─ SimulatorWindow.* Helix 3D 仿真窗（Spa 风格赛道 + 追逐相机）
 └─ rebuild.cmd
