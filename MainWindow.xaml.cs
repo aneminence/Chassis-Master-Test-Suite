@@ -4454,14 +4454,24 @@ public partial class MainWindow : Window
 
     private void ApplyPlaybackSliderPoint()
     {
-        if (PlaybackSlider?.Template?.FindName("PART_Track", PlaybackSlider) is not Track track)
+        if (PlaybackSlider is null)
+            return;
+        if (PlaybackSlider.Template?.FindName("PART_Track", PlaybackSlider) is not Track track)
+            return;
+        if (track.ActualWidth <= 0)
             return;
 
-        var raw = track.ValueFromPoint(Mouse.GetPosition(track));
-        if (double.IsNaN(raw) || double.IsInfinity(raw))
-            return;
+        // ValueFromPoint is a delta from the current thumb center. Using it after a
+        // value change (or on every mouse move before layout) applies the offset
+        // twice and the playhead jumps away from the click. Map X absolutely.
+        var x = Mouse.GetPosition(track).X;
+        var thumbWidth = track.Thumb?.ActualWidth ?? 0;
+        var usable = Math.Max(1.0, track.ActualWidth - thumbWidth);
+        var t = Math.Clamp((x - thumbWidth / 2.0) / usable, 0, 1);
+        if (PlaybackSlider.IsDirectionReversed)
+            t = 1 - t;
 
-        PlaybackSlider.Value = Math.Clamp(raw, PlaybackSlider.Minimum, PlaybackSlider.Maximum);
+        PlaybackSlider.Value = PlaybackSlider.Minimum + t * (PlaybackSlider.Maximum - PlaybackSlider.Minimum);
     }
 
     private void SeekPlaybackFromSlider()
@@ -4491,18 +4501,7 @@ public partial class MainWindow : Window
             return;
 
         var xSignal = XAxisSelector.SelectedValue as string ?? ChannelIds.AxisTime;
-        double cursorX;
-        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
-        {
-            cursorX = DateTimeOffset
-                .FromUnixTimeMilliseconds(_playback.CurrentTimestampMs)
-                .UtcDateTime
-                .ToOADate();
-        }
-        else
-        {
-            cursorX = GetAxisValue(sample, xSignal);
-        }
+        var cursorX = GetPlaybackAxisValue(sample, xSignal);
 
         _playbackApplying = true;
         try
@@ -4534,24 +4533,69 @@ public partial class MainWindow : Window
             }
         }
 
-        long timestamp;
-        if (cursorX is double oa &&
-            string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
-        {
-            var utc = DateTime.SpecifyKind(DateTime.FromOADate(oa), DateTimeKind.Utc);
-            timestamp = new DateTimeOffset(utc).ToUnixTimeMilliseconds();
-        }
-        else if (TryGetCursorSample() is { } sample)
-        {
-            timestamp = sample.Timestamp;
-        }
-        else
+        if (cursorX is not double x ||
+            !TryGetPlaybackTimestampFromAxisX(x, xSignal, out var timestamp))
         {
             return;
         }
 
         _playback.SeekToTimestamp(timestamp, PlaybackWallMs());
         RefreshPlaybackBarPosition();
+    }
+
+    /// <summary>
+    /// Plot X for the current playback instant. Time / Test Elapsed stay continuous
+    /// so the cursor can sit exactly on the clicked time, not the nearest sample.
+    /// </summary>
+    private double GetPlaybackAxisValue(VehicleSample sample, string xSignal)
+    {
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            return DateTimeOffset
+                .FromUnixTimeMilliseconds(_playback.CurrentTimestampMs)
+                .UtcDateTime
+                .ToOADate();
+        }
+
+        if (string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase))
+        {
+            var elapsedAtSample = GetAxisValue(sample, xSignal);
+            return elapsedAtSample + (_playback.CurrentTimestampMs - sample.Timestamp) / 1000.0;
+        }
+
+        return GetAxisValue(sample, xSignal);
+    }
+
+    private bool TryGetPlaybackTimestampFromAxisX(double cursorX, string xSignal, out long timestamp)
+    {
+        if (string.Equals(xSignal, ChannelIds.AxisTime, StringComparison.OrdinalIgnoreCase))
+        {
+            var utc = DateTime.SpecifyKind(DateTime.FromOADate(cursorX), DateTimeKind.Utc);
+            timestamp = new DateTimeOffset(utc).ToUnixTimeMilliseconds();
+            return true;
+        }
+
+        if (string.Equals(xSignal, ChannelIds.ElapsedTest, StringComparison.OrdinalIgnoreCase))
+        {
+            var originMs = _playback.StartTimestampMs;
+            if (_playback.CurrentSample is { } sample)
+            {
+                var elapsedAtSample = GetAxisValue(sample, xSignal);
+                originMs = sample.Timestamp - (long)Math.Round(elapsedAtSample * 1000.0);
+            }
+
+            timestamp = originMs + (long)Math.Round(cursorX * 1000.0);
+            return true;
+        }
+
+        if (TryGetCursorSample() is { } snapped)
+        {
+            timestamp = snapped.Timestamp;
+            return true;
+        }
+
+        timestamp = 0;
+        return false;
     }
 
     private void RefreshPlaybackBar()
