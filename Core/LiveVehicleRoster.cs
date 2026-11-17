@@ -16,6 +16,7 @@ public sealed class LiveVehicleRoster
     };
 
     private readonly ConcurrentDictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Prefs> _prefs = new(StringComparer.Ordinal);
     private readonly object _focusGate = new();
     private string? _focusId;
     private int _colorCursor;
@@ -77,12 +78,7 @@ public sealed class LiveVehicleRoster
             ? key
             : sample.VehicleLabel!;
 
-        var entry = _entries.GetOrAdd(key, _ =>
-        {
-            var colorIndex = Interlocked.Increment(ref _colorCursor) - 1;
-            return new Entry(key, label, Palette[colorIndex % Palette.Length], trailCapacity);
-        });
-
+        var entry = _entries.GetOrAdd(key, _ => CreateEntry(key, label, trailCapacity));
         entry.Update(sample, label);
 
         lock (_focusGate)
@@ -102,6 +98,56 @@ public sealed class LiveVehicleRoster
 
         lock (_focusGate)
             _focusId = vehicleId;
+        return true;
+    }
+
+    /// <summary>
+    /// Ensure a vehicle exists even before the first sample (e.g. a just-connected remote).
+    /// </summary>
+    public string Ensure(string vehicleId, string? label = null, int trailCapacity = 240)
+    {
+        if (string.IsNullOrWhiteSpace(vehicleId))
+            throw new ArgumentException("Vehicle id is required.", nameof(vehicleId));
+        if (trailCapacity < 1)
+            trailCapacity = 1;
+
+        var key = vehicleId.Trim();
+        var resolved = string.IsNullOrWhiteSpace(label) ? key : label.Trim();
+        _entries.GetOrAdd(key, _ => CreateEntry(key, resolved, trailCapacity));
+        lock (_focusGate)
+            _focusId ??= key;
+        return key;
+    }
+
+    public bool TryRename(string vehicleId, string label)
+    {
+        if (string.IsNullOrWhiteSpace(vehicleId) || !_entries.TryGetValue(vehicleId, out var entry))
+            return false;
+        var name = (label ?? "").Trim();
+        if (name.Length == 0)
+            return false;
+        entry.SetCustomLabel(name);
+        GetPrefs(vehicleId).Label = name;
+        return true;
+    }
+
+    public bool ToggleVisibility(string vehicleId)
+    {
+        if (string.IsNullOrWhiteSpace(vehicleId) || !_entries.TryGetValue(vehicleId, out var entry))
+            return false;
+        entry.IsVisible = !entry.IsVisible;
+        GetPrefs(vehicleId).Visible = entry.IsVisible;
+        return true;
+    }
+
+    public bool TrySetColor(string vehicleId, string colorHex)
+    {
+        if (string.IsNullOrWhiteSpace(vehicleId) || string.IsNullOrWhiteSpace(colorHex))
+            return false;
+        if (!_entries.TryGetValue(vehicleId, out var entry))
+            return false;
+        entry.ColorHex = colorHex;
+        GetPrefs(vehicleId).ColorHex = colorHex;
         return true;
     }
 
@@ -145,7 +191,8 @@ public sealed class LiveVehicleRoster
                 e.ColorHex,
                 e.Latest,
                 e.TrailSnapshot(),
-                string.Equals(e.Id, focus, StringComparison.Ordinal)));
+                string.Equals(e.Id, focus, StringComparison.Ordinal),
+                e.IsVisible));
         }
 
         list.Sort((a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
@@ -165,7 +212,39 @@ public sealed class LiveVehicleRoster
         string ColorHex,
         VehicleSample? Latest,
         IReadOnlyList<VehicleSample> Trail,
-        bool IsFocus);
+        bool IsFocus,
+        bool IsVisible);
+
+    private sealed class Prefs
+    {
+        public string? Label;
+        public string? ColorHex;
+        public bool? Visible;
+    }
+
+    private Prefs GetPrefs(string id) => _prefs.GetOrAdd(id, _ => new Prefs());
+
+    private Entry CreateEntry(string key, string label, int trailCapacity)
+    {
+        var colorIndex = Interlocked.Increment(ref _colorCursor) - 1;
+        var color = Palette[colorIndex % Palette.Length];
+        var custom = false;
+        var visible = true;
+        if (_prefs.TryGetValue(key, out var pref))
+        {
+            if (!string.IsNullOrWhiteSpace(pref.Label))
+            {
+                label = pref.Label!;
+                custom = true;
+            }
+            if (!string.IsNullOrWhiteSpace(pref.ColorHex))
+                color = pref.ColorHex!;
+            if (pref.Visible is bool v)
+                visible = v;
+        }
+
+        return new Entry(key, label, color, trailCapacity, custom, visible);
+    }
 
     private sealed class Entry
     {
@@ -174,24 +253,38 @@ public sealed class LiveVehicleRoster
         private int _head;
         private int _count;
 
-        public Entry(string id, string label, string colorHex, int trailCapacity)
+        public Entry(string id, string label, string colorHex, int trailCapacity, bool customLabel, bool isVisible)
         {
             Id = id;
             Label = label;
             ColorHex = colorHex;
+            HasCustomLabel = customLabel;
+            IsVisible = isVisible;
             _trail = new VehicleSample?[trailCapacity];
         }
 
         public string Id { get; }
-        public string ColorHex { get; }
+        public string ColorHex { get; set; }
         public string Label { get; private set; }
+        public bool HasCustomLabel { get; private set; }
+        public bool IsVisible { get; set; }
         public VehicleSample? Latest { get; private set; }
+
+        public void SetCustomLabel(string label)
+        {
+            lock (_gate)
+            {
+                Label = label;
+                HasCustomLabel = true;
+            }
+        }
 
         public void Update(VehicleSample sample, string label)
         {
             lock (_gate)
             {
-                Label = label;
+                if (!HasCustomLabel)
+                    Label = label;
                 Latest = sample;
                 _trail[_head] = sample;
                 _head = (_head + 1) % _trail.Length;

@@ -179,6 +179,31 @@ public sealed class DataSourceSession : IDisposable
         _dataSource = null;
     }
 
+    /// <summary>
+    /// Stop and drop one source, keeping the others. Current becomes the last remaining source.
+    /// </summary>
+    public async Task DetachAsync(IDataSource source)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(source);
+
+        var removed = _sources.Remove(source);
+        if (!removed && !ReferenceEquals(_dataSource, source))
+            return;
+
+        if (ReferenceEquals(_dataSource, source))
+            _dataSource = _sources.Count > 0 ? _sources[^1] : null;
+
+        try
+        {
+            await source.StopAsync().ConfigureAwait(true);
+        }
+        catch
+        {
+            try { source.Dispose(); } catch { /* ignore */ }
+        }
+    }
+
     private async Task StopAllExceptAsync(IDataSource? keep)
     {
         var sources = ActiveSources

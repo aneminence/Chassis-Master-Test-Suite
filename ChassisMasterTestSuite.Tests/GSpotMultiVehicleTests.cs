@@ -116,4 +116,30 @@ public class LiveVehicleRosterTests
         Assert.False(roster.Remove("a"));
         Assert.Equal("CarB", roster.GetFocusLatest()!.VehicleLabel);
     }
+
+    [Fact]
+    public void Rename_SurvivesLaterUpsert_AndEnsureCreatesPlaceholder()
+    {
+        var roster = new LiveVehicleRoster();
+        roster.Ensure("phone-1", "mobile-067");
+        Assert.True(roster.TryRename("phone-1", "Front left"));
+        roster.Upsert(Sample("phone-1", "mobile-067", 31.1, 121.1, 1));
+
+        var snap = roster.Snapshot().Single();
+        Assert.Equal("Front left", snap.Label);
+        Assert.True(snap.IsVisible);
+        Assert.True(snap.IsFocus);
+
+        Assert.True(roster.ToggleVisibility("phone-1"));
+        Assert.False(roster.Snapshot().Single().IsVisible);
+        Assert.True(roster.TrySetColor("phone-1", "#E05252"));
+        Assert.Equal("#E05252", roster.Snapshot().Single().ColorHex);
+
+        roster.Clear();
+        roster.Upsert(Sample("phone-1", "mobile-067", 31.1, 121.1, 2));
+        var after = roster.Snapshot().Single();
+        Assert.Equal("Front left", after.Label);
+        Assert.False(after.IsVisible);
+        Assert.Equal("#E05252", after.ColorHex);
+    }
 }

@@ -168,6 +168,7 @@ public partial class MainWindow : Window
     private VehicleSample? _livePreviousSample;
 
     private readonly LiveVehicleRoster _liveRoster = new();
+    private int _liveDeviceChipSignature;
     private readonly Dictionary<string, LiveVehicleEnrichState> _liveVehicleEnrich = new(StringComparer.Ordinal);
 
     private sealed class LiveVehicleEnrichState
@@ -817,6 +818,13 @@ public partial class MainWindow : Window
         if (OfflineFilesPanel is null)
             return;
 
+        UpdateFilesLabel();
+        if (ShouldShowLiveDeviceChips())
+        {
+            RebuildLiveDeviceChips();
+            return;
+        }
+
         OfflineFilesPanel.Children.Clear();
 
         var selectedId = _offlineFiles.Selected?.Id;
@@ -909,6 +917,449 @@ public partial class MainWindow : Window
             chip.Child = row;
             OfflineFilesPanel.Children.Add(chip);
         }
+
+        _liveDeviceChipSignature = LiveDeviceChipSignature();
+    }
+
+    private void UpdateFilesLabel()
+    {
+        if (FilesLabelText is null)
+            return;
+        FilesLabelText.Text = Loc.T(ShouldShowLiveDeviceChips() ? "Curves.Devices" : "Curves.Files");
+    }
+
+    private bool ShouldShowLiveDeviceChips() =>
+        !_isOfflineMode && !_historyOfflineMode
+        && (_liveRoster.Count > 0 || _dataSourceSession.Remotes.Count > 0);
+
+    private void SeedLiveDevicesFromRemotes()
+    {
+        foreach (var remote in _dataSourceSession.Remotes)
+        {
+            var id = remote.DeviceId ?? remote.Options.ExpectedDeviceId;
+            if (string.IsNullOrWhiteSpace(id))
+                continue;
+            var label = string.IsNullOrWhiteSpace(remote.DeviceLabel) ? id : remote.DeviceLabel!;
+            _liveRoster.Ensure(id, label);
+        }
+    }
+
+    private int LiveDeviceChipSignature()
+    {
+        var hash = new HashCode();
+        hash.Add(_isOfflineMode);
+        hash.Add(_historyOfflineMode);
+        foreach (var remote in _dataSourceSession.Remotes)
+            hash.Add(remote.DeviceId ?? remote.Endpoint);
+        foreach (var vehicle in _liveRoster.Snapshot())
+        {
+            hash.Add(vehicle.Id);
+            hash.Add(vehicle.Label);
+            hash.Add(vehicle.ColorHex);
+            hash.Add(vehicle.IsVisible);
+            hash.Add(vehicle.IsFocus);
+        }
+        return hash.ToHashCode();
+    }
+
+    private void RequestLiveDeviceChipsRefresh()
+    {
+        var signature = LiveDeviceChipSignature();
+        if (signature == _liveDeviceChipSignature)
+            return;
+
+        void apply() => RebuildOfflineFileChips();
+        if (Dispatcher.CheckAccess())
+            apply();
+        else
+            Dispatcher.BeginInvoke(apply);
+    }
+
+    private CMTSRemoteDataSource? FindRemoteByVehicleId(string id)
+    {
+        foreach (var remote in _dataSourceSession.Remotes)
+        {
+            if (string.Equals(remote.DeviceId, id, StringComparison.Ordinal))
+                return remote;
+            if (string.Equals(remote.Options.ExpectedDeviceId, id, StringComparison.Ordinal))
+                return remote;
+            if (string.Equals(remote.Endpoint, id, StringComparison.OrdinalIgnoreCase))
+                return remote;
+        }
+
+        return null;
+    }
+
+    private void RebuildLiveDeviceChips()
+    {
+        OfflineFilesPanel.Children.Clear();
+
+        var roster = _liveRoster.Snapshot();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var items = new List<(string Id, string Label, string ColorHex, bool IsFocus, bool IsVisible, bool CanDisconnect)>();
+
+        foreach (var vehicle in roster)
+        {
+            seen.Add(vehicle.Id);
+            items.Add((
+                vehicle.Id,
+                vehicle.Label,
+                vehicle.ColorHex,
+                vehicle.IsFocus,
+                vehicle.IsVisible,
+                FindRemoteByVehicleId(vehicle.Id) is not null));
+        }
+
+        foreach (var remote in _dataSourceSession.Remotes)
+        {
+            var id = remote.DeviceId ?? remote.Options.ExpectedDeviceId ?? remote.Endpoint;
+            if (string.IsNullOrWhiteSpace(id) || !seen.Add(id))
+                continue;
+            var label = string.IsNullOrWhiteSpace(remote.DeviceLabel) ? id : remote.DeviceLabel!;
+            items.Add((id, label, "#C8A34A", items.Count == 0, true, true));
+        }
+
+        foreach (var device in items)
+        {
+            var chip = new Border
+            {
+                Background = device.IsFocus
+                    ? ThemeBrushes.Brush("ComboItemSelectedBackground")
+                    : ThemeBrushes.Brush("LayoutInactiveBackground"),
+                BorderBrush = (Brush)new BrushConverter().ConvertFromString(device.ColorHex)!,
+                BorderThickness = new Thickness(device.IsFocus ? 2 : 1),
+                CornerRadius = new CornerRadius(4),
+                Padding = new Thickness(8, 2, 4, 2),
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Hand,
+                Tag = device.Id,
+                ToolTip = device.IsFocus
+                    ? Loc.T("Curves.FocusDeviceTip", device.Label)
+                    : Loc.T("Curves.FocusDeviceTip", device.Label)
+            };
+            chip.MouseLeftButtonUp += LiveDeviceChip_Click;
+            chip.MouseLeftButtonDown += (s, ev) =>
+            {
+                if (ev.ClickCount == 2)
+                    LiveDeviceChip_DoubleClick(s!, ev);
+            };
+            chip.ContextMenu = CreateLiveDeviceContextMenu(device.Id, device.CanDisconnect);
+
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+
+            var visibility = new Button
+            {
+                Content = CreateFileVisibilityIcon(device.IsVisible),
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(2),
+                Margin = new Thickness(0, 0, 4, 0),
+                Tag = device.Id,
+                Style = TryFindResource("ToolButtonStyle") as Style,
+                ToolTip = Loc.T(device.IsVisible ? "Curves.HideDeviceTip" : "Curves.ShowDeviceTip")
+            };
+            System.Windows.Automation.AutomationProperties.SetName(visibility,
+                $"{visibility.ToolTip}: {device.Label}");
+            visibility.Click += LiveDeviceVisibilityButton_Click;
+            row.Children.Add(visibility);
+
+            row.Children.Add(new TextBlock
+            {
+                Text = device.Label,
+                Opacity = device.IsVisible ? 1.0 : 0.5,
+                Foreground = (Brush)FindResource("TextPrimary"),
+                FontSize = 11,
+                FontWeight = device.IsFocus ? FontWeights.SemiBold : FontWeights.Normal,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 6, 0),
+                MaxWidth = 140,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false,
+                ToolTip = Loc.T("Curves.RenameDeviceTip")
+            });
+
+            var colorBtn = new Button
+            {
+                Content = "●",
+                Width = 22,
+                Height = 22,
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 2, 0),
+                Tag = device.Id,
+                Foreground = (Brush)new BrushConverter().ConvertFromString(device.ColorHex)!,
+                Style = TryFindResource("ToolButtonStyle") as Style,
+                ToolTip = Loc.T("Curves.ChangeDeviceColorTip")
+            };
+            colorBtn.Click += LiveDeviceColorButton_Click;
+            row.Children.Add(colorBtn);
+
+            if (device.CanDisconnect)
+            {
+                var close = new Button
+                {
+                    Content = "×",
+                    Width = 22,
+                    Height = 22,
+                    Padding = new Thickness(0),
+                    Tag = device.Id,
+                    Style = TryFindResource("ToolButtonStyle") as Style,
+                    ToolTip = Loc.T("Curves.DisconnectDeviceTip")
+                };
+                close.Click += LiveDeviceDisconnectButton_Click;
+                row.Children.Add(close);
+            }
+
+            chip.Child = row;
+            OfflineFilesPanel.Children.Add(chip);
+        }
+
+        _liveDeviceChipSignature = LiveDeviceChipSignature();
+    }
+
+    private ContextMenu CreateLiveDeviceContextMenu(string id, bool canDisconnect)
+    {
+        var menu = new ContextMenu
+        {
+            Background = ThemeBrushes.Brush("PanelBackground"),
+            BorderBrush = ThemeBrushes.Brush("ToolButtonBorder"),
+            BorderThickness = new Thickness(1)
+        };
+        var rename = new MenuItem
+        {
+            Header = Loc.T("Curves.RenameDevice"),
+            Tag = id,
+            Foreground = (Brush)FindResource("TextPrimary")
+        };
+        rename.Click += LiveDeviceRenameMenu_Click;
+        menu.Items.Add(rename);
+        if (canDisconnect)
+        {
+            var disconnect = new MenuItem
+            {
+                Header = Loc.T("Curves.DisconnectDeviceTip"),
+                Tag = id,
+                Foreground = (Brush)FindResource("TextPrimary")
+            };
+            disconnect.Click += LiveDeviceDisconnectButton_Click;
+            menu.Items.Add(disconnect);
+        }
+        return menu;
+    }
+
+    private void LiveDeviceChip_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (e.Handled || sender is not Border { Tag: string id })
+            return;
+        if (!_liveRoster.TrySetFocus(id))
+        {
+            _liveRoster.Ensure(id);
+            _liveRoster.TrySetFocus(id);
+        }
+        e.Handled = true;
+        _latestSample = _liveRoster.GetFocusLatest();
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        UpdateNumericDisplay();
+    }
+
+    private void LiveDeviceChip_DoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Border chip || chip.Tag is not string id)
+            return;
+        e.Handled = true;
+        var label = _liveRoster.Snapshot().FirstOrDefault(v => v.Id == id).Label ?? id;
+        BeginLiveDeviceRename(chip, id, label);
+    }
+
+    private void LiveDeviceRenameMenu_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: string id })
+            return;
+        foreach (var child in OfflineFilesPanel.Children.OfType<Border>())
+        {
+            if (child.Tag as string != id)
+                continue;
+            var label = _liveRoster.Snapshot().FirstOrDefault(v => v.Id == id).Label ?? id;
+            BeginLiveDeviceRename(child, id, label);
+            break;
+        }
+    }
+
+    private void BeginLiveDeviceRename(Border chip, string id, string current)
+    {
+        if (chip.Child is not StackPanel row)
+            return;
+
+        var index = -1;
+        for (var i = 0; i < row.Children.Count; i++)
+        {
+            if (row.Children[i] is TextBlock)
+            {
+                index = i;
+                break;
+            }
+        }
+        if (index < 0)
+            return;
+
+        var committed = false;
+        TextBox? box = null;
+        void Commit(bool accept)
+        {
+            if (committed)
+                return;
+            committed = true;
+            if (accept && box is not null)
+                _liveRoster.TryRename(id, box.Text);
+            RebuildOfflineFileChips();
+            if (accept)
+            {
+                RefreshAllPlots(force: true);
+                UpdateNumericDisplay();
+            }
+        }
+
+        box = new TextBox
+        {
+            Text = current,
+            FontSize = 11,
+            MinWidth = 80,
+            MaxWidth = 160,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 6, 0),
+            Padding = new Thickness(2, 0, 2, 0),
+            Background = ThemeBrushes.Brush("ComboItemSelectedBackground"),
+            Foreground = (Brush)FindResource("TextPrimary"),
+            CaretBrush = (Brush)FindResource("TextPrimary"),
+            BorderThickness = new Thickness(1),
+            BorderBrush = ThemeBrushes.Brush("AccentBrush")
+        };
+        box.KeyDown += (_, ev) =>
+        {
+            if (ev.Key == Key.Enter)
+            {
+                Commit(true);
+                ev.Handled = true;
+            }
+            else if (ev.Key == Key.Escape)
+            {
+                Commit(false);
+                ev.Handled = true;
+            }
+        };
+        box.LostKeyboardFocus += (_, _) => Commit(true);
+        row.Children.RemoveAt(index);
+        row.Children.Insert(index, box);
+        box.Loaded += (_, _) =>
+        {
+            box.Focus();
+            box.SelectAll();
+        };
+    }
+
+    private void LiveDeviceVisibilityButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id } || !_liveRoster.ToggleVisibility(id))
+            return;
+        e.Handled = true;
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        UpdateNumericDisplay();
+    }
+
+    private void LiveDeviceColorButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string id })
+            return;
+        e.Handled = true;
+
+        var menu = new ContextMenu
+        {
+            Background = ThemeBrushes.Brush("PanelBackground"),
+            BorderBrush = ThemeBrushes.Brush("ToolButtonBorder"),
+            BorderThickness = new Thickness(1)
+        };
+
+        var currentHex = _liveRoster.Snapshot().FirstOrDefault(v => v.Id == id).ColorHex;
+        foreach (var hex in FileColorChoices)
+        {
+            var swatch = new System.Windows.Shapes.Ellipse
+            {
+                Width = 12,
+                Height = 12,
+                Fill = (Brush)new BrushConverter().ConvertFromString(hex)!,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 8, 0)
+            };
+            var label = new TextBlock
+            {
+                Text = hex,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var header = new StackPanel { Orientation = Orientation.Horizontal };
+            header.Children.Add(swatch);
+            header.Children.Add(label);
+
+            var item = new MenuItem
+            {
+                Header = header,
+                Tag = (id, hex),
+                Style = TryFindResource("DarkMenuItemStyle") as Style,
+                IsCheckable = true,
+                IsChecked = !string.IsNullOrWhiteSpace(currentHex) &&
+                            string.Equals(currentHex, hex, StringComparison.OrdinalIgnoreCase)
+            };
+            item.Click += LiveDeviceColorMenuItem_Click;
+            menu.Items.Add(item);
+        }
+
+        menu.PlacementTarget = (Button)sender;
+        menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+        menu.IsOpen = true;
+    }
+
+    private void LiveDeviceColorMenuItem_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not MenuItem { Tag: (string id, string hex) })
+            return;
+        if (!_liveRoster.TrySetColor(id, hex))
+            return;
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        UpdateNumericDisplay();
+    }
+
+    private async void LiveDeviceDisconnectButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id })
+            return;
+        e.Handled = true;
+        await DisconnectLiveDeviceAsync(id);
+    }
+
+    private async Task DisconnectLiveDeviceAsync(string id)
+    {
+        var remote = FindRemoteByVehicleId(id);
+        if (remote is not null)
+        {
+            await _dataSourceSession.DetachAsync(remote);
+            HookAllRemoteLiveCurveResets();
+            RefreshRemoteRecordButtons();
+            UpdateRemoteButtonContent();
+        }
+
+        _liveRoster.Remove(id);
+        _liveVehicleEnrich.Remove(id);
+        _sampleHistory.RemoveWhere(sample =>
+            string.Equals(
+                string.IsNullOrWhiteSpace(sample.VehicleId) ? "default" : sample.VehicleId.Trim(),
+                id,
+                StringComparison.Ordinal));
+        _latestSample = _liveRoster.GetFocusLatest();
+        RebuildOfflineFileChips();
+        RefreshAllPlots(force: true);
+        UpdateNumericDisplay();
     }
 
     private static readonly string[] FileColorChoices =
@@ -1340,6 +1791,8 @@ public partial class MainWindow : Window
             }
         }
 
+        SeedLiveDevicesFromRemotes();
+        RebuildOfflineFileChips();
         UpdateConnectionStatusUi();
     }
 
@@ -1410,7 +1863,7 @@ public partial class MainWindow : Window
         if (OnlineModeButton is null || OfflineModeButton is null)
             return;
 
-        // Mutual exclusive highlight; file chips stay visible in both modes.
+        // Mutual exclusive highlight. Online mode shows connected devices in the Files row.
         if (_isOfflineMode)
         {
             OnlineModeButton.Style = (Style)FindResource("NavButtonStyle");
@@ -1431,6 +1884,8 @@ public partial class MainWindow : Window
             if (OnlineToolsPanel is not null)
                 OnlineToolsPanel.Visibility = Visibility.Visible;
         }
+
+        RebuildOfflineFileChips();
     }
 
     // ============================================================
@@ -1692,8 +2147,7 @@ public partial class MainWindow : Window
             SaveKmlAsButton.Content = Loc.T("Curves.SaveAs");
             SaveKmlAsButton.ToolTip = Loc.T("Curves.SaveAsTip");
         }
-        if (FilesLabelText is not null)
-            FilesLabelText.Text = Loc.T("Curves.Files");
+        RebuildOfflineFileChips();
 
         if (ReplayTitleText is not null)
             ReplayTitleText.Text = Loc.T("Replay.Title");
@@ -3274,7 +3728,7 @@ public partial class MainWindow : Window
 
         var snapshot = liveSnapshot ?? GetHistorySnapshot();
         var liveLayers = GetLiveVehicleLayers(snapshot);
-        if (liveLayers.Count > 1)
+        if (UseLiveVehicleLayers())
         {
             var layers = liveLayers
                 .Select((layer, index) => new Controls.TrackMapPanel.TrackLayer(
@@ -3377,15 +3831,24 @@ public partial class MainWindow : Window
         if (!(_isOfflineMode || _historyOfflineMode))
         {
             var liveLayers = GetLiveVehicleLayers(history);
-            if (liveLayers.Count > 1)
+            if (UseLiveVehicleLayers())
             {
-                DrawLiveVehicleOverlay(
-                    plot,
-                    scottPlot,
-                    selectedChannels,
-                    selectedXSignal,
-                    previousLimits,
-                    liveLayers);
+                if (liveLayers.Count >= 1)
+                {
+                    DrawLiveVehicleOverlay(
+                        plot,
+                        scottPlot,
+                        selectedChannels,
+                        selectedXSignal,
+                        previousLimits,
+                        liveLayers);
+                    return;
+                }
+
+                ApplyDarkPlotStyle(plot.WpfPlot);
+                ApplyPlotOverlays(plot);
+                RefreshPlotTitle(plot);
+                plot.WpfPlot.Refresh();
                 return;
             }
         }
@@ -5970,14 +6433,17 @@ public partial class MainWindow : Window
             list.Add(sample);
         }
 
-        if (groups.Count <= 1)
+        var roster = _liveRoster.Snapshot();
+        var useLayers = roster.Count > 1 || roster.Any(vehicle => !vehicle.IsVisible);
+        if (!useLayers && groups.Count <= 1)
             return Array.Empty<LivePlotLayer>();
 
-        var roster = _liveRoster.Snapshot();
         var layers = new List<LivePlotLayer>(groups.Count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var vehicle in roster)
         {
+            if (!vehicle.IsVisible)
+                continue;
             if (!groups.TryGetValue(vehicle.Id, out var samples) || samples.Count < 2)
                 continue;
             seen.Add(vehicle.Id);
@@ -5997,6 +6463,15 @@ public partial class MainWindow : Window
         }
 
         return layers;
+    }
+
+    private bool UseLiveVehicleLayers()
+    {
+        if (_isOfflineMode || _historyOfflineMode)
+            return false;
+        if (_liveRoster.Count > 1)
+            return true;
+        return _liveRoster.Snapshot().Any(vehicle => !vehicle.IsVisible);
     }
 
     private void DrawLiveVehicleOverlay(
@@ -6149,7 +6624,7 @@ public partial class MainWindow : Window
             return Array.Empty<SampleSource>();
 
         var liveLayers = GetLiveVehicleLayers(live);
-        if (liveLayers.Count > 1)
+        if (UseLiveVehicleLayers())
         {
             return liveLayers
                 .Select(layer => new SampleSource
@@ -6494,6 +6969,8 @@ public partial class MainWindow : Window
                     RefreshChannelSelectorsFromRegistry();
                     RefreshRemoteRecordButtons();
                     UpdateRemoteButtonContent();
+                    SeedLiveDevicesFromRemotes();
+                    RebuildOfflineFileChips();
                 }
 
                 if (GSpotButton is not null)
@@ -7103,6 +7580,8 @@ public partial class MainWindow : Window
         RefreshChannelSelectorsFromRegistry();
         RefreshRemoteRecordButtons();
         UpdateRemoteButtonContent();
+        SeedLiveDevicesFromRemotes();
+        RebuildOfflineFileChips();
     }
 
     private void HookAllRemoteLiveCurveResets()
@@ -7502,6 +7981,7 @@ public partial class MainWindow : Window
         {
             var roster = _liveRoster.Snapshot();
             var summary = roster
+                .Where(v => v.IsVisible)
                 .Select(v => (
                     v.Label,
                     v.ColorHex,
@@ -7555,6 +8035,8 @@ public partial class MainWindow : Window
         var run = 1;
         foreach (var v in roster)
         {
+            if (!v.IsVisible)
+                continue;
             var sample = v.IsFocus && focusOverride is not null
                 ? focusOverride
                 : v.Latest;
@@ -7892,6 +8374,7 @@ public partial class MainWindow : Window
                 }
 
                 var vehicleKey = _liveRoster.Upsert(sample);
+                RequestLiveDeviceChipsRefresh();
                 if (!_liveVehicleEnrich.TryGetValue(vehicleKey, out var enrich))
                 {
                     enrich = new LiveVehicleEnrichState();
