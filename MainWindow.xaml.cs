@@ -59,7 +59,7 @@ public partial class MainWindow : Window
     private readonly List<CMTSRemoteDataSource> _remoteLiveResetSources = new();
 
 
-    private UdpSender? _udpSender;
+
 
     // ============================================================
     // 录制（VBO）— 文件 / 状态机在 RecordingSession；UI 外观仍在本类。
@@ -1778,27 +1778,6 @@ public partial class MainWindow : Window
         RefreshAllPlots(force: true);
         UpdateNumericDisplay();
         StopPlaybackUi();
-
-        // 若当前无连接，尝试拉起默认 UDP
-        if (!_dataSourceSession.HasUsableSource)
-        {
-            try
-            {
-                var next = _dataSourceSession.CreateUdpReceiver();
-                await SwitchDataSourceAsync(next);
-                if (GSpotButton is not null)
-                    GSpotButton.Content = "GSpot…";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(
-                    this,
-                    "启动 UDP 失败:\n" + ex.Message,
-                    "Online",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-            }
-        }
 
         SeedLiveDevicesFromRemotes();
         RebuildOfflineFileChips();
@@ -8004,7 +7983,7 @@ public partial class MainWindow : Window
     // Simulator
     // ============================================================
 
-    private void SimulatorButton_Click(
+    private async void SimulatorButton_Click(
         object sender,
         RoutedEventArgs e)
     {
@@ -8028,28 +8007,29 @@ public partial class MainWindow : Window
         // 创建 Simulator
         // ========================================================
 
-        if (_udpSender is null)
+        var source = new SimulatorDataSource(_dataBus);
+        try
         {
-            MessageBox.Show(
-                this,
-                "UDP Sender 尚未初始化。",
-                "Simulator",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-
+            await SwitchDataSourceAsync(source);
+        }
+        catch (Exception ex)
+        {
+            source.Dispose();
+            MessageBox.Show(this, ex.Message, "Simulator", MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
-
-
-        var simulator =
-            new VehicleSimulator(
-                _udpSender);
-
-
-        _simulatorWindow =
-            new SimulatorWindow(
-                simulator);
-
+        var window = new SimulatorWindow(source.Simulator);
+        _simulatorWindow = window;
+        source.StateChanged += (_, state) =>
+        {
+            if (state is DataSourceState.Disconnected or DataSourceState.Faulted)
+                Dispatcher.InvokeAsync(() => { if (window.IsLoaded) window.Close(); });
+        };
+        _simulatorWindow.Closed += async (_, _) =>
+        {
+            await source.StopAsync();
+            UpdateConnectionStatusUi();
+        };
 
         // 建立主窗口与 Simulator 的 Owner 关系
         _simulatorWindow.Owner =
@@ -8612,46 +8592,10 @@ public partial class MainWindow : Window
         // ========================================================
         // UDP Sender
         //
-        // 这里只创建 Sender，不自动启动 Simulator。
-        // Simulator 按钮点击后才会使用这个 Sender。
+        // 数据源由用户选择；Simulator 直接发布到 DataBus。
         // ========================================================
 
-        _udpSender =
-            new UdpSender(
-                "127.0.0.1",
-                50000);
-        progress.Report(68);
-
-
-        // ========================================================
-        // Data source（默认 UDP；可用 GSpot… / UDP 按钮切换）
-        //
-        // MainWindow 只依赖 IDataSource。
-        // 关闭时由 MainWindow_Closed 调用 StopAsync / Dispose。
-        // ========================================================
-
-        var defaultUdp =
-            _dataSourceSession.CreateUdpReceiver();
-        _dataSourceSession.SetCurrent(defaultUdp);
-        progress.Report(73);
-
-        try
-        {
-            await defaultUdp.StartAsync();
-        }
-        catch (Exception ex)
-        {
-            // Defer the warning until the splash has closed and MainWindow is visible.
-            var detail = !string.IsNullOrWhiteSpace(defaultUdp.LastError)
-                ? defaultUdp.LastError
-                : ex.Message;
-
-            _startupWarning =
-                "UDP 监听未能启动，程序仍会打开。\n\n" +
-                detail +
-                "\n\n请先关掉仍在运行的旧 CMTS / 占用 50000 端口的进程，" +
-                "再点工具栏「UDP」重试；或改用「GSpot…」。";
-        }
+        // Startup stays disconnected until the user selects a source.
         progress.Report(79);
 
 
@@ -8817,7 +8761,7 @@ public partial class MainWindow : Window
         // RecordingSession has already drained asynchronously in Closing.
 
 
-        _udpSender?.Dispose();
+
 
 
         _cancellationTokenSource?.Dispose();

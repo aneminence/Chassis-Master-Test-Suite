@@ -153,11 +153,12 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ## 当前架构
 
-以下按 Windows 0.3.4、本地代码 `937ccdc` 核对（2026-11-17）。
+基于 Windows 0.3.4，包含 Simulator 直连改造（尚未打新版本标签）（2026-11-17）。
 
 ```text
 在线采集（DataSourceSession 管理源生命周期）
-  UDP ◄─ Simulator / UdpSender
+  SimulatorDataSource（进程内 VehicleSample）
+  UDP（可选外部协议入口，不再默认启动）
   GSpot（WebSocket 多车房间）
   Remote × N（局域网 Android；mDNS / 候选探测 / 手动 IP）
       │ IDataSource → VehicleSample → DataBus
@@ -249,7 +250,8 @@ Chassis Master Test Suite/
 ├─ Recorder/
 │   ├─ VboRecorder / VboReader / CsvRecorder（未接线）
 │   └─ OxTS/   XcomContainerReader / NcomDecoder / RcomDecoder / XcomImporter
-├─ Simulator/   VehicleSimulator · SimulatorSceneBuilder · SpaTrackCenterline（Helix 3D）
+├─ Simulator/   SimulatorDataSource · VehicleSimulator
+│               SimulatorSceneBuilder · SpaTrackCenterline（Helix 3D）
 ├─ Session/
 │   ├─ DataSourceSession / OfflineFileSet / ActiveSampleHistory
 │   └─ RecordingSession / MultiDeviceRecordingSession / SessionMetadata
@@ -321,14 +323,14 @@ dotnet test "Chassis Master Test Suite.sln" -c Release
 
 ### 1. 启动与默认数据源
 
-启动后默认走 **UDP**（`127.0.0.1:50000`），**不会自动录制**。  
+启动后保持未连接，**不会自动监听 UDP 或录制**；选择 Simulator、GSpot 或 Remote 后开始采集。
 若有会话记忆，会尝试重新打开上次的 VBO / 门 / 试验设置。  
-若端口被占用，会提示错误而不是闪退；请结束残留 CMTS 进程后再开。
+UDP 仅在手动选择时监听端口；Simulator 不再依赖网络端口。
 
-### 2. Online：UDP + Simulator（本机仿真）
+### 2. Online：Simulator（进程内仿真）
 
-1. 顶部切到 **Online**，确认工具为 **UDP**（或点一次 **UDP**）。  
-2. 点 **Simulator** 打开 Helix 3D 窗（Spa 风格高程赛道），用 WASD / Space / R 驾驶；样本仍经本机 UDP 进主窗：
+1. 顶部切到 **Online**，点击 **Simulator** 选择仿真数据源。
+2. 点 **Simulator** 打开 Helix 3D 窗（Spa 风格高程赛道），用 WASD / Space / R 驾驶；样本由 `SimulatorDataSource` 直接写入 `DataBus`：
 
 | 按键 | 功能 |
 |---|---|

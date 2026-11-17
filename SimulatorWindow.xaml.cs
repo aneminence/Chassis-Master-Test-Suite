@@ -12,8 +12,6 @@ public partial class SimulatorWindow : Window
     private readonly VehicleSimulator _simulator;
     private readonly DispatcherTimer _renderTimer;
 
-    private CancellationTokenSource? _simulatorCts;
-    private Task? _simulatorTask;
 
     private AxisAngleRotation3D? _vehicleHeadingRotation;
     private AxisAngleRotation3D? _vehiclePitchRotation;
@@ -73,46 +71,12 @@ public partial class SimulatorWindow : Window
         ApplyFollowCameraMode();
         UpdateCamera(_simulator.GetState(), 1.0 / 60.0);
 
-        if (_simulatorCts == null)
-        {
-            _simulatorCts = new CancellationTokenSource();
-            _simulatorTask = RunSimulatorAsync(_simulatorCts.Token);
-        }
-    }
-
-    private async Task RunSimulatorAsync(CancellationToken cancellationToken)
-    {
-        try
-        {
-            await _simulator.RunAsync(cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            await Dispatcher.InvokeAsync(() =>
-            {
-                MessageBox.Show(
-                    this,
-                    $"Vehicle Simulator failed:\n\n{ex.Message}",
-                    "CMTS Simulator Error",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Error);
-            });
-        }
     }
 
     private void SimulatorWindow_Closed(object? sender, EventArgs e)
     {
         _renderTimer.Stop();
         _simulator.ReleaseControls();
-        if (_simulatorCts != null)
-        {
-            _simulatorCts.Cancel();
-            _simulatorCts.Dispose();
-            _simulatorCts = null;
-        }
     }
 
     private void BuildScene()

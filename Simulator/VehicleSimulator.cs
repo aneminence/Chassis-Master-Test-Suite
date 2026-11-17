@@ -1,15 +1,15 @@
 using System.Diagnostics;
-using Chassis_Master_Test_Suite.Communication;
+using Chassis_Master_Test_Suite.Core;
 
 namespace Chassis_Master_Test_Suite.Simulator;
 
 /// <summary>
-/// CMTS driving simulator: soft steering + single-track (bicycle) yaw/sideslip, 100 Hz UDP.
+/// CMTS driving simulator: soft steering + single-track (bicycle) yaw/sideslip, 100 Hz in-process samples.
 /// Body/world: X forward (heading 0), Y left, Z up. Vehicle Z follows Spa track elevation.
 /// </summary>
 public sealed class VehicleSimulator
 {
-    private readonly UdpSender _udpSender;
+    private readonly Action<VehicleSample> _publish;
     private readonly Stopwatch _stopwatch = new();
     private readonly object _stateLock = new();
     private long _sequence;
@@ -63,9 +63,9 @@ public sealed class VehicleSimulator
     private double _startZ;
     private double _startHeadingDeg;
 
-    public VehicleSimulator(UdpSender udpSender)
+    public VehicleSimulator(Action<VehicleSample> publish)
     {
-        _udpSender = udpSender ?? throw new ArgumentNullException(nameof(udpSender));
+        _publish = publish ?? throw new ArgumentNullException(nameof(publish));
         Current = this;
     }
 
@@ -170,7 +170,7 @@ public sealed class VehicleSimulator
                 }
             }
             else accumulated = 0;
-            await SendCurrentPacket().ConfigureAwait(false);
+            PublishCurrentSample();
 
             try { await Task.Delay(period, cancellationToken).ConfigureAwait(false); }
             catch (OperationCanceledException) { break; }
@@ -331,7 +331,7 @@ public sealed class VehicleSimulator
         Brake = _brake
     };
 
-    private async Task SendCurrentPacket()
+    private void PublishCurrentSample()
     {
         VehicleState state;
         lock (_stateLock) { state = SnapshotUnlocked(); }
@@ -345,9 +345,10 @@ public sealed class VehicleSimulator
         // X is north, Y is west (left at heading zero). GPS heading is clockwise.
         var longitude = originLongitude - state.Y / metersPerDegreeLongitude;
 
-        var packet = new UdpPacket
+        var packet = new VehicleSample
         {
-            Version = 1,
+            VehicleId = "simulator",
+
             Sequence = _sequence++,
             Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
             SpeedKph = state.SpeedMps * 3.6,
@@ -361,7 +362,7 @@ public sealed class VehicleSimulator
             Heading = NormalizeHeading(-state.HeadingDeg)
         };
 
-        await _udpSender.SendAsync(packet, CancellationToken.None).ConfigureAwait(false);
+        _publish(packet);
     }
 
     private static double NormalizeHeading(double heading)
