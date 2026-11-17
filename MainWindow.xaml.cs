@@ -1693,10 +1693,7 @@ public partial class MainWindow : Window
         if (PlaybackSpeedLabelText is not null)
             PlaybackSpeedLabelText.Text = Loc.T("Curves.PlaybackSpeed");
         if (PlaybackStopButton is not null)
-        {
-            PlaybackStopButton.Content = Loc.T("Curves.PlaybackStop");
             PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
-        }
         RefreshPlaybackBar();
         if (CutBeforeCursorItem is not null)
             CutBeforeCursorItem.Header = Loc.T("Curves.CutBefore");
@@ -4516,18 +4513,18 @@ public partial class MainWindow : Window
         PlaybackBar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         if (PlaybackPlayButton is not null)
         {
-            PlaybackPlayButton.Content = _playback.IsPlaying
-                ? Loc.T("Curves.PlaybackPause")
-                : Loc.T("Curves.PlaybackPlay");
             PlaybackPlayButton.ToolTip = _playback.IsPlaying
                 ? Loc.T("Curves.PlaybackPauseTip")
                 : Loc.T("Curves.PlaybackPlayTip");
+            if (PlaybackPlayIcon is not null)
+                PlaybackPlayIcon.Visibility = _playback.IsPlaying ? Visibility.Collapsed : Visibility.Visible;
+            if (PlaybackPauseIcon is not null)
+                PlaybackPauseIcon.Visibility = _playback.IsPlaying ? Visibility.Visible : Visibility.Collapsed;
         }
 
         if (PlaybackStopButton is not null)
         {
             PlaybackStopButton.IsEnabled = visible;
-            PlaybackStopButton.Content = Loc.T("Curves.PlaybackStop");
             PlaybackStopButton.ToolTip = Loc.T("Curves.PlaybackStopTip");
         }
 

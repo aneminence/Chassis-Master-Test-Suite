@@ -880,23 +880,39 @@
                     <StackPanel Orientation="Horizontal"
                                 VerticalAlignment="Center">
                         <Button x:Name="PlaybackPlayButton"
-                                Content="Play"
-                                Style="{StaticResource ToolButtonStyle}"
+                                Style="{StaticResource PlaybackIconButtonStyle}"
                                 Margin="0,0,6,0"
-                                MinWidth="72"
                                 Click="PlaybackPlayButton_Click"
-                                ToolTip="Play recorded data in real time"/>
+                                ToolTip="Play recorded data in real time"
+                                AutomationProperties.Name="Play">
+                            <Grid Width="12" Height="12">
+                                <Path x:Name="PlaybackPlayIcon"
+                                      Data="M 2,1 L 11,6 L 2,11 Z"
+                                      Fill="{DynamicResource AccentBrush}"
+                                      Stretch="Uniform"/>
+                                <Path x:Name="PlaybackPauseIcon"
+                                      Data="M 1,1 H 4.4 V 11 H 1 Z M 7.6,1 H 11 V 11 H 7.6 Z"
+                                      Fill="{DynamicResource AccentBrush}"
+                                      Stretch="Uniform"
+                                      Visibility="Collapsed"/>
+                            </Grid>
+                        </Button>
                         <Button x:Name="PlaybackStopButton"
-                                Content="Stop"
-                                Style="{StaticResource ToolButtonStyle}"
+                                Style="{StaticResource PlaybackIconButtonStyle}"
                                 Click="PlaybackStopButton_Click"
-                                ToolTip="Stop and return to the start"/>
+                                ToolTip="Stop and return to the start"
+                                AutomationProperties.Name="Stop">
+                            <Path Width="10" Height="10"
+                                  Data="M 0,0 H 10 V 10 H 0 Z"
+                                  Fill="{DynamicResource AccentBrush}"
+                                  Stretch="Uniform"/>
+                        </Button>
                     </StackPanel>
 
                     <StackPanel Grid.Column="1"
                                 Orientation="Horizontal"
                                 VerticalAlignment="Center"
-                                Margin="16,0,12,0">
+                                Margin="10,0,10,0">
                         <TextBlock x:Name="PlaybackSpeedLabelText"
                                    Text="Speed"
                                    Foreground="{DynamicResource TextSecondary}"
@@ -911,6 +927,7 @@
 
                     <Slider x:Name="PlaybackSlider"
                             Grid.Column="2"
+                            Style="{StaticResource PlaybackSliderStyle}"
                             Minimum="0"
                             Maximum="1"
                             SmallChange="0.001"
@@ -927,7 +944,7 @@
                                Text="0:00.0 / 0:00.0"
                                FontFamily="Consolas"
                                FontSize="11"
-                               Foreground="{DynamicResource TextSecondary}"
+                               Foreground="{DynamicResource AccentBrush}"
                                VerticalAlignment="Center"
                                Margin="12,0,0,0"
                                MinWidth="110"
