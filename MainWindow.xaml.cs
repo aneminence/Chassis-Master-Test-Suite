@@ -66,6 +66,7 @@ public partial class MainWindow : Window
     // ============================================================
 
     private readonly RecordingSession _recordingSession = new();
+    private readonly MultiDeviceRecordingSession _multiDeviceRecording = new();
 
     private DispatcherTimer? _elapsedTimer;
 
@@ -1348,6 +1349,9 @@ public partial class MainWindow : Window
             RefreshRemoteRecordButtons();
             UpdateRemoteButtonContent();
         }
+
+        if (_multiDeviceRecording.IsRecording)
+            await _multiDeviceRecording.StopDeviceAsync(id);
 
         _liveRoster.Remove(id);
         _liveVehicleEnrich.Remove(id);
@@ -6971,6 +6975,7 @@ public partial class MainWindow : Window
                     UpdateRemoteButtonContent();
                     SeedLiveDevicesFromRemotes();
                     RebuildOfflineFileChips();
+                    SyncMultiDeviceLocalRecorders();
                 }
 
                 if (GSpotButton is not null)
@@ -7039,12 +7044,42 @@ public partial class MainWindow : Window
         try
         {
             var lines = new List<string>();
+            IReadOnlyList<string> localPaths = Array.Empty<string>();
+            try
+            {
+                localPaths = _multiDeviceRecording.Start(
+                    remotes
+                        .Select(TryGetRemoteIdentity)
+                        .Where(id => id is not null)
+                        .Select(id => id!.Value));
+            }
+            catch (Exception localEx)
+            {
+                lines.Add(Loc.T("Remote.LocalStartFailed", localEx.Message));
+                localPaths = _multiDeviceRecording.CurrentFilePaths;
+            }
+
             foreach (var remote in remotes)
             {
-                var status = await remote.StartRecordingAsync();
                 var name = remote.DeviceLabel ?? remote.DeviceId ?? remote.Endpoint;
-                lines.Add($"{name}: record.start → {status.State} ok={status.Ok} fileId={status.FileId ?? "-"}");
+                try
+                {
+                    var status = await remote.StartRecordingAsync();
+                    lines.Add($"{name}: record.start → {status.State} ok={status.Ok} fileId={status.FileId ?? "-"}");
+                }
+                catch (Exception remoteEx)
+                {
+                    lines.Add($"{name}: record.start failed: {remoteEx.Message}");
+                }
             }
+
+            if (localPaths.Count > 0)
+            {
+                lines.Add("");
+                lines.Add(Loc.T("Remote.LocalFiles"));
+                lines.AddRange(localPaths);
+            }
+
             MessageBox.Show(
                 this,
                 string.Join("\n", lines),
@@ -7070,7 +7105,7 @@ public partial class MainWindow : Window
         var remotes = _dataSourceSession.Remotes
             .Where(r => r.State == DataSourceState.Connected)
             .ToList();
-        if (remotes.Count == 0)
+        if (remotes.Count == 0 && !_multiDeviceRecording.IsRecording)
         {
             MessageBox.Show(
                 this,
@@ -7086,10 +7121,35 @@ public partial class MainWindow : Window
             var lines = new List<string>();
             foreach (var remote in remotes)
             {
-                var status = await remote.StopRecordingAsync();
                 var name = remote.DeviceLabel ?? remote.DeviceId ?? remote.Endpoint;
-                lines.Add($"{name}: record.stop → {status.State} ok={status.Ok} reason={status.Reason ?? "-"}");
+                try
+                {
+                    var status = await remote.StopRecordingAsync();
+                    lines.Add($"{name}: record.stop → {status.State} ok={status.Ok} reason={status.Reason ?? "-"}");
+                }
+                catch (Exception remoteEx)
+                {
+                    lines.Add($"{name}: record.stop failed: {remoteEx.Message}");
+                }
             }
+
+            IReadOnlyList<string> localPaths = Array.Empty<string>();
+            try
+            {
+                localPaths = await _multiDeviceRecording.StopAsync();
+            }
+            catch (Exception localEx)
+            {
+                lines.Add(Loc.T("Remote.LocalStopFailed", localEx.Message));
+            }
+
+            if (localPaths.Count > 0)
+            {
+                lines.Add("");
+                lines.Add(Loc.T("Remote.LocalFilesClosed"));
+                lines.AddRange(localPaths);
+            }
+
             MessageBox.Show(
                 this,
                 string.Join("\n", lines),
@@ -7105,6 +7165,41 @@ public partial class MainWindow : Window
                 "CMTS Remote",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
+        }
+    }
+
+    private (string DeviceId, string? Label)? TryGetRemoteIdentity(CMTSRemoteDataSource remote)
+    {
+        var id = remote.DeviceId ?? remote.Options.ExpectedDeviceId;
+        if (string.IsNullOrWhiteSpace(id))
+            return null;
+
+        var label = remote.DeviceLabel;
+        foreach (var vehicle in _liveRoster.Snapshot())
+        {
+            if (string.Equals(vehicle.Id, id, StringComparison.Ordinal))
+            {
+                label = vehicle.Label;
+                break;
+            }
+        }
+
+        return (id, string.IsNullOrWhiteSpace(label) ? id : label);
+    }
+
+    private void SyncMultiDeviceLocalRecorders()
+    {
+        if (!_multiDeviceRecording.IsRecording)
+            return;
+
+        foreach (var remote in _dataSourceSession.Remotes)
+        {
+            if (remote.State != DataSourceState.Connected)
+                continue;
+            var identity = TryGetRemoteIdentity(remote);
+            if (identity is null)
+                continue;
+            _multiDeviceRecording.EnsureDevice(identity.Value.DeviceId, identity.Value.Label);
         }
     }
 
@@ -7549,6 +7644,7 @@ public partial class MainWindow : Window
 
     private async Task SwitchDataSourceAsync(IDataSource next)
     {
+        await _multiDeviceRecording.StopAsync();
         await _dataSourceSession.SwitchAsync(next);
         EnterLiveSourceMode();
     }
@@ -7582,6 +7678,7 @@ public partial class MainWindow : Window
         UpdateRemoteButtonContent();
         SeedLiveDevicesFromRemotes();
         RebuildOfflineFileChips();
+        SyncMultiDeviceLocalRecorders();
     }
 
     private void HookAllRemoteLiveCurveResets()
@@ -7593,6 +7690,7 @@ public partial class MainWindow : Window
             if (remotes.Contains(old))
                 continue;
             old.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+            old.StateChanged -= OnRemoteStateChangedForLocalRecording;
             _remoteLiveResetSources.RemoveAt(i);
         }
 
@@ -7601,6 +7699,7 @@ public partial class MainWindow : Window
             if (_remoteLiveResetSources.Contains(remote))
                 continue;
             remote.LiveCurveResetRequested += OnRemoteLiveCurveResetRequested;
+            remote.StateChanged += OnRemoteStateChangedForLocalRecording;
             _remoteLiveResetSources.Add(remote);
         }
     }
@@ -7609,6 +7708,30 @@ public partial class MainWindow : Window
     {
         var deviceId = (sender as CMTSRemoteDataSource)?.DeviceId;
         Dispatcher.BeginInvoke(() => ClearLiveCurveBuffersForRemoteZero(deviceId));
+    }
+
+    private void OnRemoteStateChangedForLocalRecording(object? sender, DataSourceState state)
+    {
+        if (sender is not CMTSRemoteDataSource remote)
+            return;
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_multiDeviceRecording.IsRecording)
+                return;
+
+            var identity = TryGetRemoteIdentity(remote);
+            if (identity is null)
+                return;
+
+            if (state == DataSourceState.Connected)
+            {
+                _multiDeviceRecording.EnsureDevice(identity.Value.DeviceId, identity.Value.Label);
+                return;
+            }
+
+            _ = _multiDeviceRecording.StopDeviceAsync(identity.Value.DeviceId);
+        });
     }
 
     /// <summary>
@@ -8408,10 +8531,12 @@ public partial class MainWindow : Window
                 if (!_historyOfflineMode)
                     _sampleHistory.Add(sample);
 
-                // Local VBO is a single stream; keep writing the focus vehicle only.
-                // Remote Rec starts recording on every connected device.
+                // Right Start/Stop is a single stream and still writes only the focus vehicle.
                 if (isFocus)
                     _recordingSession.TryWriteIfRecording(sample);
+
+                // Left Remote Rec also writes one local VBO per connected device.
+                _multiDeviceRecording.TryWrite(sample);
 
                 Interlocked.Increment(ref _sampleCount);
             }
@@ -8554,14 +8679,17 @@ public partial class MainWindow : Window
         IsEnabled = false;
         _uiTimer.Stop();
         var path = _recordingSession.CurrentFilePath;
+        var localPaths = _multiDeviceRecording.CurrentFilePaths;
         try
         {
             await _recordingUiTask;
             await _recordingSession.DisposeAsync();
+            await _multiDeviceRecording.DisposeAsync();
         }
         catch (Exception error)
         {
-            MessageBox.Show(this, $"录制文件关闭失败：\n{path}\n\n{error.Message}",
+            var shown = path ?? (localPaths.Count > 0 ? string.Join("\n", localPaths) : "");
+            MessageBox.Show(this, $"录制文件关闭失败：\n{shown}\n\n{error.Message}",
                 "Recording", MessageBoxButton.OK, MessageBoxImage.Error);
         }
         finally
@@ -8610,7 +8738,10 @@ public partial class MainWindow : Window
         // StopAsync 内部会 Dispose；这里同步 Dispose 即可，
         // 关闭窗口时不必阻塞等待接收循环收尾。
         foreach (var remote in _remoteLiveResetSources.ToArray())
+        {
             remote.LiveCurveResetRequested -= OnRemoteLiveCurveResetRequested;
+            remote.StateChanged -= OnRemoteStateChangedForLocalRecording;
+        }
         _remoteLiveResetSources.Clear();
         _dataSourceSession.Dispose();
 

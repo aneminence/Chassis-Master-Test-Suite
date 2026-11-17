@@ -36,11 +36,16 @@ public sealed class RecordingSession : IDisposable, IAsyncDisposable
     internal RecordingSession(Func<VboRecorder> createRecorder) =>
         _createRecorder = createRecorder ?? throw new ArgumentNullException(nameof(createRecorder));
 
-    internal static VboRecorder CreateDefaultRecorder(string directory, DateTime now)
+    internal static VboRecorder CreateDefaultRecorder(string directory, DateTime now) =>
+        CreateNamedRecorder(directory, $"CMTS_{now:yyyyMMdd_HHmmss}");
+
+    internal static VboRecorder CreateNamedRecorder(string directory, string stem)
     {
+        if (string.IsNullOrWhiteSpace(stem))
+            throw new ArgumentException("File stem is required.", nameof(stem));
+
         Directory.CreateDirectory(directory);
         var session = SessionMetadata.Current.Clone();
-        var stem = $"CMTS_{now:yyyyMMdd_HHmmss}";
         for (var suffix = 1; ; suffix++)
         {
             var path = Path.Combine(directory, suffix == 1 ? $"{stem}.vbo" : $"{stem}_{suffix}.vbo");
