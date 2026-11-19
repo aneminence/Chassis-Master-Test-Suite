@@ -744,15 +744,15 @@ public partial class DashboardPanel : UserControl
         return fieldId switch
         {
             TestResultFieldIds.Duration =>
-                (FormatNumber(r.DurationSeconds), ValueFg),
+                (FormatResultNumber(r.DurationSeconds), ValueFg),
             TestResultFieldIds.DeltaSpeed =>
-                (FormatNumber(r.DeltaSpeedKph), ValueFg),
+                (FormatResultNumber(r.DeltaSpeedKph), ValueFg),
             TestResultFieldIds.Distance =>
-                (FormatNumber(r.DistanceMeters), ValueFg),
+                (FormatResultNumber(r.DistanceMeters), ValueFg),
             TestResultFieldIds.StartSpeed =>
-                (FormatNumber(r.StartSpeedKph), ValueFg),
+                (FormatResultNumber(r.StartSpeedKph), ValueFg),
             TestResultFieldIds.EndSpeed =>
-                (FormatNumber(r.EndSpeedKph), ValueFg),
+                (FormatResultNumber(r.EndSpeedKph), ValueFg),
             TestResultFieldIds.RunNumber =>
                 (r.RunNumber.ToString(CultureInfo.InvariantCulture), ValueFg),
             TestResultFieldIds.PassFail =>
@@ -764,6 +764,11 @@ public partial class DashboardPanel : UserControl
     private static string FormatNumber(double v) =>
         double.IsFinite(v)
             ? v.ToString("0.##", CultureInfo.InvariantCulture)
+            : "--";
+
+    private static string FormatResultNumber(double v) =>
+        double.IsFinite(v)
+            ? v.ToString("0.00", CultureInfo.InvariantCulture)
             : "--";
 
     private static Brush? TryBrush(string hex)

@@ -1753,9 +1753,9 @@ public partial class TestResultsPanel : UserControl
                     : a.SourceLabel,
                 StartTimeText = FormatBeijing(r.StartTimestampMs, tz),
                 EndTimeText = FormatBeijing(r.EndTimestampMs, tz),
-                DurationText = r.DurationSeconds.ToString("0.000", CultureInfo.InvariantCulture),
-                DeltaVText = r.DeltaSpeedKph.ToString("0.##", CultureInfo.InvariantCulture),
-                DistanceText = r.DistanceMeters.ToString("0.#", CultureInfo.InvariantCulture),
+                DurationText = r.DurationSeconds.ToString("0.00", CultureInfo.InvariantCulture),
+                DeltaVText = r.DeltaSpeedKph.ToString("0.00", CultureInfo.InvariantCulture),
+                DistanceText = r.DistanceMeters.ToString("0.00", CultureInfo.InvariantCulture),
                 PassText = r.Pass ? "Pass" : "Fail",
                 PassValues = chips,
                 SectorTimes = r.SectorTimes.Select(SectorTimeCellVm.From).ToArray()
@@ -1786,7 +1786,7 @@ public partial class TestResultsPanel : UserControl
         public static SectorTimeCellVm From(SectorTimeResult result) => new()
         {
             Name = result.Name,
-            ValueText = result.DurationSeconds.ToString("0.000", CultureInfo.InvariantCulture)
+            ValueText = result.DurationSeconds.ToString("0.00", CultureInfo.InvariantCulture)
         };
         public event PropertyChangedEventHandler? PropertyChanged;
         private void OnPropertyChanged([CallerMemberName] string? name = null) =>

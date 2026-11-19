@@ -29,10 +29,10 @@ public sealed class PassConditionMeasurement
 
     public string ValueText =>
         Value is double v
-            ? v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)
+            ? v.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)
             : "-";
 
     public string RangeText =>
-        $"[{Min.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)},{Max.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)}]";
+        $"[{Min.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)},{Max.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture)}]";
 }
 

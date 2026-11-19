@@ -108,7 +108,7 @@ public static class TestResultsCsvExporter
     }
 
     private static string F(double v) =>
-        v.ToString("0.###", CultureInfo.InvariantCulture);
+        v.ToString("0.00", CultureInfo.InvariantCulture);
 
     private static string CsvEscape(string value)
     {
