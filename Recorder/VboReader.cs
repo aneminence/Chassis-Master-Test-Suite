@@ -71,6 +71,18 @@ public sealed class VboReader
     public int SkippedDataLines { get; private set; }
 
     /// <summary>
+    /// Parsed from the leading "File created on dd/MM/yyyy @ HH:mm" line,
+    /// if present. Kind is Unspecified (the file's local wall time).
+    /// </summary>
+    public DateTime? FileCreatedLocal { get; private set; }
+
+    /// <summary>
+    /// True when the time column is HHMMSS (Racelogic / CMTS), not GSpot
+    /// elapsed milliseconds.
+    /// </summary>
+    public bool TreatTimestampsAsTimeOfDay { get; private set; } = true;
+
+    /// <summary>
     /// 读入文件并解析出全部样本。
     ///
     /// 按行读取文本，保留完整样本列表；避免同时保留所有原始文本行。
@@ -120,6 +132,14 @@ public sealed class VboReader
                 continue;
             }
 
+            if (section.Length == 0 &&
+                trimmed.StartsWith("File created on", StringComparison.OrdinalIgnoreCase) &&
+                TryParseFileCreatedOn(trimmed, out var created))
+            {
+                FileCreatedLocal = created;
+                continue;
+            }
+
             switch (section)
             {
                 case "comments":
@@ -164,6 +184,13 @@ public sealed class VboReader
 
                     break;
             }
+        }
+
+        var sanitized = VboTimestampSanitizer.DropIsolatedOutliers(samples);
+        if (!ReferenceEquals(sanitized, samples))
+        {
+            SkippedDataLines += samples.Count - sanitized.Count;
+            return sanitized as List<VehicleSample> ?? sanitized.ToList();
         }
 
         return samples;
@@ -281,18 +308,21 @@ public sealed class VboReader
             //   velocity -> elapsed time milliseconds
             //   heading  -> unused / unknown (0..70)
             //   height   -> centimetres -> metres
+            TreatTimestampsAsTimeOfDay = false;
+            if (!TryColumn("velocity", tokens, out var elapsedMs) || elapsedMs < 0)
+                return null;
             speed = Raw("sats");
             heading = Raw("time");
-            timestampMs = (long)Math.Round(Raw("velocity"));
-            if (timestampMs < 0)
-                timestampMs = 0;
+            timestampMs = (long)Math.Round(elapsedMs);
             altitude = DecodeGSpotHeight(Raw("height"));
         }
         else
         {
+            if (!TryColumn("time", tokens, out var timeValue))
+                return null;
             speed = Raw("velocity");
             heading = Raw("heading");
-            timestampMs = ParseTimeColumn(Raw("time"));
+            timestampMs = ParseTimeColumn(timeValue);
             altitude = Raw("height");
         }
 
@@ -472,6 +502,79 @@ public sealed class VboReader
         return latitude >= -90.0 && latitude <= 90.0 &&
                longitude >= -180.0 && longitude <= 180.0;
     }
+    private bool TryColumn(string name, string[] tokens, out double value)
+    {
+        value = 0;
+        if (!_columnIndex.TryGetValue(name, out var index) ||
+            index < 0 ||
+            index >= tokens.Length)
+        {
+            return false;
+        }
+
+        if (!double.TryParse(
+                tokens[index],
+                NumberStyles.Float,
+                CultureInfo.InvariantCulture,
+                out value))
+        {
+            return false;
+        }
+
+        return double.IsFinite(value);
+    }
+
+    public static bool TryParseFileCreatedOn(string line, out DateTime created)
+    {
+        created = default;
+        // "File created on 19/11/2026 @ 16:47" or "... at 16:47:00"
+        var text = line.Trim();
+        const string prefix = "File created on";
+        if (!text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        text = text[prefix.Length..].Trim();
+        var parts = text.Split('@', 2, StringSplitOptions.TrimEntries);
+        if (parts.Length == 1)
+            parts = text.Split(" at ", 2, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+
+        if (parts.Length == 0)
+            return false;
+
+        var dateParts = parts[0].Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (dateParts.Length != 3 ||
+            !int.TryParse(dateParts[0], out var day) ||
+            !int.TryParse(dateParts[1], out var month) ||
+            !int.TryParse(dateParts[2], out var year))
+        {
+            return false;
+        }
+
+        var hour = 0;
+        var minute = 0;
+        var second = 0;
+        if (parts.Length > 1)
+        {
+            var timeParts = parts[1].Split(':', StringSplitOptions.TrimEntries);
+            if (timeParts.Length >= 2)
+            {
+                _ = int.TryParse(timeParts[0], out hour);
+                _ = int.TryParse(timeParts[1], out minute);
+                if (timeParts.Length >= 3)
+                    _ = int.TryParse(timeParts[2], out second);
+            }
+        }
+
+        try
+        {
+            created = new DateTime(year, month, day, hour, minute, second, DateTimeKind.Unspecified);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
     private static long ParseTimeColumn(double timeValue)
     {
         if (double.IsNaN(timeValue) ||

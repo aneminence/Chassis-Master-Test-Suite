@@ -51,6 +51,13 @@ public static class OfflineTrackLoader
         var reader = new VboReader(path);
         var data = reader.ReadAll();
         if (data.Count == 0) return new(Array.Empty<LoadedOfflineTrack>());
+        if (reader.TreatTimestampsAsTimeOfDay && reader.FileCreatedLocal is DateTime created)
+        {
+            var local = DateTime.SpecifyKind(created, DateTimeKind.Unspecified);
+            var offset = TimeZoneInfo.Local.GetUtcOffset(local);
+            data = VboTimestampSanitizer.ApplyFileCreatedDate(
+                data, new DateTimeOffset(local, offset)).ToList();
+        }
         var enriched = Enrich(data);
         cancellationToken.ThrowIfCancellationRequested();
         return new(new[] { new LoadedOfflineTrack(path, null, enriched, Columns(reader.Columns, enriched)) },

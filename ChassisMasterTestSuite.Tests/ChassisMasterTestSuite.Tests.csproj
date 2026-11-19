@@ -90,6 +90,7 @@
     <Compile Include="..\Communication\Remote\CMTSRemoteOptions.cs" Link="Linked\Communication\Remote\CMTSRemoteOptions.cs" />
     <Compile Include="..\Communication\Remote\CMTSRemoteConnectionUri.cs" Link="Linked\Communication\Remote\CMTSRemoteConnectionUri.cs" />
     <Compile Include="..\Recorder\VboReader.cs" Link="Linked\Recorder\VboReader.cs" />
+    <Compile Include="..\Recorder\VboTimestampSanitizer.cs" Link="Linked\Recorder\VboTimestampSanitizer.cs" />
     <Compile Include="..\Recorder\VboRecorder.cs" Link="Linked\Recorder\VboRecorder.cs" />
     <Compile Include="..\Recorder\OfflineTrackLoader.cs" Link="Linked\Recorder\OfflineTrackLoader.cs" />
     <Compile Include="..\Recorder\OxTS\XcomContainerReader.cs" Link="Linked\Recorder\OxTS\XcomContainerReader.cs" />
