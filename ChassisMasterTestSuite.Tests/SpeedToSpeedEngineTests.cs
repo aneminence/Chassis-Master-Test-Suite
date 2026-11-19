@@ -25,6 +25,7 @@ public class SpeedToSpeedEngineTests
         Assert.Equal(0, run.StartSpeedKph);
         Assert.Equal(100, run.EndSpeedKph);
         Assert.True(run.DistanceMeters > 0);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
     }
 
     [Fact]
@@ -44,6 +45,11 @@ public class SpeedToSpeedEngineTests
         Assert.Equal(100, results[0].StartSpeedKph);
         Assert.Equal(0, results[0].EndSpeedKph);
         Assert.True(results[0].DeltaSpeedKph < 0);
+        Assert.Equal(-100, results[0].DeltaSpeedKph);
+        Assert.Equal("SpeedIntegral", results[0].DistanceMethod);
+        // 0.8 km/h floor ends the run slightly before the sample that reaches 0.
+        Assert.InRange(results[0].DurationSeconds, 1.9, 1.999);
+        Assert.True(results[0].DistanceMeters > 0);
     }
 
     [Fact]
@@ -79,6 +85,123 @@ public class SpeedToSpeedEngineTests
         Assert.Empty(results);
     }
 
+    [Fact]
+    public void Decel_DipThenReaccelerate_StartsAtCommittedCrossing()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 85),
+            (100, 75),   // first 80-down (must be discarded)
+            (200, 82),   // re-crosses upward through 80
+            (300, 88),
+            (400, 88),
+            (500, 70),   // committed 80-down
+            (600, 50),
+            (700, 30),
+            (800, 10),
+            (900, 0.5),
+            (1000, 0)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Decel(80, 0));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(80, run.StartSpeedKph);
+        Assert.Equal(0, run.EndSpeedKph);
+        Assert.Equal(-80, run.DeltaSpeedKph);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
+
+        // First dip interpolates to origin+50; committed start is between 400 and 500.
+        Assert.InRange(run.StartTimestampMs, origin + 400, origin + 500);
+        Assert.True(run.StartTimestampMs > origin + 100);
+        // End at 0.8 is between 800 (10 kph) and 900 (0.5 kph).
+        Assert.InRange(run.EndTimestampMs, origin + 800, origin + 900);
+        Assert.InRange(run.DurationSeconds, 0.35, 0.55);
+    }
+
+    [Fact]
+    public void Decel_SpeedCrawlsNearZero_EndsAtZeroFloor()
+    {
+        const long origin = 1_700_000_000_000;
+        var points = new List<(int T, double V)>
+        {
+            (0, 110),
+            (100, 90),
+            (200, 70),
+            (300, 50),
+            (400, 30),
+            (500, 10),
+            (600, 0.5)
+        };
+        // Crawl at 0.05–0.2 km/h for 7 s before finally hitting 0.
+        for (var t = 700; t <= 7600; t += 100)
+        {
+            var crawl = 0.05 + ((t / 100) % 2) * 0.15;
+            points.Add((t, crawl));
+        }
+
+        points.Add((7700, 0));
+
+        var samples = BuildProfile(origin, points);
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Decel(100, 0));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(100, run.StartSpeedKph);
+        Assert.Equal(0, run.EndSpeedKph);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
+        // 0.8 floor is crossed between t=500 (10 kph) and t=600 (0.5 kph).
+        Assert.InRange(run.EndTimestampMs, origin + 500, origin + 600);
+        Assert.InRange(run.DurationSeconds, 0.4, 0.7);
+        Assert.True(run.DurationSeconds < 2.0, "Must not wait through the near-zero crawl for exact 0.");
+    }
+
+    [Fact]
+    public void Decel_ConfiguredEndAboveFloor_UsesExactThreshold()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 90),
+            (100, 70),
+            (200, 20),
+            (300, 6),
+            (400, 4),
+            (500, 0)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Decel(80, 5));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(80, run.StartSpeedKph);
+        Assert.Equal(5, run.EndSpeedKph);
+        Assert.Equal(-75, run.DeltaSpeedKph);
+        // 5 km/h is between t=300 (6) and t=400 (4); must not end at the 0.8 floor near t=500.
+        Assert.InRange(run.EndTimestampMs, origin + 300, origin + 400);
+    }
+
+    [Fact]
+    public void Decel_TwoBrakes_WithCooldown_TwoRuns()
+    {
+        var a = BuildRamp(120, 0, 20, 100, 1_700_000_000_000);
+        var b = BuildRamp(0, 120, 20, 100, a[^1].Timestamp + 100);
+        var c = BuildRamp(120, 0, 20, 100, b[^1].Timestamp + 100);
+        var samples = a.Concat(b).Concat(c).ToList();
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Decel(100, 0));
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r =>
+        {
+            Assert.True(r.Pass);
+            Assert.Equal(100, r.StartSpeedKph);
+            Assert.Equal(0, r.EndSpeedKph);
+            Assert.Equal("SpeedIntegral", r.DistanceMethod);
+        });
+    }
+
     private static List<VehicleSample> BuildRamp(
         double startKph,
         double endKph,
@@ -94,6 +217,27 @@ public class SpeedToSpeedEngineTests
             list.Add(new VehicleSample
             {
                 Timestamp = originMs + i * dtMs,
+                Sequence = i + 1,
+                SpeedKph = speed,
+                Channels = VehicleSample.BuildCoreChannels(
+                    speed, 0, 0, 0, 0, 0, 0, 0, 0)
+            });
+        }
+
+        return list;
+    }
+
+    private static List<VehicleSample> BuildProfile(
+        long originMs,
+        IReadOnlyList<(int T, double V)> points)
+    {
+        var list = new List<VehicleSample>(points.Count);
+        for (var i = 0; i < points.Count; i++)
+        {
+            var (t, speed) = points[i];
+            list.Add(new VehicleSample
+            {
+                Timestamp = originMs + t,
                 Sequence = i + 1,
                 SpeedKph = speed,
                 Channels = VehicleSample.BuildCoreChannels(

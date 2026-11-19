@@ -11,13 +11,23 @@ namespace Chassis_Master_Test_Suite.Analysis;
 /// - 起点 Falling：离开阈值向下（a ≥ thr 且 b &lt; thr）
 /// - 终点 Falling：到达阈值向下（a &gt; thr 且 b ≤ thr）
 ///
+/// Falling（Decel / 下降 Custom）额外对齐 VBOX Test Suite：
+/// - 提交型起点：向下穿越 Start 后，若在到达终点前速度再次升回 ≥ Start，则放弃该起点，等待下一次向下穿越。
+/// - 零速地板：配置的终点 &lt; 0.8 km/h 时，按 0.8 km/h 切段（VBOX 界面写 80→0，实际停在约 0.8）。
+///   结果仍报告配置阈值（如 80 和 0），Duration / Distance 取有效窗口。
+///
 /// 距离估算优先级（写在结果 DistanceMethod）：
-/// 1) DistanceTraveled 通道差分（SampleEnricher Haversine 累计）
-/// 2) 速度梯形积分（km/h → m/s × Δt）
+/// 1) 插值梯形速度积分（精确起终点时刻 + 中间整样本，km/h → m/s × Δt）
+/// 2) DistanceTraveled 通道差分（SampleEnricher Haversine 累计）
 /// 3) 起终点 Haversine（仅当 GPS 非零）
 /// </summary>
 public static class SpeedToSpeedEngine
 {
+    /// <summary>
+    /// VBOX 在界面终点为 0 时实际采用的结束速度（km/h）。
+    /// </summary>
+    public const double VboxZeroEndFloorKph = 0.8;
+
     public static IReadOnlyList<TestRunResult> Compute(
         IReadOnlyList<VehicleSample> samples,
         TestDefinition definition)
@@ -32,12 +42,24 @@ public static class SpeedToSpeedEngine
         var startCond = definition.Start;
         var endCond = definition.End;
         var hyst = Math.Max(0, definition.Hysteresis);
+        var isFalling = startCond.Direction == CrossingDirection.Falling
+                        && endCond.Direction == CrossingDirection.Falling;
+
+        var effectiveEndCond = endCond;
+        if (isFalling && endCond.Threshold < VboxZeroEndFloorKph)
+        {
+            effectiveEndCond = new ThresholdCondition
+            {
+                ChannelId = endCond.ChannelId,
+                Threshold = VboxZeroEndFloorKph,
+                Direction = endCond.Direction
+            };
+        }
 
         // 0 = idle (找起点), 1 = armed (找终点), 2 = cooldown
         var state = 0;
         var startIndex = -1;
         var startTs = 0L;
-        var startValue = 0.0;
 
         for (var i = 1; i < samples.Count; i++)
         {
@@ -64,17 +86,31 @@ public static class SpeedToSpeedEngine
 
             if (state == 0)
             {
-                if (!TryCross(prev, curr, startCond, isStart: true, out var crossTs, out var crossVal))
+                if (!TryCross(prev, curr, startCond, isStart: true, out var crossTs, out _))
                     continue;
 
                 startIndex = i;
                 startTs = crossTs;
-                startValue = crossVal;
                 state = 1;
                 continue;
             }
 
-            if (!TryCross(prev, curr, endCond, isStart: false, out var endTs, out var endVal))
+            // Falling：到达终点前若速度再次升回起点阈值，放弃本次起点。
+            if (isFalling)
+            {
+                var startThr = startCond.Threshold;
+                var a = prev.GetChannel(startCond.ChannelId);
+                var b = curr.GetChannel(startCond.ChannelId);
+                if (a < startThr && b >= startThr)
+                {
+                    state = 0;
+                    startIndex = -1;
+                    startTs = 0;
+                    continue;
+                }
+            }
+
+            if (!TryCross(prev, curr, effectiveEndCond, isStart: false, out var endTs, out _))
                 continue;
 
             if (endTs <= startTs)
@@ -82,7 +118,15 @@ public static class SpeedToSpeedEngine
 
             var endIndex = i;
             var durationS = (endTs - startTs) / 1000.0;
-            var (distanceM, method) = EstimateDistance(samples, startIndex, endIndex);
+            var (distanceM, method) = EstimateDistance(
+                samples,
+                startIndex,
+                endIndex,
+                startTs,
+                endTs,
+                startCond.Threshold,
+                effectiveEndCond.Threshold,
+                startCond.ChannelId);
 
             var pass = true;
             var failReason = "";
@@ -98,9 +142,9 @@ public static class SpeedToSpeedEngine
                 StartTimestampMs = startTs,
                 EndTimestampMs = endTs,
                 DurationSeconds = durationS,
-                StartSpeedKph = startValue,
-                EndSpeedKph = endVal,
-                DeltaSpeedKph = endVal - startValue,
+                StartSpeedKph = startCond.Threshold,
+                EndSpeedKph = endCond.Threshold,
+                DeltaSpeedKph = endCond.Threshold - startCond.Threshold,
                 DistanceMeters = distanceM,
                 DistanceMethod = method,
                 Pass = pass,
@@ -158,28 +202,43 @@ public static class SpeedToSpeedEngine
     private static (double Meters, string Method) EstimateDistance(
         IReadOnlyList<VehicleSample> samples,
         int startIndex,
-        int endIndex)
+        int endIndex,
+        long startTs,
+        long endTs,
+        double startSpeedKph,
+        double endSpeedKph,
+        string speedChannelId)
     {
+        var integrated = IntegrateSegment(
+            startSpeedKph,
+            samples[startIndex].GetChannel(speedChannelId),
+            startTs,
+            samples[startIndex].Timestamp);
+
+        for (var i = startIndex; i < endIndex - 1; i++)
+        {
+            var a = samples[i];
+            var b = samples[i + 1];
+            integrated += IntegrateSegment(
+                a.GetChannel(speedChannelId),
+                b.GetChannel(speedChannelId),
+                a.Timestamp,
+                b.Timestamp);
+        }
+
+        integrated += IntegrateSegment(
+            samples[endIndex - 1].GetChannel(speedChannelId),
+            endSpeedKph,
+            samples[endIndex - 1].Timestamp,
+            endTs);
+
+        if (integrated > 0.01)
+            return (integrated, "SpeedIntegral");
+
         var d0 = samples[startIndex].GetChannel(ChannelIds.DistanceTraveled);
         var d1 = samples[endIndex].GetChannel(ChannelIds.DistanceTraveled);
         if (d1 > d0 && d1 - d0 < 1_000_000)
             return (d1 - d0, "DistanceTraveled");
-
-        double integrated = 0;
-        for (var i = startIndex; i < endIndex; i++)
-        {
-            var a = samples[i];
-            var b = samples[i + 1];
-            var dtS = (b.Timestamp - a.Timestamp) / 1000.0;
-            if (dtS <= 0 || dtS > 5)
-                continue;
-
-            var vMps = (a.SpeedKph + b.SpeedKph) * 0.5 / 3.6;
-            integrated += vMps * dtS;
-        }
-
-        if (integrated > 0.01)
-            return (integrated, "SpeedIntegral");
 
         var s = samples[startIndex];
         var e = samples[endIndex];
@@ -189,5 +248,14 @@ public static class SpeedToSpeedEngine
             return (hav, "HaversineEndpoints");
 
         return (0, "None");
+    }
+
+    private static double IntegrateSegment(double speed0Kph, double speed1Kph, long t0Ms, long t1Ms)
+    {
+        var dtS = (t1Ms - t0Ms) / 1000.0;
+        if (dtS <= 0 || dtS > 5)
+            return 0;
+
+        return (speed0Kph + speed1Kph) * 0.5 / 3.6 * dtS;
     }
 }
