@@ -184,6 +184,131 @@ public class SpeedToSpeedEngineTests
     }
 
     [Fact]
+    public void Accel_CreepBelowStartFloor_StartsAtCommittedLeave()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 0),
+            (100, 0.2),  // twitch off 0, still below 0.5
+            (200, 0.4),
+            (300, 0.3),
+            (400, 0.1),
+            (500, 0),
+            (600, 0.2),
+            (700, 1.0),  // committed 0.5-up
+            (800, 10),
+            (900, 20),
+            (1000, 30),
+            (1100, 40),
+            (1200, 55)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Accel(0, 50));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(0, run.StartSpeedKph);
+        Assert.Equal(50, run.EndSpeedKph);
+        Assert.Equal(50, run.DeltaSpeedKph);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
+        // Must start at the later 0.5 leave (600–700), not the first twitch off 0.
+        Assert.InRange(run.StartTimestampMs, origin + 600, origin + 700);
+        Assert.True(run.StartTimestampMs > origin + 100);
+        Assert.InRange(run.EndTimestampMs, origin + 1100, origin + 1200);
+    }
+
+    [Fact]
+    public void Accel_LeaveThenFallBack_StartsAtLaterCrossing()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 0),
+            (100, 0.2),
+            (200, 2.0),  // first 0.5-up (must be discarded)
+            (300, 3.0),
+            (400, 0.3),  // falls back through 0.5
+            (500, 0.1),
+            (600, 0.2),
+            (700, 1.0),  // committed 0.5-up
+            (800, 15),
+            (900, 30),
+            (1000, 45),
+            (1100, 55)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Accel(0, 50));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(0, run.StartSpeedKph);
+        Assert.Equal(50, run.EndSpeedKph);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
+        Assert.InRange(run.StartTimestampMs, origin + 600, origin + 700);
+        Assert.True(run.StartTimestampMs > origin + 200);
+        Assert.InRange(run.EndTimestampMs, origin + 1000, origin + 1100);
+    }
+
+    [Fact]
+    public void Accel_ConfiguredStartAboveFloor_UsesExactThreshold()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 0),
+            (100, 0.8),  // above 0.5 floor, still below configured 5
+            (200, 2),
+            (300, 4),
+            (400, 8),    // 5-up between 300 and 400
+            (500, 20),
+            (600, 40),
+            (700, 55)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Accel(5, 50));
+
+        Assert.Single(results);
+        var run = results[0];
+        Assert.Equal(5, run.StartSpeedKph);
+        Assert.Equal(50, run.EndSpeedKph);
+        Assert.Equal(45, run.DeltaSpeedKph);
+        Assert.Equal("SpeedIntegral", run.DistanceMethod);
+        Assert.InRange(run.StartTimestampMs, origin + 300, origin + 400);
+        Assert.True(run.StartTimestampMs > origin + 100);
+        Assert.InRange(run.EndTimestampMs, origin + 600, origin + 700);
+    }
+
+    [Fact]
+    public void Accel_TwoRuns_RearmBelowEffectiveStart()
+    {
+        const long origin = 1_700_000_000_000;
+        var samples = BuildProfile(origin, new (int T, double V)[]
+        {
+            (0, 0),
+            (100, 1),
+            (200, 25),
+            (300, 55),
+            (400, 20),
+            (500, 0.2),  // below 0.5 floor, not exact 0
+            (600, 0.2),
+            (700, 1),
+            (800, 25),
+            (900, 55)
+        });
+
+        var results = SpeedToSpeedEngine.Compute(samples, TestDefinition.Accel(0, 50));
+        Assert.Equal(2, results.Count);
+        Assert.All(results, r =>
+        {
+            Assert.True(r.Pass);
+            Assert.Equal(0, r.StartSpeedKph);
+            Assert.Equal(50, r.EndSpeedKph);
+            Assert.Equal("SpeedIntegral", r.DistanceMethod);
+        });
+    }
+
+    [Fact]
     public void Decel_TwoBrakes_WithCooldown_TwoRuns()
     {
         var a = BuildRamp(120, 0, 20, 100, 1_700_000_000_000);

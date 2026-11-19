@@ -16,6 +16,11 @@ namespace Chassis_Master_Test_Suite.Analysis;
 /// - 零速地板：配置的终点 &lt; 0.8 km/h 时，按 0.8 km/h 切段（VBOX 界面写 80→0，实际停在约 0.8）。
 ///   结果仍报告配置阈值（如 80 和 0），Duration / Distance 取有效窗口。
 ///
+/// Rising（Accel / 上升 Custom）额外对齐 VBOX Test Suite：
+/// - 零速地板：配置的起点 &lt; 0.5 km/h 时，按 0.5 km/h 起算（VBOX 界面写 0→50，实际从约 0.5 离开且不再掉回）。
+/// - 提交型起点：向上离开有效起点后，若在到达终点前速度再次落到 ≤ 有效起点，则放弃该起点，等待下一次向上离开。
+///   结果仍报告配置阈值（如 0 和 50），Duration / Distance 取有效窗口。跑完后回到有效起点以下再布防。
+///
 /// 距离估算优先级（写在结果 DistanceMethod）：
 /// 1) 插值梯形速度积分（精确起终点时刻 + 中间整样本，km/h → m/s × Δt）
 /// 2) DistanceTraveled 通道差分（SampleEnricher Haversine 累计）
@@ -27,6 +32,11 @@ public static class SpeedToSpeedEngine
     /// VBOX 在界面终点为 0 时实际采用的结束速度（km/h）。
     /// </summary>
     public const double VboxZeroEndFloorKph = 0.8;
+
+    /// <summary>
+    /// VBOX 在界面起点为 0 时实际采用的起步速度（km/h）。
+    /// </summary>
+    public const double VboxZeroStartFloorKph = 0.5;
 
     public static IReadOnlyList<TestRunResult> Compute(
         IReadOnlyList<VehicleSample> samples,
@@ -44,6 +54,19 @@ public static class SpeedToSpeedEngine
         var hyst = Math.Max(0, definition.Hysteresis);
         var isFalling = startCond.Direction == CrossingDirection.Falling
                         && endCond.Direction == CrossingDirection.Falling;
+        var isRising = startCond.Direction == CrossingDirection.Rising
+                       && endCond.Direction == CrossingDirection.Rising;
+
+        var effectiveStartCond = startCond;
+        if (isRising && startCond.Threshold < VboxZeroStartFloorKph)
+        {
+            effectiveStartCond = new ThresholdCondition
+            {
+                ChannelId = startCond.ChannelId,
+                Threshold = VboxZeroStartFloorKph,
+                Direction = startCond.Direction
+            };
+        }
 
         var effectiveEndCond = endCond;
         if (isFalling && endCond.Threshold < VboxZeroEndFloorKph)
@@ -71,8 +94,10 @@ public static class SpeedToSpeedEngine
                 // 回到起点带即可再布防。
                 // 若 start 足够大，要求回到 start-hyst 以下以抑制抖动；start≈0 时不要求负速度。
                 var v = curr.GetChannel(startCond.ChannelId);
+                // Rising 再布防看有效起点（0→50 时为 0.5，而不是精确 0）。
+                // 迟滞只按配置起点扣减，避免 0.5 地板被扣回 0。
                 var quiet = startCond.Direction == CrossingDirection.Rising
-                    ? startCond.Threshold - Math.Min(hyst, Math.Max(0, startCond.Threshold))
+                    ? effectiveStartCond.Threshold - Math.Min(hyst, Math.Max(0, startCond.Threshold))
                     : startCond.Threshold + Math.Min(hyst, Math.Abs(startCond.Threshold) + hyst);
                 var ready = startCond.Direction == CrossingDirection.Rising
                     ? v <= quiet
@@ -86,7 +111,7 @@ public static class SpeedToSpeedEngine
 
             if (state == 0)
             {
-                if (!TryCross(prev, curr, startCond, isStart: true, out var crossTs, out _))
+                if (!TryCross(prev, curr, effectiveStartCond, isStart: true, out var crossTs, out _))
                     continue;
 
                 startIndex = i;
@@ -96,12 +121,16 @@ public static class SpeedToSpeedEngine
             }
 
             // Falling：到达终点前若速度再次升回起点阈值，放弃本次起点。
-            if (isFalling)
+            // Rising：到达终点前若速度再次落到有效起点及以下，放弃本次起点。
+            if (isFalling || isRising)
             {
-                var startThr = startCond.Threshold;
+                var startThr = effectiveStartCond.Threshold;
                 var a = prev.GetChannel(startCond.ChannelId);
                 var b = curr.GetChannel(startCond.ChannelId);
-                if (a < startThr && b >= startThr)
+                var recrossed = isFalling
+                    ? a < startThr && b >= startThr
+                    : a > startThr && b <= startThr;
+                if (recrossed)
                 {
                     state = 0;
                     startIndex = -1;
@@ -124,7 +153,7 @@ public static class SpeedToSpeedEngine
                 endIndex,
                 startTs,
                 endTs,
-                startCond.Threshold,
+                effectiveStartCond.Threshold,
                 effectiveEndCond.Threshold,
                 startCond.ChannelId);
 
