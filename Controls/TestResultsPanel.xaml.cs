@@ -40,6 +40,12 @@ public partial class TestResultsPanel : UserControl
 
     private TestDefinition? _lastDefinition;
 
+    private readonly HashSet<string> _seenLiveRunKeys = new(StringComparer.Ordinal);
+    private long _liveCutoffEndMs;
+    private long _lastPolledSampleTs;
+    private bool _liveCutoffInitialized;
+    private DateTime _lastLivePollUtc;
+
     private readonly ObservableCollection<PassConditionRowVm> _passConditions = new();
     private readonly ObservableCollection<SectorGateRowVm> _sectorGates = new();
     private readonly List<DataGridColumn> _sectorColumns = new();
@@ -206,6 +212,11 @@ public partial class TestResultsPanel : UserControl
         {
             ComputeButton.Content = Loc.T("Results.Compute");
             ComputeButton.ToolTip = Loc.T("Results.ComputeTip");
+        }
+        if (ResetResultsButton is not null)
+        {
+            ResetResultsButton.Content = Loc.T("Results.Reset");
+            ResetResultsButton.ToolTip = Loc.T("Results.ResetTip");
         }
         if (ExportCsvButton is not null)
         {
@@ -463,11 +474,232 @@ public partial class TestResultsPanel : UserControl
             return;
         }
 
-        var annotated = new List<AnnotatedTestRun>();
-        var flat = new List<TestRunResult>();
+        if (!TryComputeRuns(definition, sources, out var annotated, out var flat, out var scannedFiles, out var scannedPoints, out error))
+        {
+            StatusText.Text = error;
+            StatusText.Foreground = ThemeBrushes.Accent();
+            return;
+        }
+
+        RememberComputedRuns(flat, sources);
+        BindResults(flat, annotated, definition, selectFirst: true);
+
+        StatusText.Text = flat.Count == 0
+            ? $"Scanned {scannedFiles} file(s) / {scannedPoints} pts — no runs. Check thresholds."
+            : $"Found {flat.Count} run(s) across {scannedFiles} file(s) ({scannedPoints} pts). Check rows to compare.";
+        StatusText.Foreground = ThemeBrushes.TextSecondary();
+    }
+
+    /// <summary>
+    /// Online / recording poll: append one row when a run reaches its end condition.
+    /// Call only in live mode. Manual Compute still rescans the full buffer.
+    /// </summary>
+    public void PollLiveResults()
+    {
+        var now = DateTime.UtcNow;
+        if ((now - _lastLivePollUtc).TotalMilliseconds < 200)
+            return;
+        _lastLivePollUtc = now;
+
+        if (!TryBuildDefinition(out var definition, out _))
+            return;
+
+        var sources = ResolveSources();
+        if (sources.Count == 0)
+            return;
+
+        var latestTs = TestResultsLiveMerge.MaxSampleTimestampMs(sources);
+        if (!_liveCutoffInitialized)
+        {
+            _liveCutoffEndMs = latestTs;
+            _lastPolledSampleTs = latestTs;
+            _liveCutoffInitialized = true;
+            return;
+        }
+
+        if (latestTs <= _lastPolledSampleTs)
+            return;
+        _lastPolledSampleTs = latestTs;
+
+        if (_lastDefinition is not null
+            && _rows.Count > 0
+            && !TestResultsLiveMerge.SameConditions(_lastDefinition, definition))
+        {
+            return;
+        }
+
+        if (!TryComputeRuns(definition, sources, out var annotated, out _, out _, out _, out _))
+            return;
+
+        var newcomers = TestResultsLiveMerge.TakeNewCompletedRuns(
+            annotated,
+            _seenLiveRunKeys,
+            _liveCutoffEndMs);
+        if (newcomers.Count == 0)
+            return;
+
+        AppendLiveRuns(newcomers, definition);
+    }
+
+    private void ResetResultsButton_Click(object sender, RoutedEventArgs e)
+    {
+        ClearResults(resetLiveWatch: true);
+        StatusText.Text = Loc.T("Results.ResetDone");
+        StatusText.Foreground = ThemeBrushes.TextSecondary();
+    }
+
+    private void ClearResults(bool resetLiveWatch)
+    {
+        foreach (var row in _rows)
+            row.PropertyChanged -= ResultRow_PropertyChanged;
+
+        _rows.Clear();
+        _lastResults = Array.Empty<TestRunResult>();
+        _lastAnnotated = Array.Empty<AnnotatedTestRun>();
+        _lastDefinition = null;
+        _seenLiveRunKeys.Clear();
+
+        if (ExportCsvButton is not null)
+            ExportCsvButton.IsEnabled = false;
+
+        ResultsAnnotated?.Invoke(Array.Empty<AnnotatedTestRun>());
+        SelectedRunChanged?.Invoke(null);
+        RaiseCheckedRunsChanged();
+        SyncSelectAllCheckBox();
+
+        if (resetLiveWatch)
+        {
+            var sources = ResolveSources();
+            _liveCutoffEndMs = TestResultsLiveMerge.MaxSampleTimestampMs(sources);
+            _lastPolledSampleTs = _liveCutoffEndMs;
+            _liveCutoffInitialized = sources.Count > 0;
+        }
+    }
+
+    private void RememberComputedRuns(IReadOnlyList<TestRunResult> flat, IReadOnlyList<SampleSource> sources)
+    {
+        _seenLiveRunKeys.Clear();
+        long maxEnd = TestResultsLiveMerge.MaxSampleTimestampMs(sources);
+        foreach (var result in flat)
+        {
+            _seenLiveRunKeys.Add(TestResultsLiveMerge.RunKey(result));
+            if (result.EndTimestampMs > maxEnd)
+                maxEnd = result.EndTimestampMs;
+        }
+
+        _liveCutoffEndMs = maxEnd;
+        _lastPolledSampleTs = maxEnd;
+        _liveCutoffInitialized = true;
+    }
+
+    private void BindResults(
+        IReadOnlyList<TestRunResult> flat,
+        IReadOnlyList<AnnotatedTestRun> annotated,
+        TestDefinition definition,
+        bool selectFirst)
+    {
+        _lastResults = flat;
+        _lastAnnotated = annotated;
+        _lastDefinition = definition;
+
+        foreach (var row in _rows)
+            row.PropertyChanged -= ResultRow_PropertyChanged;
+        _rows.Clear();
+        foreach (var item in annotated)
+        {
+            var row = ResultRowVm.From(item, BeijingTimeZone);
+            row.PropertyChanged += ResultRow_PropertyChanged;
+            _rows.Add(row);
+        }
+        ApplyFastestHighlights();
+        RebuildSectorColumns();
+
+        ExportCsvButton.IsEnabled = flat.Count > 0;
+
+        ResultsAnnotated?.Invoke(annotated);
+        RaiseCheckedRunsChanged();
+        SyncSelectAllCheckBox();
+
+        if (selectFirst && annotated.Count > 0)
+        {
+            ResultsGrid.SelectedIndex = 0;
+            SelectedRunChanged?.Invoke(annotated[0].RunNumber);
+        }
+        else
+        {
+            SelectedRunChanged?.Invoke(null);
+        }
+    }
+
+    private void AppendLiveRuns(
+        IReadOnlyList<AnnotatedTestRun> newcomers,
+        TestDefinition definition)
+    {
+        var flat = new List<TestRunResult>(_lastResults);
+        var annotated = new List<AnnotatedTestRun>(_lastAnnotated);
+        AnnotatedTestRun? last = null;
+
+        foreach (var item in newcomers)
+        {
+            var number = annotated.Count + 1;
+            var tagged = item.Result.WithRunNumber(number);
+            var colored = new AnnotatedTestRun
+            {
+                Result = tagged,
+                Samples = item.Samples,
+                SourceLabel = item.SourceLabel,
+                ColorHex = RunAnnotationPalette[(number - 1) % RunAnnotationPalette.Length],
+                SourceFileId = item.SourceFileId
+            };
+            flat.Add(tagged);
+            annotated.Add(colored);
+            last = colored;
+
+            var row = ResultRowVm.From(colored, BeijingTimeZone);
+            row.PropertyChanged += ResultRow_PropertyChanged;
+            _rows.Add(row);
+        }
+
+        _lastResults = flat;
+        _lastAnnotated = annotated;
+        _lastDefinition = definition;
+
+        ApplyFastestHighlights();
+        RebuildSectorColumns();
+        ExportCsvButton.IsEnabled = flat.Count > 0;
+
+        ResultsAnnotated?.Invoke(annotated);
+        RaiseCheckedRunsChanged();
+        SyncSelectAllCheckBox();
+
+        if (last is not null)
+        {
+            ResultsGrid.SelectedIndex = _rows.Count - 1;
+            SelectedRunChanged?.Invoke(last.RunNumber);
+        }
+
+        StatusText.Text = string.Format(
+            Loc.T("Results.LiveAdded"),
+            last?.RunNumber ?? flat.Count,
+            flat.Count);
+        StatusText.Foreground = ThemeBrushes.TextSecondary();
+    }
+
+    private bool TryComputeRuns(
+        TestDefinition definition,
+        IReadOnlyList<SampleSource> sources,
+        out List<AnnotatedTestRun> annotated,
+        out List<TestRunResult> flat,
+        out int scannedFiles,
+        out int scannedPoints,
+        out string error)
+    {
+        annotated = new List<AnnotatedTestRun>();
+        flat = new List<TestRunResult>();
+        scannedFiles = 0;
+        scannedPoints = 0;
+        error = "";
         var globalRun = 1;
-        var scannedPoints = 0;
-        var scannedFiles = 0;
 
         foreach (var source in sources)
         {
@@ -484,21 +716,18 @@ public partial class TestResultsPanel : UserControl
                 var sectorGates = GetSelectedSectorGates();
                 if (lapGate is null || !lapGate.IsValid)
                 {
-                    StatusText.Text = "Select a valid Start / Finish gate.";
-                    StatusText.Foreground = ThemeBrushes.Accent();
-                    return;
+                    error = "Select a valid Start / Finish gate.";
+                    return false;
                 }
                 if (sectorGates.Any(gate => gate.Id == lapGate.Id))
                 {
-                    StatusText.Text = "Start / Finish cannot also be a sector gate.";
-                    StatusText.Foreground = ThemeBrushes.Accent();
-                    return;
+                    error = "Start / Finish cannot also be a sector gate.";
+                    return false;
                 }
                 if (sectorGates.Select(gate => gate.Id).Distinct().Count() != sectorGates.Count)
                 {
-                    StatusText.Text = "Each sector gate can only be used once.";
-                    StatusText.Foreground = ThemeBrushes.Accent();
-                    return;
+                    error = "Each sector gate can only be used once.";
+                    return false;
                 }
                 raw = LapTimeEngine.Compute(
                     MathsEnricher.Apply(source.Samples, MathsChannelStore.Instance.Definitions),
@@ -511,9 +740,8 @@ public partial class TestResultsPanel : UserControl
                 var endGate = GateStore.Instance.EndGate;
                 if (startGate is null || endGate is null || !startGate.IsValid || !endGate.IsValid)
                 {
-                    StatusText.Text = "Set Start When + End When gates (place on Track Map first).";
-                    StatusText.Foreground = ThemeBrushes.Accent();
-                    return;
+                    error = "Set Start When + End When gates (place on Track Map first).";
+                    return false;
                 }
 
                 var passConds = BuildPassConditions();
@@ -565,40 +793,7 @@ public partial class TestResultsPanel : UserControl
             }
         }
 
-        _lastResults = flat;
-        _lastAnnotated = annotated;
-        _lastDefinition = definition;
-
-        _rows.Clear();
-        foreach (var a in annotated)
-        {
-            var row = ResultRowVm.From(a, BeijingTimeZone);
-            row.PropertyChanged += ResultRow_PropertyChanged;
-            _rows.Add(row);
-        }
-        ApplyFastestHighlights();
-        RebuildSectorColumns();
-
-        ExportCsvButton.IsEnabled = flat.Count > 0;
-
-        ResultsAnnotated?.Invoke(annotated);
-        RaiseCheckedRunsChanged();
-        SyncSelectAllCheckBox();
-
-        if (annotated.Count > 0)
-        {
-            ResultsGrid.SelectedIndex = 0;
-            SelectedRunChanged?.Invoke(annotated[0].RunNumber);
-        }
-        else
-        {
-            SelectedRunChanged?.Invoke(null);
-        }
-
-        StatusText.Text = flat.Count == 0
-            ? $"Scanned {scannedFiles} file(s) / {scannedPoints} pts 鈥?no runs. Check thresholds."
-            : $"Found {flat.Count} run(s) across {scannedFiles} file(s) ({scannedPoints} pts). Check rows to compare.";
-        StatusText.Foreground = ThemeBrushes.TextSecondary();
+        return true;
     }
 
     private IReadOnlyList<SampleSource> ResolveSources()

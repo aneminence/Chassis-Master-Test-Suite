@@ -63,6 +63,7 @@
     <Compile Include="..\Session\MultiDeviceRecordingSession.cs" Link="Linked\Session\MultiDeviceRecordingSession.cs" />
     <Compile Include="..\Analysis\SampleSource.cs" Link="Linked\Analysis\SampleSource.cs" />
     <Compile Include="..\Analysis\AnnotatedTestRun.cs" Link="Linked\Analysis\AnnotatedTestRun.cs" />
+    <Compile Include="..\Analysis\TestResultsLiveMerge.cs" Link="Linked\Analysis\TestResultsLiveMerge.cs" />
     <Compile Include="..\Analysis\SelectionMeasure.cs" Link="Linked\Analysis\SelectionMeasure.cs" />
     <Compile Include="..\Analysis\GateStore.cs" Link="Linked\Analysis\GateStore.cs" />
     <Compile Include="..\Analysis\GateRunEngine.cs" Link="Linked\Analysis\GateRunEngine.cs" />

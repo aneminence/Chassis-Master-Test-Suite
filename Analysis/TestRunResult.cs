@@ -56,6 +56,28 @@ public sealed class TestRunResult
     public int StartSampleIndex { get; init; }
 
     public int EndSampleIndex { get; init; }
+
+    public TestRunResult WithRunNumber(int runNumber) => new()
+    {
+        RunNumber = runNumber,
+        SourceFile = SourceFile,
+        SourceColorHex = SourceColorHex,
+        SourceFileId = SourceFileId,
+        StartTimestampMs = StartTimestampMs,
+        EndTimestampMs = EndTimestampMs,
+        DurationSeconds = DurationSeconds,
+        StartSpeedKph = StartSpeedKph,
+        EndSpeedKph = EndSpeedKph,
+        DeltaSpeedKph = DeltaSpeedKph,
+        DistanceMeters = DistanceMeters,
+        DistanceMethod = DistanceMethod,
+        Pass = Pass,
+        FailReason = FailReason,
+        PassMeasurements = PassMeasurements,
+        SectorTimes = SectorTimes,
+        StartSampleIndex = StartSampleIndex,
+        EndSampleIndex = EndSampleIndex
+    };
 }
 
 public sealed class SectorTimeResult

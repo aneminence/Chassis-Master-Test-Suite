@@ -8064,6 +8064,10 @@ public partial class MainWindow : Window
         UpdateNetworkDisplay();
 
         RefreshAllPlots();
+
+        // Live Test Results: append a row when a run reaches its end condition.
+        if (!(_isOfflineMode || _historyOfflineMode))
+            TestResultsPanelControl.PollLiveResults();
     }
 
 

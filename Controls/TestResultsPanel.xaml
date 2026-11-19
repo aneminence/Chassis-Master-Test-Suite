@@ -317,6 +317,14 @@
                                 Click="ComputeButton_Click"
                                 ToolTip="Compute across ALL open VBO files / live history"/>
 
+                        <Button x:Name="ResetResultsButton"
+                                Content="Reset"
+                                Style="{StaticResource HeaderButtonStyle}"
+                                Margin="0,0,8,4"
+                                Padding="14,4"
+                                Click="ResetResultsButton_Click"
+                                ToolTip="Clear results and run highlights on charts and map"/>
+
                         <Button x:Name="ExportCsvButton"
                                 Content="Export CSV"
                                 Style="{StaticResource HeaderButtonStyle}"
