@@ -8,6 +8,23 @@
 
 ## 最近更新
 
+### 0.3.5 Preview（2026-11-21）
+
+0.3.4 之后合入加减速切段对齐 VBOX、Test Results 重置与实时追加、成绩两位小数，以及导入 VBO 时间轴长横线修复。版本已升到 **0.3.5**；按用户要求，先不打 `v0.3.5` tag、不发 GitHub Release。
+
+### 加减速切段对齐 VBOX（2026-11-21）
+- 制动 Speed-to-Speed：起点按配置（如 80 km/h），终点地板 **0.8 km/h**，距离用速度积分。（`13509d5`）
+- 加速 Speed-to-Speed：起步门槛 **0.5 km/h**，离开后再掉回 0.5 不重新布防，积分到配置终点。制动 0.8 与加速 0.5 不统一成同一个门槛。（`aca8afd`）
+
+### Test Results 重置、实时追加与两位小数（2026-11-21）
+- 重置会清除成绩表以及曲线/地图上的成绩标注，保留起终点条件；重置后已跑过的成绩不再刷回。
+- 线上录制时，每达到一次结束条件自动追加一条成绩（类似 VBOX）；手动 Compute 仍可重算全部数据。（`a502fb2`）
+- 成绩数值（Duration / Dist / dV、扇区、Pass、CSV、Dashboard 试验字段）统一显示两位小数；起终点墙钟时间仍为 `HH:mm:ss.fff`。（`1cc5568`）
+
+### 导入 VBO 时间轴长横线（2026-11-21）
+- 导入 CMTS/Racelogic VBO 后，孤立的 `000000.000` 或非有限 time 不再把 Time 轴从 0 拉到数万秒、有效数据挤在最右侧。
+- 跳过非有限 time 行，丢掉孤立离群时间戳（跨午夜连续段保留）；离线加载时用文件头 `File created on` 把时刻拼成 Unix 毫秒。GSpot 经过时间戳不套日期。Time 轴内部仍是 UTC OADate，标签为北京时间。（`dad097c`）
+
 ### 0.3.4 Preview（2026-11-17）
 
 0.3.3 之后的全部新增功能统一归入 **0.3.4**：多设备在线采集与按设备录制、离线实时回放、3D Follow/正后方 Chase、航向稳定与 DEM 重试，以及低频 KML 按播放时间插帧。原始数据保持不变；超过 10 秒缺口不插值。用户已试用 KML 插帧反馈基本正常。
@@ -153,7 +170,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ## 当前架构
 
-基于 Windows 0.3.4，包含 Simulator 直连改造（尚未打新版本标签）（2026-11-17）。
+基于 Windows 0.3.5，包含 Simulator 直连 DataBus，以及 VBOX 对齐的加减速分析与导入 VBO 时间轴修复（2026-11-21）。尚未打 v0.3.5 tag、未发 GitHub Release。
 
 ```text
 在线采集（DataSourceSession 管理源生命周期）
