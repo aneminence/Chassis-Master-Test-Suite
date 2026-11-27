@@ -8,9 +8,13 @@
 
 ## 最近更新
 
-### 0.3.5 Preview（2026-11-21）
+### 0.3.5 Preview（2026-11-27）
 
-0.3.4 之后合入加减速切段对齐 VBOX、Test Results 重置与实时追加、成绩两位小数，以及导入 VBO 时间轴长横线修复。版本已升到 **0.3.5**；按用户要求，先不打 `v0.3.5` tag、不发 GitHub Release。
+0.3.4 之后合入加减速切段对齐 VBOX、Test Results 重置与实时追加、成绩两位小数、导入 VBO 时间轴长横线修复，以及 Simulator 直连 DataBus。版本号为 **0.3.5**，继续以预览版发布。
+
+[完整发布说明](docs/releases/v0.3.5.md) · [下载 0.3.5](https://github.com/aneminence/Chassis-Master-Test-Suite/releases/tag/v0.3.5)
+
+以下 2026-11-21 条目均属于 0.3.5 的功能明细。
 
 ### 加减速切段对齐 VBOX（2026-11-21）
 - 制动 Speed-to-Speed：起点按配置（如 80 km/h），终点地板 **0.8 km/h**，距离用速度积分。（`13509d5`）
@@ -170,7 +174,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 
 ## 当前架构
 
-基于 Windows 0.3.5，包含 Simulator 直连 DataBus，以及 VBOX 对齐的加减速分析与导入 VBO 时间轴修复（2026-11-21）。尚未打 v0.3.5 tag、未发 GitHub Release。
+基于 Windows 0.3.5，包含 Simulator 直连 DataBus，以及 VBOX 对齐的加减速分析与导入 VBO 时间轴修复（2026-11-27）。
 
 ```text
 在线采集（DataSourceSession 管理源生命周期）

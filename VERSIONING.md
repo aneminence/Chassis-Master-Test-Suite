@@ -1,6 +1,8 @@
 # CMTS 版本规范（VERSIONING）
 
-> 2026-11-21 更新：用户要求将 `feature/vbox-aligned-decel` 合入 main，并把版本末位加一；主 `.csproj` `<Version>` 现为 **0.3.5**。按同一指示，**先不打 `v0.3.5` tag、不发 GitHub Release、不打本地包**。上次已发布仍为 **0.3.4**（tag `v0.3.4`）。下方 0.3.1 账本为更早历史；用户当次指示优先于自动功能档递增规则。
+> 2026-11-27 更新：用户要求为 **0.3.5** 更新 README 并发布 GitHub Release。主 `.csproj` `<Version>`、tag `v0.3.5` 与预览版 Release 对齐；继续使用 prerelease，不打本地包。发布说明见 docs/releases/v0.3.5.md。下方 0.3.1 账本为更早历史；用户当次指示优先于自动功能档递增规则。
+>
+> 2026-11-21 更新：用户要求将 `feature/vbox-aligned-decel` 合入 main，并把版本末位加一；当时主 `.csproj` `<Version>` 已改为 **0.3.5**，按当时指示暂不打 tag、不发 Release。
 >
 > 2026-11-17 更新：用户明确指定发布 **0.3.4**，汇总 v0.3.3 之后全部新增功能；项目 Version 与 tag v0.3.4 对齐，继续使用 prerelease。发布说明见 docs/releases/v0.3.4.md。
 
