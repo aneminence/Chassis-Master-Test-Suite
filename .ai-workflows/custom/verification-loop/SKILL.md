@@ -6,8 +6,9 @@
 
 ## 1. 工作区
 
+在当前工作树的根目录执行。Windows 主工作树的本地目录名为 `CMTS-Win`。
+
 ```powershell
-Set-Location 'D:\CMTS\Chassis Master Test Suite'
 git status -sb
 git branch --show-current
 ```

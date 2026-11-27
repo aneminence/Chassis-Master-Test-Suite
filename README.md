@@ -249,7 +249,7 @@ Acquisition  →  Parsing  →  DataBus  →  Processing  →  Visualization  �
 以下为关键模块导航（非完整文件清单），与上方架构同次核对。
 
 ```text
-Chassis Master Test Suite/
+CMTS-Win/
 ├─ Core/
 │   ├─ VehicleSample.cs / DataBus.cs / SampleHistoryBuffer.cs
 │   ├─ ChannelIds.cs / ChannelInfo.cs / ChannelRegistry.cs
@@ -317,10 +317,11 @@ Chassis Master Test Suite/
 
 ## 编译与运行
 
+首次克隆可通过 `git clone https://github.com/aneminence/Chassis-Master-Test-Suite.git CMTS-Win` 指定本地目录名。进入当前工作树的根目录后执行下列命令。
+
 ```cmd
-cd /d "D:\CMTS\Chassis Master Test Suite"
-dotnet build
-dotnet run
+dotnet build "Chassis Master Test Suite.sln"
+dotnet run --project "Chassis Master Test Suite.csproj"
 ```
 
 或在 Visual Studio 中 **F5**。建议日常从 `bin\Release\net10.0-windows\` 启动已发布副本，避免 Debug 被占用。
